@@ -1,0 +1,104 @@
+_scan_runner_completion() {
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Top-level options
+    opts="-h --help --scan_type --config --config-file --dim --replace --log-level"
+
+    # Fixed-value lists
+    local scan_types="linear approach monocm cm poll"
+    local configs="monoidcan dcmpiezo monocm mono monoid idpresetmode"
+
+    case "$prev" in
+        --scan_type)
+            COMPREPLY=( $(compgen -W "$scan_types" -- "$cur") )
+            return 0
+            ;;
+        --config)
+            COMPREPLY=( $(compgen -W "$configs" -- "$cur") )
+            return 0
+            ;;
+        --config-file)
+            # File path completion (relative/absolute), prefer YAML files
+            # -o filenames enables standard filename behavior (spaces, etc.)
+            # -o nospace avoids inserting a trailing space after directories
+            COMPREPLY=( $(compgen -f -- "$cur") )
+            compopt -o filenames 2>/dev/null
+            compopt -o nospace 2>/dev/null
+            return 0
+            ;;
+        --replace)
+            COMPREPLY=( $(compgen -W "KEY=NEW_VALUE" -- "$cur") )
+            return 0
+            ;;
+        --dim)
+            # 1) no '=' yet → suggest the key
+            if [[ "$cur" != *=* ]]; then
+                COMPREPLY=( "actuator=" )
+                return 0
+            fi
+
+            # 2) filling actuator=…  → suggest names
+            if [[ "$cur" == actuator=* && "$cur" != *,* ]]; then
+                local val="${cur#actuator=}"
+                COMPREPLY=( $(compgen -W "energy gap piezo epz" -- "$val") )
+                for i in "${!COMPREPLY[@]}"; do
+                    COMPREPLY[$i]="actuator=${COMPREPLY[$i]},"
+                done
+                return 0
+            fi
+
+            # 3) after first comma, suggest start=
+            if [[ "$cur" == *,* && "$cur" != *,start=* ]]; then
+                COMPREPLY=( "start=" )
+                COMPREPLY[0]="${cur}${COMPREPLY[0]}"
+                return 0
+            fi
+
+            # 4) after '...,start=VAL' (optionally with trailing comma), suggest stop=
+            if [[ "$cur" == *,start=* && "$cur" != *,start=*,* ]]; then
+                COMPREPLY=( "stop=" )
+                COMPREPLY[0]="${cur},${COMPREPLY[0]}"
+                return 0
+            fi
+
+            # 5) after '...,stop=VAL' (optionally with trailing comma), suggest steps=
+            if [[ "$cur" == *,stop=* && "$cur" != *,stop=*,* ]]; then
+                COMPREPLY=( "steps=" )
+                COMPREPLY[0]="${cur},${COMPREPLY[0]}"
+                return 0
+            fi
+
+            # Optional: after steps, suggest velocity=
+            if [[ "$cur" == *,steps=* && "$cur" != *,steps=*,* ]]; then
+                COMPREPLY=( "velocity=" )
+                COMPREPLY[0]="${cur},${COMPREPLY[0]}"
+                return 0
+            fi
+            ;;
+    esac
+
+    # Optional nicety: don't suggest --config if --config-file already used (and vice versa)
+    local seen_config=0 seen_config_file=0
+    for w in "${COMP_WORDS[@]}"; do
+        [[ "$w" == "--config" ]] && seen_config=1
+        [[ "$w" == "--config-file" ]] && seen_config_file=1
+    done
+    if (( seen_config )); then
+        opts="${opts/ --config / }"
+        opts="${opts/ --config/}"
+    fi
+    if (( seen_config_file )); then
+        opts="${opts/ --config-file / }"
+        opts="${opts/ --config-file/}"
+    fi
+
+    # Fallback to top-level options
+    COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+    return 0
+}
+
+complete -F _scan_runner_completion scan_runner
+

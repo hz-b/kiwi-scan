@@ -1,0 +1,15 @@
+# sim.yaml
+actuators:
+  energy:   
+    type: "sim"
+    dwell_time: 0.5
+
+detector_pvs:
+  - "${DET_PV1}"
+  - "${DET_PV2}"
+
+monitor_type: "print"
+
+data_dir: "scandata"
+output_file: "simtest.txt"
+include_timestamps: True

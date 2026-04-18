@@ -1,0 +1,217 @@
+# bash completion for actuator_runner / actuator_cli
+# Save as: /etc/bash_completion.d/actuator_runner  (system-wide)
+# or:       ~/.local/share/bash-completion/completions/actuator_runner
+# then:     source the file (or open a new shell)
+
+_actuator_runner__py_actuators() {
+  # Echo actuator names from the selected YAML config (best-effort).
+  local cfg_path="$1"
+  [[ -z "$cfg_path" || ! -f "$cfg_path" ]] && return 0
+
+  python3 - "$cfg_path" 2>/dev/null <<'PY'
+import sys
+try:
+    import yaml
+except Exception:
+    sys.exit(0)
+
+path = sys.argv[1]
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f) or {}
+    acts = data.get("actuators") or {}
+    if isinstance(acts, dict):
+        for k in acts.keys():
+            if isinstance(k, str) and k.strip():
+                print(k.strip())
+except Exception:
+    pass
+PY
+}
+
+_actuator_runner__find_cfg_path() {
+  # Determine config path from argv: prefer --config-file; else --config + $SCAN_CONFIG_DIR + ".yaml"
+  # Echo full path if found, else empty.
+  local -a words=("$@")
+  local i w
+  local cfg_file=""
+  local cfg_name=""
+
+  for ((i=0; i<${#words[@]}; i++)); do
+    w="${words[$i]}"
+    if [[ "$w" == "--config-file" && $((i+1)) -lt ${#words[@]} ]]; then
+      cfg_file="${words[$((i+1))]}"
+    elif [[ "$w" == --config-file=* ]]; then
+      cfg_file="${w#--config-file=}"
+    elif [[ "$w" == "--config" && $((i+1)) -lt ${#words[@]} ]]; then
+      cfg_name="${words[$((i+1))]}"
+    elif [[ "$w" == --config=* ]]; then
+      cfg_name="${w#--config=}"
+    fi
+  done
+
+  if [[ -n "$cfg_file" ]]; then
+    # expand ~
+    if [[ "$cfg_file" == "~/"* ]]; then
+      cfg_file="$HOME/${cfg_file#~/}"
+    fi
+    [[ -f "$cfg_file" ]] && { echo "$cfg_file"; return 0; }
+    echo ""
+    return 0
+  fi
+
+  if [[ -n "$cfg_name" ]]; then
+    local dir="${KIWI_SCAN_CONFIG_DIR:-}"
+    # best-effort fallback locations if env not set
+    if [[ -z "$dir" ]]; then
+      if [[ -d "./config/scan_config" ]]; then
+        dir="./config/scan_config"
+      elif [[ -d "/etc/scan/scan_config" ]]; then
+        dir="/etc/scan/scan_config"
+      elif [[ -d "/usr/local/etc/scan/scan_config" ]]; then
+        dir="/usr/local/etc/scan/scan_config"
+      fi
+    fi
+    if [[ -n "$dir" && -f "$dir/${cfg_name}.yaml" ]]; then
+      echo "$dir/${cfg_name}.yaml"
+      return 0
+    fi
+  fi
+
+  echo ""
+}
+
+_actuator_runner__list_configs() {
+  local dir="${SCAN_CONFIG_DIR:-}"
+  if [[ -z "$dir" ]]; then
+    if [[ -d "./config/scan_config" ]]; then
+      dir="./config/scan_config"
+    elif [[ -d "/etc/scan/scan_config" ]]; then
+      dir="/etc/scan/scan_config"
+    elif [[ -d "/usr/local/etc/scan/scan_config" ]]; then
+      dir="/usr/local/etc/scan/scan_config"
+    fi
+  fi
+  [[ -z "$dir" || ! -d "$dir" ]] && return 0
+  local f
+  for f in "$dir"/*.yaml; do
+    [[ -f "$f" ]] || continue
+    basename "$f" .yaml
+  done
+}
+
+_actuator_runner_completion() {
+  local cur prev
+  COMPREPLY=()
+  cur="${COMP_WORDS[COMP_CWORD]}"
+  prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+  local opts="
+    --config --config-file
+    --replace
+    --log-level
+    --monitor --monitor-duration --monitor-count
+    --out
+    --move --jog --stop --set-velocity --rel-move
+    --keep-alive
+    -h --help
+  "
+
+  local levels="0 1 2 3 4 5"
+  local sources="rbv cmd set command status stop velocity"
+
+  # Determine config path (to offer actuator-name completions)
+  local cfg_path
+  cfg_path="$(_actuator_runner__find_cfg_path "${COMP_WORDS[@]}")"
+
+  # Complete option names
+  if [[ "$cur" == --* ]]; then
+    COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+    return 0
+  fi
+
+  # Per-option value completions
+  case "$prev" in
+    --log-level)
+      COMPREPLY=( $(compgen -W "$levels" -- "$cur") )
+      return 0
+      ;;
+    --config)
+      COMPREPLY=( $(compgen -W "$(_actuator_runner__list_configs)" -- "$cur") )
+      return 0
+      ;;
+    --config-file|--out)
+      compopt -o filenames 2>/dev/null
+      COMPREPLY=( $(compgen -f -- "$cur") )
+      return 0
+      ;;
+    --replace)
+      # KEY=VALUE (no strong opinion)
+      return 0
+      ;;
+    --monitor)
+      # SPEC = NAME:source | NAME@PV | NAME
+      # If user started NAME:... complete sources, else complete NAME (from config if available)
+      if [[ "$cur" == *:* ]]; then
+        local left="${cur%%:*}"
+        local right="${cur#*:}"
+        local sug
+        COMPREPLY=( $(compgen -W "$sources" -- "$right") )
+        # re-add "NAME:" prefix
+        for i in "${!COMPREPLY[@]}"; do
+          COMPREPLY[$i]="${left}:${COMPREPLY[$i]}"
+        done
+      else
+        local acts
+        acts="$(_actuator_runner__py_actuators "$cfg_path")"
+        COMPREPLY=( $(compgen -W "$acts" -- "$cur") )
+        # also offer the common pattern NAME:rbv etc
+        local extra=()
+        local a
+        for a in $acts; do
+          extra+=("${a}:rbv" "${a}:cmd" "${a}:status" "${a}:stop" "${a}:velocity")
+        done
+        COMPREPLY+=( $(compgen -W "${extra[*]}" -- "$cur") )
+      fi
+      return 0
+      ;;
+    --move|--jog|--set-velocity)
+      # SPEC = NAME=VAL
+      if [[ "$cur" == *=* ]]; then
+        # user is typing value; don't interfere
+        return 0
+      fi
+      local acts
+      acts="$(_actuator_runner__py_actuators "$cfg_path")"
+      # complete "NAME="
+      local cand=()
+      local a
+      for a in $acts; do
+        cand+=("${a}=")
+      done
+      COMPREPLY=( $(compgen -W "${cand[*]}" -- "$cur") )
+      return 0
+      ;;
+    --stop)
+      # SPEC = NAME
+      local acts
+      acts="$(_actuator_runner__py_actuators "$cfg_path")"
+      COMPREPLY=( $(compgen -W "$acts" -- "$cur") )
+      return 0
+      ;;
+    --monitor-duration|--monitor-count)
+      return 0
+      ;;
+  esac
+
+  # Fallback: file completion if it looks like a path
+  if [[ "$cur" == */* ]]; then
+    compopt -o filenames 2>/dev/null
+    COMPREPLY=( $(compgen -f -- "$cur") )
+    return 0
+  fi
+
+  return 0
+}
+
+complete -F _actuator_runner_completion actuator_runner

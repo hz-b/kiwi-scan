@@ -1,0 +1,127 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+.kiwi_sync/
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.pytest_cache/
+pytestdebug.log
+LOG
+
+# Type checker
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+
+# PyCharm
+.idea/
+
+# VS Code
+.vscode/
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# Jupyter
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# Logs
+*.log
+
+# Local runtime data
+*.sqlite3
+*.db
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build documentation
+docs/_build/
+
+# tags
+cscope.files
+cscope.out
+tags
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+*~
+
+# Python packaging metadata
+*.dist-info/
+
+# Ruff / Black / other tooling caches
+.ruff_cache/
+.black/
+
+# Project-specific: scan output files (timestamped names like base-YYYYMMDDHHMMSS.txt)
+# Matches e.g. "results-20260315123045.txt" or "scan-20260315123045.txt"
+*-??????????????.*
+
+# Optional: exclude scan data directory if you create one
+scandata/
+data/
+
+*.orig
+*.1st

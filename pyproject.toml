@@ -1,0 +1,82 @@
+[build-system]
+requires = [
+  "setuptools>=61",
+  "wheel",
+  "setuptools_scm[toml]>=7"
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kiwi-scan"
+dynamic = ["version"]
+description = "A modular scanning framework with YAML-configured actuators, monitors, triggers, plugins, and scan strategies."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [
+  { name = "Helmholtz-Zentrum Berlin" }
+]
+keywords = [
+  "epics",
+  "scientific",
+  "instrumentation",
+  "beamline",
+  "control-system",
+  "data-acquisition",
+  "scan",
+  "automation",
+  "yaml",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.8",
+  "Programming Language :: Python :: 3.9",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Operating System :: OS Independent",
+  "Topic :: Scientific/Engineering",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Scientific/Engineering :: Information Analysis",
+  "Topic :: Software Development :: Libraries",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+dependencies = [
+  "numpy>=1.24",
+  "PyYAML>=6.0",
+  "pyepics>=3.5",
+  "pandas",
+  "matplotlib",
+]
+
+[project.optional-dependencies] 
+dev = [ "pytest", "caproto[complete]", "jinja2", "pylint" ]
+
+[project.urls]
+Homepage = "https://github.com/hz-b/kiwi-scan"
+Repository = "https://github.com/hz-b/kiwi-scan"
+Issues = "https://github.com/hz-b/kiwi-scan/issues"
+
+[project.scripts]
+scan_runner = "kiwi_scan.scan_runner:main"
+scanplotter_cli = "kiwi_scan.scanplotter_cli:main"
+actuator_runner = "kiwi_scan.actuator_runner:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"

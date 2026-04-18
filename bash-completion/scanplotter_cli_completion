@@ -1,0 +1,47 @@
+# Bash completion for scanplotter_cli
+
+_scanplotter_cli()
+{
+    local cur prev opts
+    COMPREPLY=()
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    opts="--help -h --x_column --series --join-tol --log-level"
+
+    case "$prev" in
+        --log-level)
+            # Offer common logging levels
+            local levels="DEBUG INFO WARNING ERROR CRITICAL 10 20 30 40 50"
+            COMPREPLY=( $(compgen -W "$levels" -- "$cur") )
+            return 0
+            ;;
+        --series)
+            # Offer a small template for the series spec
+            # User can edit after completion.
+            local specparts="file= column= axis= label= type=scan type=meta"
+            COMPREPLY=( $(compgen -W "$specparts" -- "$cur") )
+            return 0
+            ;;
+        --x_column)
+            # No good way to auto-complete column names here; just fall back to no suggestion
+            return 0
+            ;;
+        --join-tol)
+            # numeric, no special completion
+            return 0
+            ;;
+    esac
+
+    # Complete options when current word starts with '-'
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+        return 0
+    fi
+
+    # Otherwise, fall back to filename completion (useful after --series file=...)
+    COMPREPLY=( $(compgen -f -- "$cur") )
+}
+
+complete -F _scanplotter_cli scanplotter_cli
+
