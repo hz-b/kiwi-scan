@@ -59,6 +59,8 @@ scan_dimensions:
     start: 0
     stop: 1
     steps: 2
+data_dir: scandata
+output_file: scan_results.txt
 """)
 
             cmd = [

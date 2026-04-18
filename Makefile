@@ -59,6 +59,7 @@ lint: ## Run pylint on src/kiwi_scan (uses mkvenv.sh when needed)
 	PYTHONPATH=src pylint --disable=C,R,W src/kiwi_scan || true
 
 test: ## Run the current test scripts (uses mkvenv.sh when needed)
+	@if [ -z "$$KIWI_SCAN_DATA_DIR" ]; then mkdir -p scandata; fi
 	@$(WITH_VENV); \
 	python3 tests/test_actuator.py; \
 	EPICS_WRITETEST=1 python3 tests/test_epics_wrapper_integration.py; \
