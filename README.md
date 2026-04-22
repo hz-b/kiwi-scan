@@ -2,29 +2,34 @@
 
 `kiwi-scan`: A Modular Scan Framework for Commissioning and Diagnostics in EPICS Environments
 
-Actuators, detector PVs, triggers, subscriptions, plugins, and metadata sidecars are configured via YAML. Choose a scan engine and execute scans from the command line or API. Results are written to timestamped text files, with metadata logged in parallel for post-mortem analysis.
+Actuators, detector PVs, triggers, subscriptions, plugins, and metadata sidecars are configured via YAML. 
+Scan engine (scan type) and scan dimensions are choosen by command line or API. 
+Results are written to timestamped text files, with metadata (constants or monitored PVs) parallel.
 
 ## Overview of Features
 
-- **YAML-first configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots and plugin configuration.
+- **YAML configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots and plugin paramters.
 - **Pluggable scan engines** such as `linear`, `approach`, `poll`, and `cm`, plus externally registered scan types.
-- **Pluggable runtime extensions** via plugins that can add computed columns or react to monitor events.
-- **EPICS integration** via pyepics wrapper for real control or a **simulated actuator backend** for tests and development.
+- **Pluggable runtime extensions** Plugins hook into scan logic and events that can add computed columns or act to monitor events.
+- **EPICS integration** via pyepics wrapper for or a **simulated actuator backend** for tests and development.
 - **Structured outputs** including the main scan file, optional metadata sidecar logging and waveform support, and post-mortem plotting tools.
 - **Event handling** Subscriptions route monitored events into defined roles.
-- **Trigger** Triggers allow actions before, or after scan points or on monitor events.
+- **Trigger** Triggers allow actions e.g. before, or after scan points or on monitor events.
 
 ## Public API
 
 `kiwi-scan` can be embedded directly as a Python library, for example inside a Python IOC or another beamline control application.
 
-The command-line tools are wrappers around the library API: they build a `ScanConfig`, load scan/plugin implementations, and then create or execute a scan object. For library users, the supported public API is described below.
+The command-line tools use the library API: they build a `ScanConfig`, load scan/plugin implementations, and then create or execute a scan object. 
+The public API is described below.
 
 ### Supported public API
 
-#### 1. Startup helpers
+For subclasses of `BaseScan`, only the documented constructor and non-private methods should be treated as public. Attributes and methods starting with `_` are internal implementation details.
 
-Use these when your application may rely on external plugins or externally registered scan types.
+#### 1. Startup 
+
+Search and load scan engines and plugins
 
 ```python
 import kiwi_scan
@@ -35,7 +40,7 @@ kiwi_scan.load_all_scan_types()
 
 #### 2. Configuration and YAML loading
 
-These are the building blocks for constructing scan configurations in Python or from YAML:
+Building scan configurations in Python:
 
 - `kiwi_scan.datamodels.ActuatorConfig`
 - `kiwi_scan.datamodels.ScanDimension`
@@ -43,20 +48,22 @@ These are the building blocks for constructing scan configurations in Python or 
 - `kiwi_scan.datamodels.TriggerAction`
 - `kiwi_scan.datamodels.ScanTriggers`
 - `kiwi_scan.datamodels.SubscriptionConfig`
+
+Loading scan configurations from YAML:
 - `kiwi_scan.yaml_loader.yaml_loader`
 - `kiwi_scan.yaml_loader.parse_replacements`
 - `kiwi_scan.yaml_loader.get_env_replacements`
 
 #### 3. Runtime scan API
 
-These functions are the recommended library entry points:
+Helper functions for creating scan objects:
 
 - `kiwi_scan.scan.tools.create_scan_with_config()`
   - create a scan object without starting it
 - `kiwi_scan.scan.tools.scan_with_config()`
   - create and execute a scan synchronously
 
-The returned scan object should be treated through its documented non-private interface:
+The scan object can be used via its interface defined in kiwi_scan.sca.scan_abs.py:
 
 - `scan.execute()`
 - `scan.load_data()`
@@ -70,32 +77,24 @@ The returned scan object should be treated through its documented non-private in
 
 #### 4. Extension API
 
-These are the supported extension points for projects that need custom behavior:
+- `kiwi_scan.scan.registry.register_scan` - regiter costum scan types
+- `kiwi_scan.plugin.registry.register_plugin` - register custom plugins
+- `kiwi_scan.load_all_plugins()` - search load plugins, set KIWI_SCAN_PLUGIN_PATH for custom plugins
+- `kiwi_scan.load_all_scan_types()` - search and load scan types, set KIWI_SCAN_SCAN_PATH for custom scan engines
 
-- `kiwi_scan.scan.registry.register_scan`
-- `kiwi_scan.scan.registry.load_all_scan_types`
-- `kiwi_scan.plugin.registry.register_plugin`
-- `kiwi_scan.actuator.factory.create_actuator`
-- `kiwi_scan.actuator.single.AbstractActuator`
-- `kiwi_scan.scan.scan_abs.ScanABC` or 
-- `kiwi_scan.scan.common.BaseScan` for custom scan implementations
 
-For subclasses of `BaseScan`, only the documented constructor and non-private methods should be treated as public. Attributes and methods starting with `_` are internal implementation details.
+#### 5. Data loader API
 
-#### 5. Analysis API
-
-These helpers are useful when another application wants to inspect scan results programmatically:
+Load scan data:
 
 - `kiwi_scan.dataloader.DataLoader`
 - `kiwi_scan.metadata_loader.parse_metadata_file()`
-- `kiwi_scan.postmortem.plot_postmortem()`
 
 ### What is not public API
 
 - CLI entry-point modules such as `scan_runner`, `scanplotter_cli`, and `actuator_runner`
 - implementation packages such as `scan_concrete.*`, `actuator_concrete.*`, and `monitor_concrete.*`
-- raw registry dictionaries such as `SCAN_REGISTRY` and `PLUGIN_REGISTRY`
-- factory lookup tables such as `MONITOR_TYPES`
+- raw registry dictionaries such as `SCAN_REGISTRY`,`PLUGIN_REGISTRY`, `MONITOR_TYPES`
 - any name starting with `_`
 
 ### Library integration example
@@ -179,13 +178,11 @@ Editable/development installation:
 pip install -e ".[dev]"
 ```
 
-For a detector-free test, use a simulated actuator (`type: sim`) and keep `detector_pvs: []`.
-
 ## Development setup
 
 For repository development, a top-level `Makefile` and `mkvenv.sh` helper script are provided.
 
-### Bootstrap or activate the development environment
+### Activate the development environment
 
 ```bash
 source ./mkvenv.sh
@@ -523,33 +520,183 @@ The post-mortem plotting tools can combine scan files and metadata files for lat
 
 ## Environment variables
 
-Useful environment variables:
-
 - `KIWI_SCAN_DATA_DIR` — base directory for output files
 - `KIWI_SCAN_REPLACE_*` — placeholder replacement values for YAML templates
 - `KIWI_SCAN_CONFIG_DIR` — where preset YAML configs are searched
 - `KIWI_SCAN_PLUGIN_PATH` — extra plugin files/directories to import
 - `KIWI_SCAN_SCAN_PATH` — extra scan-type files/directories to import
 
-## Project layout
+## YAML Configuration Reference
+- Forward compatibility: Unknown fields in dataclass-based YAML blocks are generally ignored during parsing.
+- Additional `scan_dimensions` are required for scan creation.
+- For a detector-free test, use a simulated actuator (`type: sim`) and keep `detector_pvs: []`.
 
+### Config data classes
 
-```text
-kiwi-scan/
-├── pyproject.toml
-├── README.md
-├── LICENSE
-├── src/
-│   └── kiwi_scan/
-├── config/
-│   └── scan_config/
-├── bash-completion/
-├── tests/
+- **ScanConfig** — Top-level scan configuration.
+- **ActuatorConfig** — Configuration for one actuator or motor interface.
+- **JogConfig** — Optional jog-control block attached to an actuator.
+- **ScanDimension** — One scan axis with start, stop, steps, and optional velocity.
+- **ScanTriggers** — Trigger groups executed in scan phases.
+- **TriggerAction** — One PV write action used by a trigger.
+- **SubscriptionConfig** — One event subscription bound to a role.
+- **PluginConfig** — One plugin declaration with type, name, and parameters.
+
+### Top-level structure
+
+`ScanConfig` is the root YAML object.
+
+```yaml
+actuators: {}
+detector_pvs: []
+scan_dimensions: []
+parallel_scans: []
+nested_scans: []
+plugin_configs: []
+monitor_type: null
+stop_pv: null
+data_dir: .
+output_file: scan_results.txt
+include_timestamps: false
+integration_time: 0.0
+debug: false
+performance_report: false
+triggers: {}
+metadata_pvs: []
+metadata_constants: {}
+metadata_file: scan_metadata.txt
+subscriptions: []
 ```
+### ActuatorConfig
+
+| Field | Type | Meaning |
+|---|---|---|
+| `pv` | string | Main write PV for absolute motion. |
+| `type` | string | Actuator backend type, such as `epics` or `sim`. |
+| `rel_pv` | string | Relative move PV. |
+| `rb_pv` | string | Readback PV. |
+| `cmd_pv` | string | Commanded-position PV. |
+| `cmdvel_pv` | string | Commanded-velocity PV. |
+| `stop_pv` | string | Stop PV. |
+| `stop_command` | float | `stop_pv` value. |
+| `status_pv` | string | Status PV used for ready/moving checks. |
+| `ready_value` | int or string | Status value considered ready. |
+| `ready_bitmask` | int | Bitmask for status-based ready logic. |
+| `queueing_delay` | float | Delay after EPICS writes. |
+| `startup_timeout` | float | Timeout waiting for motion to start. |
+| `in_position_band` | float | Allowed tolerance. |
+| `dwell_time` | float | Delay after motion completes. |
+| `backlash` | float | Optional backlash compensation distance. |
+| `start_pv` | string | PV used to start motion explicitly. |
+| `start_command` | float | Value written to `start_pv`. |
+| `velocity_pv` | string | PV used to set motion velocity. |
+| `get_velocity_pv` | string | PV used to read current velocity. |
+| `jog` | `JogConfig` | Jog-control configuration. |
+
+#### JogConfig
+| Field | Type | Meaning |
+|---|---|---|
+| `velocity_pv` | string | PV that receives jog velocity. |
+| `abs_velocity` | bool | Writes absolute velocity magnitude when true. |
+| `command_pv` | string | PV that starts jog motion. |
+| `command_pos` | float | Command value for positive jog. |
+| `command_neg` | float | Command value for negative jog. |
+
+### ScanTriggers
+Built-in phases are:
+
+- `before`
+- `on_point`
+- `after`
+- `monitor`
+
+Each phase contains a list of `TriggerAction` entries:
+
+Example:
+
+```yaml
+triggers:
+  before:
+    - pv: TEST:ARM
+      value: 1
+  on_point:
+    - pv: TEST:TRIG
+      value: 1
+      delay: 0.01
+  after:
+    - pv: TEST:ARM
+      value: 0
+```
+
+#### TriggerAction
+One PV write action used by a trigger.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `pv` | string | Target PV to write. |
+| `value` | any | Value written to the PV. |
+| `delay` | float | Optional sleep after the write. |
+
+### SubscriptionConfig
+One event subscription bound to a role.
+One of `pv` or `actuator` field should be set.
+When `actuator` is used, `source` selects which actuator PV is subscribed.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `name` | string | Unique subscription name. |
+| `role` | string | Logical dispatch role, for example `sync` or `heartbeat`. |
+| `pv` | string | Direct PV subscription target. |
+| `actuator` | string | Actuator name used for indirect PV lookup. |
+| `source` | string | Source selector like `rbv`, `status`, `stop`, or `velocity`. |
+
+Examples:
+
+```yaml
+subscriptions:
+  - name: sync_energy
+    role: sync
+    actuator: energy
+    source: rbv
+
+  - name: monitor
+    role: monitor
+    pv: TEST:SOME:PV:NAME
+```
+
+### PluginConfig
+Plugin declaration with type, name, and parameters.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `type` | string | Registered plugin type name. |
+| `name` | string | Instance name used in logs and runtime. |
+| `parameters` | mapping | Plugin-specific untyped configuration block. |
+
+### ScanDimension
+One scan axis with start, stop, steps, and optional velocity.
+Arrays are used for multiple actuators
+
+| Field | Type | Meaning |
+|---|---|---|
+| `actuator` | string | Name of the actuator used for this dimension. |
+| `start` | float | Scan start position. |
+| `stop` | float | Scan stop position. |
+| `steps` | int | Number of scan points. |
+| `velocity` | float | Optional velocity for continuous-style scans. |
 
 ## Development status
 
 This project is under active development. Configuration details and extension APIs may still evolve.
+
+## Contributing
+
+- Read the development setup section.
+- Keep changes focused and small.
+- Run `make test` locally.
+- Tests should be added in `tests/`
+- Use `logging` for diagnostics.
+- For debugging use the --log-level switch. Include log output and config for reporting bugs.
 
 ## License
 
