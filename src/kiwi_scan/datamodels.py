@@ -228,6 +228,7 @@ class ScanConfig:
     integration_time: float = 0.0
     debug: bool = False
     performance_report: bool = False
+    data_writing_enabled: bool = True
     triggers: Optional[ScanTriggers] = None
     metadata_pvs: List[str] = field(default_factory=list)          # EPICS PVs to monitor in parallel
     metadata_constants: Dict[str, Any] = field(default_factory=dict)  # key/value string constants
@@ -280,6 +281,7 @@ class ScanConfig:
             integration_time=config_dict.get("integration_time", 0.0),
             debug=config_dict.get("debug", False),
             performance_report=config_dict.get("performance_report", False),
+            data_writing_enabled=config_dict.get("data_writing_enabled", True),
             triggers=triggers,
             metadata_pvs=config_dict.get("metadata_pvs", []),
             metadata_constants=config_dict.get("metadata_constants", {}),

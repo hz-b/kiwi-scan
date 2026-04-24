@@ -141,13 +141,7 @@ class PollScan(BaseScan):
         index = 0
 
         first_actuator = self.actuators[self.scan_dimensions[0].actuator]
-
-        # --- start CA metadata monitors BEFORE acquisition begins ---
-        try:
-            self._meta_mon.start()
-        except Exception as e:
-            logging.error("Failed to start metadata monitor: %s", e, exc_info=True)
-
+        self._start_metadata_monitor()
         self._fire_triggers("before")
         
         while not first_actuator.is_moving():
@@ -224,14 +218,9 @@ class PollScan(BaseScan):
                     self._position = current_position
                 
         finally:
-            try:
-                self._meta_mon.stop()
-            except Exception:
-                logging.exception("Error stopping metadata monitor")
-
+            self._stop_metadata_monitor()
             if monitor is not None:
                 monitor.close()
-
             # IMPORTANT: PollScan doesn't use BaseScan.scan(), so we must clean up subscriptions here.
             try:
                 self._clear_subscriptions()

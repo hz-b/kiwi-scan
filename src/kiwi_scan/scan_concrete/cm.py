@@ -199,12 +199,7 @@ class CMScan(BaseScan):
 
             # 3) Set target velocities and start each actuator
             #  start CA monitors BEFORE motion begins 
-            try:
-                self._meta_mon.start()
-            except Exception as e:
-                # Non-fatal: keep the scan running even if metadata fails
-                logging.error("Failed to start metadata monitor: %s", e, exc_info=True)
-
+            self._start_metadata_monitor()
             self._fire_triggers("before")
             for dim in self.scan_dimensions:
                 name = dim.actuator
@@ -230,11 +225,7 @@ class CMScan(BaseScan):
                 except Exception as e:
                     logging.warning(f"Failed to restore velocity for actuator '{name}': {e}")
         finally:
-            try:
-                self._meta_mon.stop()
-            except Exception:
-                logging.exception("Error stopping metadata monitor")
-
+            self._stop_metadata_monitor()
             # MonoCMScan overrides BaseScan.scan(), so it must clear subscriptions itself
             try:
                 self._clear_subscriptions()

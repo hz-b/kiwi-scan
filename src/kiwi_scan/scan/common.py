@@ -14,6 +14,7 @@ import time
 import random
 import string
 import epics
+import threading
 # import pdb
 from kiwi_scan.actuator.single import AbstractActuator
 from kiwi_scan.actuator.factory import create_actuator
@@ -69,6 +70,14 @@ class BaseScan(ScanABC):
         self.data_dir = resolve_data_dir(data_dir, config.data_dir)
         logging.info(f"Data directory: {self.data_dir}")
 
+        self._data_writer_lock = threading.RLock()
+        self._requested_output_file = config.output_file
+        self._output_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        self._data_writing_enabled = bool(
+            getattr(config, "data_writing_enabled", True)
+        )
+        self._data_header_written = False
+
         # copy runtime flags
         self.include_timestamps = config.include_timestamps
         self.samplerate = 1.0
@@ -77,7 +86,9 @@ class BaseScan(ScanABC):
         if self.debug:
             logging.basicConfig(level=logging.INFO)
             # pdb.set_trace()
-        self.output_file = self.generate_and_create_file(config.output_file)
+        self.output_file: Optional[str] = None
+        if self._data_writing_enabled:
+            self._ensure_output_file_exists()
         # setup
         logging.debug("_connect_detectors")
         self._connect_detectors()
@@ -104,10 +115,8 @@ class BaseScan(ScanABC):
             self.stop_pv = None
         # Build a time-stamped sibling file next to main scan file
         base_name, ext = os.path.splitext(self.cfg.metadata_file or "scan_metadata.txt")
-        # Reuse the same timestamp as main file (nice correlation)
-        main_name, main_ext = os.path.splitext(os.path.basename(self.output_file))
-        # main_name looks like "<base>-YYYYMMDDHHMMSS"
-        self._metadata_out = os.path.join(self.data_dir, f"{base_name}-{main_name.split('-', 1)[-1]}{ext}")
+        # Reuse the same timestamp as the main file when writing is enabled.
+        self._metadata_out = os.path.join(self.data_dir, f"{base_name}-{self._output_timestamp}{ext}")
         # Create the monitor (but don't start yet)
         self._meta_mon = MetadataCAMonitor(
             pvs=list(self.cfg.metadata_pvs or []),
@@ -115,6 +124,7 @@ class BaseScan(ScanABC):
             outfile=self._metadata_out,
             queue_maxsize=20000, 
         )
+        self._meta_mon_started = False
         self._position: Any = None
         self._last_point: Dict[str, Any] = {}
         self._stats: Optional[Tuple[float, float]] = None
@@ -356,6 +366,47 @@ class BaseScan(ScanABC):
                 f"start time = {datetime.fromtimestamp(start_time).strftime('%H:%M:%S.%f')}, "
                 f"scheduled time = {datetime.fromtimestamp(scheduled_sample_time).strftime('%H:%M:%S.%f')}")
 
+    def get_data_writing_enabled(self) -> bool:
+        with self._data_writer_lock:
+            return self._data_writing_enabled
+
+    def set_data_writing_enabled(self, enabled: bool) -> None:
+        """
+        Enable/disable main scan file writing and metadata sidecar logging.
+
+        Disabling is immediate:
+          - no further scan rows are appended
+          - an active metadata sidecar monitor is stopped
+
+        Re-enabling during a running scan is also supported:
+          - the main output file is created lazily on the next written point
+          - metadata monitoring is restarted if the scan is busy
+        """
+        enabled = bool(enabled)
+        with self._data_writer_lock:
+            if self._data_writing_enabled == enabled:
+                return
+            self._data_writing_enabled = enabled
+
+        if enabled:
+            logging.info("Data writing enabled")
+            if self.busy:
+                self._start_metadata_monitor()
+        else:
+            logging.info("Data writing disabled")
+            self._stop_metadata_monitor()
+
+    def _ensure_output_file_exists(self) -> Optional[str]:
+        """Create the timestamped output file lazily when writing is enabled."""
+        with self._data_writer_lock:
+            if not self._data_writing_enabled:
+                return None
+            if self.output_file is None:
+                self.output_file = self.generate_and_create_file(
+                    self._requested_output_file
+                )
+            return self.output_file
+
     def generate_and_create_file(self, base_filename):
         """
         Generates a new filename by appending the current date and time to the base filename.
@@ -365,8 +416,7 @@ class BaseScan(ScanABC):
             str: The new filename with the timestamp appended (e.g., 'monotest-202411061655.txt').
         """
         while True:
-            now = datetime.now()
-            timestamp = now.strftime('%Y%m%d%H%M%S')
+            timestamp = self._output_timestamp
             name, ext = os.path.splitext(base_filename)
             new_filename = os.path.join(self.data_dir, f"{name}-{timestamp}{ext}")
             if not os.path.exists(new_filename):
@@ -384,6 +434,29 @@ class BaseScan(ScanABC):
 
     def get_output_file(self):
         return self.output_file
+
+    def _start_metadata_monitor(self) -> None:
+        if not self.get_data_writing_enabled():
+            logging.info("Metadata monitor not started: data writing is disabled")
+            return
+        if self._meta_mon_started:
+            return
+        try:
+            self._meta_mon.start()
+            self._meta_mon_started = True
+            logging.info("Started metadata task")
+        except Exception as e:
+            logging.error("Failed to start metadata monitor: %s", e, exc_info=True)
+
+    def _stop_metadata_monitor(self) -> None:
+        if not self._meta_mon_started:
+            return
+        try:
+            self._meta_mon.stop()
+        except Exception:
+            logging.exception("Error stopping metadata monitor")
+        finally:
+            self._meta_mon_started = False
 
     def is_within_range(self, current_position, start, stop):
         """
@@ -458,6 +531,13 @@ class BaseScan(ScanABC):
             )
         except Exception:
             logging.debug("Failed to update last-point cache", exc_info=True)
+
+        if not self.get_data_writing_enabled():
+            logging.debug("Skipping data write because data writing is disabled")
+            return
+
+        if not self._data_header_written:
+            self.write_header_to_output_file()
 
         with open(self.output_file, "a", encoding="utf-8") as file:
             parts = []
@@ -630,6 +710,9 @@ class BaseScan(ScanABC):
         """
         Load recent data file
         """
+        if self.output_file is None:
+            logging.info("No scan data file exists")
+            return None
         data_loader = DataLoader(self.output_file, data_dir=self.data_dir)
         return data_loader.load_data()
 
@@ -640,7 +723,16 @@ class BaseScan(ScanABC):
         Returns:
             file: The opened file object.
         """
-        file = open(self.output_file, "w")
+        if not self.get_data_writing_enabled():
+            logging.debug("Skipping header write because data writing is disabled")
+            return None
+
+        if self._data_header_written:
+            return None
+
+        output_file = self._ensure_output_file_exists()
+        if output_file is None:
+            return None
 
         detector_headers = [pv.pvname for pv in self.detector_pvs]
 
@@ -683,8 +775,10 @@ class BaseScan(ScanABC):
 
         headers += plugin_headers
 
-        file.write("\t".join(headers) + "\n")
-        return file
+        with open(output_file, "w", encoding="utf-8") as file:
+            file.write("\t".join(headers) + "\n")
+        self._data_header_written = True
+        return None
 
     def get_stop_pv(self):
         """  Read stop PV and reset it if triggered (value == 1).
@@ -726,13 +820,7 @@ class BaseScan(ScanABC):
             self._start_subscriptions()
             logging.debug(f"Actuators: {list(self.actuators)}")
             logging.debug(f"Requested positions: {positions}")
-            # --- start CA monitors BEFORE motion begins ---
-            try:
-                self._meta_mon.start()
-                logging.info("Started meta data task")
-            except Exception as e:
-                # Non-fatal: keep the scan running even if metadata fails
-                logging.error("Failed to start metadata monitor: %s", e, exc_info=True)
+            self._start_metadata_monitor()
 
             # prepare new_positions and tell us if we added an overshoot step
             new_positions, overshoot_applied = self._prepare_positions(positions)
@@ -805,10 +893,7 @@ class BaseScan(ScanABC):
         
         finally:
             self._daq_is_on = False
-            try:
-                self._meta_mon.stop()
-            except Exception:
-                logging.exception("Error stopping metadata monitor")
+            self._stop_metadata_monitor()
 
             if monitor is not None:
                 monitor.close()

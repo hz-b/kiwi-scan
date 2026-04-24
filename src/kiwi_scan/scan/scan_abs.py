@@ -14,7 +14,7 @@ class ScanABC(ABC):
     """
     cfg: ScanConfig
     data_dir: Optional[str]
-    output_file: str
+    output_file: Optional[str]
     include_timestamps: bool
     busyflag: bool
 
@@ -35,7 +35,17 @@ class ScanABC(ABC):
 
     @abstractmethod
     def get_output_file(self) -> str:
-        """Return the current output file path."""
+        """Return the current output file path, or None until a file is created."""
+        pass
+
+    @abstractmethod
+    def set_data_writing_enabled(self, enabled: bool) -> None:
+        """Enable or disable scan data and metadata writing at runtime."""
+        pass
+
+    @abstractmethod
+    def get_data_writing_enabled(self) -> bool:
+        """Checks if scan data and metadata writing is currently enabled."""
         pass
 
     @property
