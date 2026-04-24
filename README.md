@@ -553,10 +553,11 @@ monitor_type: null
 stop_pv: null
 data_dir: .
 output_file: scan_results.txt
-include_timestamps: false
+include_timestamps: False
 integration_time: 0.0
-debug: false
-performance_report: false
+debug: False
+performance_report: False
+data_writing_enabled: True
 triggers: {}
 metadata_pvs: []
 metadata_constants: {}
