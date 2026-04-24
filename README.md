@@ -3,12 +3,12 @@
 `kiwi-scan`: A Modular Scan Framework for Commissioning and Diagnostics in EPICS Environments
 
 Actuators, detector PVs, triggers, subscriptions, plugins, and metadata sidecars are configured via YAML. 
-Scan engine (scan type) and scan dimensions are choosen by command line or API. 
-Results are written to timestamped text files, with metadata (constants or monitored PVs) parallel.
+Scan engine (scan type) and scan dimensions are chosen by command line or API. 
+Results are written to timestamped text files. Optional metadata sidecars can record constants and monitored PVs in parallel.
 
 ## Overview of Features
 
-- **YAML configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots and plugin paramters.
+- **YAML configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots and plugin parameters.
 - **Pluggable scan engines** such as `linear`, `approach`, `poll`, and `cm`, plus externally registered scan types.
 - **Pluggable runtime extensions** Plugins hook into scan logic and events that can add computed columns or act to monitor events.
 - **EPICS integration** via pyepics wrapper for or a **simulated actuator backend** for tests and development.
@@ -63,7 +63,7 @@ Helper functions for creating scan objects:
 - `kiwi_scan.scan.tools.scan_with_config()`
   - create and execute a scan synchronously
 
-The scan object can be used via its interface defined in kiwi_scan.sca.scan_abs.py:
+The scan object can be used via its interface defined in kiwi_scan.scan,scan_abs.py:
 
 - `scan.execute()`
 - `scan.load_data()`
@@ -77,7 +77,7 @@ The scan object can be used via its interface defined in kiwi_scan.sca.scan_abs.
 
 #### 4. Extension API
 
-- `kiwi_scan.scan.registry.register_scan` - regiter costum scan types
+- `kiwi_scan.scan.registry.register_scan` - register costum scan types
 - `kiwi_scan.plugin.registry.register_plugin` - register custom plugins
 - `kiwi_scan.load_all_plugins()` - search load plugins, set KIWI_SCAN_PLUGIN_PATH for custom plugins
 - `kiwi_scan.load_all_scan_types()` - search and load scan types, set KIWI_SCAN_SCAN_PATH for custom scan engines
@@ -168,10 +168,6 @@ print("scan finished")
 
 Basic installation:
 
-```bash
-pip install kiwi-scan
-```
-
 Editable/development installation:
 
 ```bash
@@ -213,7 +209,7 @@ The development targets are:
 - `make test` - run Python unit tests
 - `make install_completion` - install bash completion snippets from `bash-completion/`
 - `make uninstall_completion` - remove installed bash completion snippets
-- `make cscope` - build `cscope` and `ctags` indexes used by vim. This rule can directly used by vi to update indexes
+- `make cscope` - build `cscope` and `ctags` indexes used by vim.
 - `make tag` - create a timestamp-based tag from `HEAD`
 - `make clean` - remove `.venv`, caches, tags, and generated metadata such as `*.egg-info`
 
@@ -687,7 +683,7 @@ Arrays are used for multiple actuators
 
 ## Development status
 
-This project is under active development. Configuration details and extension APIs may still evolve.
+This project is under active development. YAML fields, scan-engine hooks, and plugin APIs may still change between minor releases.
 
 ## Contributing
 
@@ -700,4 +696,3 @@ This project is under active development. Configuration details and extension AP
 
 ## License
 
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
