@@ -63,7 +63,8 @@ Helper functions for creating scan objects:
 - `kiwi_scan.scan.tools.scan_with_config()`
   - create and execute a scan synchronously
 
-The scan object can be used via its interface defined in kiwi_scan.scan,scan_abs.py:
+The scan object can be used via its interface defined in kiwi_scan.scan,scan_abs.py.
+Derived scan classes have to implement the following methods:
 
 - `scan.execute()`
 - `scan.load_data()`
@@ -71,6 +72,8 @@ The scan object can be used via its interface defined in kiwi_scan.scan,scan_abs
 - `scan.get_value(name, with_metadata=False)`
 - `scan.get_actuator(name)`
 - `scan.get_actuators()`
+- `scan.set_data_writing_enabled()`
+- `scan.get_data_writing_enabled()`
 - `scan.busy`
 - `scan.position`
 - `scan.stop()` 
@@ -104,6 +107,7 @@ This is an example for embedding `kiwi-scan` in another Python process.
 ```python
 import threading
 import kiwi_scan
+import logging
 
 from kiwi_scan.datamodels import ActuatorConfig, ScanConfig, ScanDimension
 from kiwi_scan.scan.tools import create_scan_with_config
@@ -357,6 +361,7 @@ export KIWI_SCAN_REPLACE_DET_PV2=ue521sgm1:detB
 ## Plugin example
 
 Plugins are instantiated from `plugin_configs` and discovered from the built-in plugin package plus any files or directories listed in `KIWI_SCAN_PLUGIN_PATH`.
+New plugin classes must be derived from the interface defined in [plugin base class](src/kiwi_scan/plugin/base.py)
 
 Create `plugins/drift_watch.py`:
 
@@ -433,7 +438,7 @@ Use this example with `--scan_type linear`, the built-in `LinearScan` dispatches
 ## External scan-type example
 
 External scan types are registered with `register_scan(...)` and discovered from files or directories listed in `KIWI_SCAN_SCAN_PATH`.
-
+New scan classes must be derived from the interface defined in [scan abstraction](src/kiwi_scan/scan/scan_abs.py)
 Create `scan_types/triangle_scan.py`:
 
 ```python
@@ -688,6 +693,12 @@ This project is under active development. YAML fields, scan-engine hooks, and pl
 
 ## Contributing
 
+### Tagging
+We use a dark launch strategy: features are deployed continuously but activated separately.
+Timestamped tags (e.g. 0.1.1+20260424.094820) are mapped to a tagged integration state.
+Public releases use clean semantic versions (X.Y.Z) on PyPI, each mapped to a time stamped tag.
+
+### Guidelines
 - Read the development setup section.
 - Keep changes focused and small.
 - Run `make test` locally.
@@ -697,3 +708,4 @@ This project is under active development. YAML fields, scan-engine hooks, and pl
 
 ## License
 
+This project is licensed under the MIT License. See the LICENSE file for details.
