@@ -192,7 +192,7 @@ class PollScan(BaseScan):
                 # break only if out of range and the range is entered once
                 if in_range:
                     entered_range = True
-                elif entered_range and first_actuator.is_ready():
+                elif entered_range and first_actuator.is_ready() and self_start != self._stop: 
                     logging.debug(f"out of range: {self._start}|{pos}|{self._stop}")
                     break
 
