@@ -289,29 +289,6 @@ class ScanConfig:
             metadata_file=config_dict.get("metadata_file", "scan_metadata.txt"),
             subscriptions=subs,
         )
-    
-    def export_to_yaml(self, filename: str) -> None:
-        """
-        Dump this ScanConfig into a YAML file.
-        Each entry is stored under a timestamped top-level key.
-        """
-
-        path = Path(filename)
-        now = datetime.now().astimezone()
-        created_at = now.isoformat(timespec="seconds")
-        key = "scan_config_" + now.strftime("%Y%m%dT%H%M%S%z")
-        entry = {
-            key: {
-                "created_at": created_at,
-                "config": asdict(self),
-            }
-        }
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("a", encoding="utf-8") as f:
-            if path.stat().st_size > 0:
-                f.write("\n")
-            yaml.safe_dump(entry, f, sort_keys=False, default_flow_style=False)
-
 
 def build_scan_dim(actuator: str, start: float, stop: float, steps: int) -> ScanDimension:
     """
