@@ -24,10 +24,12 @@ from kiwi_scan.dataloader import DataLoader, resolve_data_dir
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.scan.scan_abs import ScanABC
 from kiwi_scan.epics_wrapper import EpicsPV
+from kiwi_scan.manifestwriter import ManifestWriter
 from .metadata_monitor import MetadataCAMonitor
 from .trigger_manager import TriggerManager
 from .subscription_manager import SubscriptionManager
 from .sync_controller import SyncController
+
 
 class BaseScan(ScanABC):
     """
@@ -1047,3 +1049,28 @@ class BaseScan(ScanABC):
         if not hasattr(self, "actuators") or self.actuators is None:
             return {}
         return dict(self.actuators)
+
+    def append_to_manifest(self, scan_type: str = None, metadata: dict = None) -> None:
+        """
+        Append scan configuration to the active manifest.
+        Args:
+            scan_type: Optional explicit scan type (preferred over class name)
+            metadata: Optional extra metadata dict
+        """
+        try:
+            writer = ManifestWriter.from_active()
+            if writer is None:
+                return
+
+            writer.append_scan_config(
+                config=self.cfg,
+                scan_type=scan_type or getattr(self, "scan_type", self.__class__.__name__),
+                path=getattr(self.cfg, "data_dir", None),
+                data_file=getattr(self.cfg, "output_file", None),
+                metadata=metadata,
+            )
+
+        except Exception:
+            # Never break a scan because of manifest issues
+            import logging
+            logging.exception("Failed to append scan to manifest")

@@ -5,7 +5,7 @@ _scan_runner_completion() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Top-level options
-    opts="-h --help --scan_type --config --config-file --dim --replace --log-level"
+    opts="-h --help --scan_type --config --config-file --dim --replace --log-level --newmanifest"
 
     # Fixed-value lists
     local scan_types="linear approach monocm cm poll"

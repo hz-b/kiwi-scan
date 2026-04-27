@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import os
+import sys
 import argparse
 
 import kiwi_scan
@@ -12,6 +13,7 @@ from kiwi_scan.yaml_loader import (
     yaml_loader,
 )
 from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
+from kiwi_scan.manifestwriter import ManifestWriter
 from kiwi_scan.scan.tools import (
     load_scan_configs,
     scan_with_config,
@@ -44,8 +46,27 @@ def _safe_load_config_index(config_dir: str) -> dict:
         return {}
 
 def main():
+
     config_dir = os.environ.get("KIWI_SCAN_CONFIG_DIR", get_scan_config_dir())
     data_dir = os.environ.get("KIWI_SCAN_DATA_DIR")
+
+    # manifest first (optional single argument)
+    pre_parser = argparse.ArgumentParser(add_help=False)
+    pre_parser.add_argument("--newmanifest", nargs="?", const=True, default=None)
+
+    pre_args, remaining_argv = pre_parser.parse_known_args()
+
+    if pre_args.newmanifest is not None:
+        if pre_args.newmanifest is True:
+            path = ManifestWriter.newmanifest(directory=data_dir)
+        else:
+            path = ManifestWriter.newmanifest(pre_args.newmanifest)
+
+        logging.info("New manifest: %s", path)
+
+        # If ONLY --newmanifest → exit immediately
+        if len(sys.argv) <= 2:
+            return
 
     # IMPORTANT: load scan types before argparse builds choices
     load_all_scan_types()
@@ -55,11 +76,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Perform different types of scans on EPICS PVs.\n"
                     "Examples:\n"
-                    "./scan_runner.py --scan_type linear --config mono \\\n"
+                    "scan_runner --scan_type linear --config mono \\\n"
                     "--dim actuator=energy,start=100,stop=200,steps=5 \\\n"
                     "--dim actuator=gap,start=1.0,stop=2.0,steps=3\n\n"
-                    "./scan_runner.py --scan_type linear --config-file /path/to/mono.yaml \\\n"
-                    "--dim actuator=energy,start=100,stop=200,steps=5",
+                    "scan_runner --scan_type linear --config-file /path/to/mono.yaml \\\n"
+                    "--dim actuator=energy,start=100,stop=200,steps=5 \n\n"
+                    "scan_runner --newmanifest",
         formatter_class=argparse.RawTextHelpFormatter
     )
 

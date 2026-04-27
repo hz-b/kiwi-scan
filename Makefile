@@ -67,3 +67,4 @@ test: ## Run the current test scripts (uses mkvenv.sh when needed)
 	python3 tests/test_registry_trigger_and_callbacks.py; \
 	python3 tests/test_subscription_manager.py; \
 	python3 tests/test_scanlib.py
+	python3 tests/test_manifest_writer.py
