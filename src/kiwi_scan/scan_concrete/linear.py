@@ -184,7 +184,8 @@ class LinearScan(BaseScan):
         """
         Execute the linear scan over the pre-defined positions.
         """
-        self.append_to_manifest()
+        if self.get_data_writing_enabled():
+            self.append_to_manifest()
         monitor = create_monitor(self.cfg)
         if monitor is not None: 
             monitor.start(self.cfg.detector_pvs)

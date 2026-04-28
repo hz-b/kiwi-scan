@@ -236,7 +236,8 @@ class CMScan(BaseScan):
             self.busyflag = False
 
     def execute(self):
-        self.append_to_manifest()
+        if self.get_data_writing_enabled():
+            self.append_to_manifest()
         logging.info(f"Starting CM scan.")
         self.scan()
         logging.info("CM complete.")

@@ -53,6 +53,7 @@ class ApproachMove(BaseScan):
         """
         Execute the move over the pre-defined positions.
         """
-        self.append_to_manifest()
+        if self.get_data_writing_enabled():
+            self.append_to_manifest()
         self.scan(self.positions)
 

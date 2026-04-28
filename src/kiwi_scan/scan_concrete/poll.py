@@ -234,7 +234,8 @@ class PollScan(BaseScan):
         """
         Execute polling within range.
         """
-        self.append_to_manifest()
+        if self.get_data_writing_enabled():
+            self.append_to_manifest()
         logging.info(f"Starting polling from {self._start} to {self._stop}")
         monitor = create_monitor(self.cfg)
 
