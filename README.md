@@ -706,6 +706,11 @@ Public releases use clean semantic versions (X.Y.Z) on PyPI, each mapped to a ti
 - Use `logging` for diagnostics.
 - For debugging use the --log-level switch. Include log output and config for reporting bugs.
 
+## References
+
+- **KIWI Scan Presentation**  
+  https://indico.in2p3.fr/event/37441/contributions/171970/attachments/101030/156847/kiwi-scan.pdf
+
 ## License
 
 This project is licensed under the MIT License. See the LICENSE file for details.
