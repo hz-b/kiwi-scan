@@ -48,6 +48,7 @@ coverage.xml
 .pytest_cache/
 pytestdebug.log
 LOG
+LOG.*
 
 # Type checker
 .mypy_cache/
