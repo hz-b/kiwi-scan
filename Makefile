@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-VERSION ?= 0.1.1
+VERSION ?= 0.1.2
 .DEFAULT_GOAL := help
 
 BASH_COMPLETION_DIR ?= ~/.bash_completion.d
