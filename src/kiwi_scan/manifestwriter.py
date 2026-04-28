@@ -150,7 +150,7 @@ class ManifestWriter:
         scan_type: Optional[str] = None,
         path: Optional[str] = None,
         data_file: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata_file: Optional[str] = None,
     ) -> str:
         """
         Append one scan configuration entry to the manifest.
@@ -173,11 +173,9 @@ class ManifestWriter:
             "scan_type": scan_type,
             "path": path,
             "data_file": data_file,
+            "metadata_file": metadata_file,
             "config": self._to_plain_data(config),
         }
-        # add optional meta data
-        if metadata:
-            entry["metadata"] = metadata
 
         self._append_entry(entry)
         self.logger.debug("Appended entry: %s", scan_id)

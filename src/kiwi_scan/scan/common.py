@@ -1050,7 +1050,7 @@ class BaseScan(ScanABC):
             return {}
         return dict(self.actuators)
 
-    def append_to_manifest(self, scan_type: str = None, metadata: dict = None) -> None:
+    def append_to_manifest(self, scan_type: str = None) -> None:
         """
         Append scan configuration to the active manifest.
         Args:
@@ -1066,8 +1066,8 @@ class BaseScan(ScanABC):
                 config=self.cfg,
                 scan_type=scan_type or getattr(self, "scan_type", self.__class__.__name__),
                 path=getattr(self.cfg, "data_dir", None),
-                data_file=getattr(self.cfg, "output_file", None),
-                metadata=metadata,
+                data_file=self.output_file,
+                metadata_file=self._metadata_out,
             )
 
         except Exception:
