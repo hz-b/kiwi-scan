@@ -503,6 +503,23 @@ actuator_runner --help
 
 ## Output files
 
+### Manifest files
+
+The manifest writer can be used to track a sequence of scans across independent runs
+from command line tools or API. 
+
+Create or select a new manifest file:
+
+```bash
+scan_runner --newmanifest [optional_filename.yaml]
+```
+Each scan engine appends its configuration and output file reference to the active manifest.
+
+If no filename is given, a timestamped file is created (in `KIWI_SCAN_DATA_DIR` if set).
+`kiwi_scan.scan.common` provides `append_to_manifest(self, scan_type: str = None) -> None` for external scan types.
+
+### Data files
+
 A typical run can generate two kinds of files:
 
 1. **Main scan file**
@@ -522,6 +539,8 @@ The post-mortem plotting tools can combine scan files and metadata files for lat
 ## Environment variables
 
 - `KIWI_SCAN_DATA_DIR` — base directory for output files
+- `KIWI_SCAN_MANIFEST_FILE` – explicitly set the active manifest file
+- `KIWI_SCAN_MANIFEST_STATE_FILE` – override the active manifest state file path
 - `KIWI_SCAN_REPLACE_*` — placeholder replacement values for YAML templates
 - `KIWI_SCAN_CONFIG_DIR` — where preset YAML configs are searched
 - `KIWI_SCAN_PLUGIN_PATH` — extra plugin files/directories to import
