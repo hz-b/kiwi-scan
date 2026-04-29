@@ -11,6 +11,7 @@ from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.monitor.factory import create_monitor
 from kiwi_scan.actuator.single import PvEvent
+from kiwi_scan.scan.range_exit_detector import RangeExitDetector
 
 
 class PollScan(BaseScan):
@@ -143,7 +144,12 @@ class PollScan(BaseScan):
         first_actuator = self.actuators[self.scan_dimensions[0].actuator]
         self._start_metadata_monitor()
         self._fire_triggers("before")
-        
+        range_exit = RangeExitDetector(
+            self._start,
+            self._stop,
+            eps=0.001,
+            out_threshold=6,
+        )
         while not first_actuator.is_moving():
             logging.debug("Wait for actuator to start")
             time.sleep(0.05)
@@ -183,19 +189,19 @@ class PollScan(BaseScan):
                     pos = first_actuator.rbv
                     self._position = pos
                 current_position = pos
+                
+                range_exit_detected = range_exit.update(pos) 
+                first_actuator_ready = first_actuator.is_ready() 
+                if range_exit_detected and first_actuator_ready and self._start != self._stop:
+                    logging.info("Scan termination detected at pos=%s", pos)
+                    break
+                if first_actuator_ready:
+                    continue
+
                 self._fire_triggers("on_point")
                 # logging.debug("Read detectors")
                 vals = self.read_detectors()
                 self._fire_triggers("after_point")
-                in_range = self.is_within_range(current_position, self._start, self._stop)
-
-                # break only if out of range and the range is entered once
-                if in_range:
-                    entered_range = True
-                elif entered_range and first_actuator.is_ready() and self_start != self._stop: 
-                    logging.debug(f"out of range: {self._start}|{pos}|{self._stop}")
-                    break
-
                 # plugin data
                 plugin_data = []
                 for plugin in self.plugins:
