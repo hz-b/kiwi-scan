@@ -39,9 +39,9 @@ class ManifestWriter:
     def __init__(self, filename: str):
         self.path = Path(filename).expanduser()
         self.logger.debug("Initialized ManifestWriter with path: %s", self.path)
-
+    
     @classmethod
-    def _create_manifest_header(self) -> Dict[str, Any]:
+    def _create_manifest_header(cls) -> Dict[str, Any]:
         """
         Create the initial manifest header structure.
         Can be called from other class methods and has access to 
@@ -198,7 +198,7 @@ class ManifestWriter:
             with self.path.open("r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
         else:
-            data = cls._create_manifest_header() 
+            data = self._create_manifest_header() 
         
         if "scans" not in data or data["scans"] is None:
             data["scans"] = []

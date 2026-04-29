@@ -38,31 +38,11 @@ class PollScan(BaseScan):
         self._start = self.scan_dimensions[0].start
         self._stop = self.scan_dimensions[0].stop
 
-        # --- event-driven wakeup state ---
-        self._tick_cond = threading.Condition()
-        self._tick_seq = 0  # increments on each heartbeat event
-        self._stop_requested = threading.Event()
-
-        # --- optional: store last events for debugging/logic ---
-        self._last_heartbeat: Optional[PvEvent] = None
-        self._last_sync: Optional[PvEvent] = None
-        self._last_status: Optional[PvEvent] = None
-
         self.register_subscription_role("heartbeat", self._on_heartbeat_event)
         self.register_subscription_role("sync", self._on_sync_event)
         self.register_subscription_role("status", self._on_status_event)
         self.register_subscription_role("stop", self._on_stop_event)
 
-    # -------------------- role callbacks --------------------
-
-    def _on_heartbeat_event(self, ev: PvEvent, subscription=None) -> None:
-        self._last_heartbeat = ev
-        with self._tick_cond:
-            self._tick_seq += 1
-            self._tick_cond.notify_all()
-        logging.debug("[heartbeat] %s=%r (seq=%d)", ev.pvname, ev.value, self._tick_seq)
-
-    # TODO: common handler
     def _on_sync_event(self, ev: PvEvent, subscription=None) -> None:
         """
         Record sync events for the SyncController. Only the primary actuator
@@ -86,51 +66,6 @@ class PollScan(BaseScan):
             ev.source,
             getattr(subscription, "name", None),
         )
-
-    def _on_status_event(self, ev: PvEvent, subscription=None) -> None:
-        self._last_status = ev
-        logging.debug("[status] %s=%r", ev.pvname, ev.value)
-
-    def _on_stop_event(self, ev: PvEvent, subscription=None) -> None:
-        """
-        Immediate stop trigger. Stops actuators best-effort and wakes the loop.
-        """
-        logging.info("[stop] %s=%r -> stopping scan", ev.pvname, ev.value)
-        if self.busyflag == True:
-            self._stop_requested.set()
-            with self._tick_cond:
-                self._tick_cond.notify_all()
-            try:
-                for act in self.actuators.values():
-                    act.stop()
-            except Exception:
-                logging.exception("Error while stopping actuators on stop event")
-
-    # -------------------- internal helpers --------------------
-
-    def _wait_for_tick_or_timeout(self, timeout_s: float) -> bool:
-        """
-        Wait until:
-          - a heartbeat tick arrives (returns True), or
-          - timeout occurs (returns False), or
-          - stop is requested (returns False).
-        """
-        if timeout_s is None or timeout_s < 0:
-            timeout_s = 0.0
-
-        with self._tick_cond:
-            start_seq = self._tick_seq
-            if self._stop_requested.is_set():
-                return False
-
-            # Wait until seq changes or timeout
-            self._tick_cond.wait(timeout=timeout_s)
-            if self._stop_requested.is_set():
-                return False
-
-            return self._tick_seq != start_seq
-
-    # -------------------- main scan --------------------
 
     def scan(self, monitor: BaseMonitor = None) -> None:
         """
@@ -170,7 +105,6 @@ class PollScan(BaseScan):
                 # Start a new sync cycle, then wait for heartbeat and all
                 # configured sync-role subscriptions.
                 self._arm_sync_controller()
-                self._wait_for_tick_or_timeout(self.sampletime)
 
                 if self._stop_requested.is_set():
                     logging.debug("Stop event set")

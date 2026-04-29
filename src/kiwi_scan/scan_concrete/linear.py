@@ -3,7 +3,6 @@
 
 import logging
 import threading
-import queue
 import math
 from typing import List, Dict, Any, Optional
 from kiwi_scan.scan.common import BaseScan
@@ -52,9 +51,6 @@ class LinearScan(BaseScan):
             "trigger": self._on_trigger_event,
             "plugin": self._on_plugin_event,
         }
-        self._last_heartbeat: Optional[PvEvent] = None
-        self._last_sync: Optional[PvEvent] = None
-        self._last_status: Optional[PvEvent] = None
         # Online stats for sync position samples (updated only while DAQ is on)
         self._mean_stat = stats.Mean()
         self._var_stat = stats.Var()
@@ -67,56 +63,6 @@ class LinearScan(BaseScan):
 
         # Keep a default stats tuple (now 5 fields)
         self._stats = (0.0, 0.0, 0.0, 0.0, 0)
-        # Creating trigger worker thread to avoid caput from callback context.
-        self._trigger_q = queue.SimpleQueue()
-        self._trigger_worker_stop = threading.Event()
-        self._trigger_worker = threading.Thread(
-            target=self._trigger_worker_loop,
-            daemon=True,
-        )
-        self._trigger_worker.start()
-        # Creating plugin worker thread to avoid caput from callback context.
-        self._plugin_q = queue.SimpleQueue()
-        self._plugin_worker_stop = threading.Event()
-        self._plugin_worker = threading.Thread(
-            target=self._plugin_worker_loop,
-            daemon=True,
-        )
-        self._plugin_worker.start()
-
-    # -------------------- callbacks --------------------
-    def _on_trigger_event(self, ev: PvEvent, subscription=None) -> None:
-        # Return immediately; do not call put() here
-        self._trigger_q.put(ev)
-
-    def _trigger_worker_loop(self) -> None:
-        while not self._trigger_worker_stop.is_set():
-            ev = self._trigger_q.get()
-            try:
-                self._fire_triggers("monitor")
-            except Exception:
-                logging.exception("WORKER: Failed to fire monitor triggers")
-
-    def _on_plugin_event(self, ev: PvEvent, subscription=None) -> None:
-        """
-        If the PV emits a value, plugins are triggered.
-        PvEvent data provided for the plugin hook.
-        """
-        self._plugin_q.put(ev)
-    
-    def _plugin_worker_loop(self) -> None:
-        while not self._plugin_worker_stop.is_set():
-            ev = self._plugin_q.get()
-            # logging.debug("PLUGIN_WORKER: pv=%s", ev.pvname) 
-            try:
-                for plugin in self.plugins:
-                    plugin.on_monitor(ev)
-            except Exception:
-                logging.exception("WORKER: Failed to run plugin")
-
-    def _on_heartbeat_event(self, ev: PvEvent, subscription=None) -> None:
-        self._last_heartbeat = ev
-        logging.debug("[heartbeat] %s = %r (ts=%r)", ev.pvname, ev.value, ev.timestamp)
 
     def _on_sync_event(self, ev: PvEvent, subscription=None) -> None:
         """
@@ -164,21 +110,6 @@ class LinearScan(BaseScan):
             "[sync] %s: value=%r, mean=%f, std=%f, min=%f, max=%f, n=%d, source=%s",
             ev.pvname, ev.value, mean, std, self._sync_min, self._sync_max, self._sync_n, ev.source
         )
-
-    def _on_status_event(self, ev: PvEvent, subscription=None) -> None:
-        self._last_status = ev
-        logging.info("[status] %s = %r", ev.pvname, ev.value)
-
-    def _on_stop_event(self, ev: PvEvent, subscription=None) -> None:
-        """
-        If the stop PV emits a value that should stop the scan, stop immediately.
-        """
-        logging.info("[stop] %s = %r -> stopping scan", ev.pvname, ev.value)
-        try:
-            for act in self.actuators.values():
-                act.stop()
-        except Exception:
-            logging.exception("Error while stopping actuators on stop event")
 
     def execute(self):
         """

@@ -5,6 +5,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from collections import defaultdict
 import logging
+import queue
 from typing import List, Any, Dict, Optional, Tuple, Iterator
 from datetime import timezone
 from datetime import datetime
@@ -25,6 +26,7 @@ from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.scan.scan_abs import ScanABC
 from kiwi_scan.epics_wrapper import EpicsPV
 from kiwi_scan.manifestwriter import ManifestWriter
+from kiwi_scan.actuator.single import PvEvent
 from .metadata_monitor import MetadataCAMonitor
 from .trigger_manager import TriggerManager
 from .subscription_manager import SubscriptionManager
@@ -111,7 +113,7 @@ class BaseScan(ScanABC):
         
         self._validate_config()
         if config.stop_pv:
-            self.stop_pv = epics.PV(config.stop_pv)
+            self.stop_pv = EpicsPV(config.stop_pv)
             self.prefix = config.stop_pv.split(':')[0]
         else:
             self.stop_pv = None
@@ -141,6 +143,33 @@ class BaseScan(ScanABC):
         else:
             logging.debug("Performance report disabled")
         self._perf: Dict[str, List[float]] = defaultdict(list)
+        
+        # --- event-driven wakeup state (used in _on_heartbeat_event()) with condition  ---
+        self._tick_cond = threading.Condition()
+        self._tick_seq = 0  # increments on each heartbeat event
+        # --- event driven stop event semaphore, can be checked non blocking with is_set()
+        self._stop_requested = threading.Event()
+        # optional: last-seen events for debugging
+        self._last_heartbeat: Optional[PvEvent] = None
+        self._last_sync: Optional[PvEvent] = None
+        self._last_status: Optional[PvEvent] = None
+
+        # Creating trigger worker thread to avoid caput from callback context.
+        self._trigger_q = queue.SimpleQueue()
+        self._trigger_worker_stop = threading.Event()
+        self._trigger_worker = threading.Thread(
+            target=self._trigger_worker_loop,
+            daemon=True,
+        )
+        self._trigger_worker.start()
+        # Creating plugin worker thread to avoid caput from callback context.
+        self._plugin_q = queue.SimpleQueue()
+        self._plugin_worker_stop = threading.Event()
+        self._plugin_worker = threading.Thread(
+            target=self._plugin_worker_loop,
+            daemon=True,
+        )
+        self._plugin_worker.start()
         
         # TODO: cleanup, use  _start_subscriptions ouside
         if getattr(self, "ROLE_CALLBACKS", None):
@@ -1054,3 +1083,91 @@ class BaseScan(ScanABC):
             # Never break a scan because of manifest issues
             import logging
             logging.exception("Failed to append scan to manifest")
+    
+    # -------------------- role callback default handlers --------------------
+    
+    def _on_status_event(self, ev: PvEvent, subscription=None) -> None:
+        self._last_status = ev
+        logging.debug("[status] %s=%r", ev.pvname, ev.value)
+
+    def _on_heartbeat_event(self, ev: PvEvent, subscription=None) -> None:
+        self._last_heartbeat = ev
+        with self._tick_cond:
+            self._tick_seq += 1
+            self._tick_cond.notify_all()
+        logging.debug("[heartbeat] %s=%r (seq=%d)", ev.pvname, ev.value, self._tick_seq)
+    
+    def _on_stop_event(self, ev: PvEvent, subscription=None) -> None:
+        """
+        Immediate stop trigger. Stops actuators best-effort and wakes the loop.
+        """
+        logging.info("[stop] %s=%r -> stopping scan", ev.pvname, ev.value)
+        if self.busyflag == True:
+            self._stop_requested.set()
+            with self._tick_cond:
+                self._tick_cond.notify_all()
+            try:
+                for act in self.actuators.values():
+                    act.stop()
+            except Exception:
+                logging.exception("Error while stopping actuators on stop event")
+
+    def _wait_for_tick_or_timeout(self, timeout_s: float) -> bool:
+        """
+        Helper referring to _on_heartbeat_event and _on_status_event handlers
+        Wait until:
+          - a heartbeat tick arrives (returns True), or
+          - timeout occurs (returns False), or
+          - stop is requested (returns False).
+        Example usage in scan thread or plugin threads:
+                yaml: # configure what event should call _on_heartbeat_event()
+                    subscriptions:
+                      - name: daq_heartbeat
+                        role: heartbeat
+                        pv: ${IOC_MONO}:DAQ:HEARTBEAT
+                py:
+                self._wait_for_tick_or_timeout(self.sampletime)
+        """
+        if timeout_s is None or timeout_s < 0:
+            timeout_s = 0.0
+
+        with self._tick_cond:
+            start_seq = self._tick_seq
+            if self._stop_requested.is_set():
+                return False
+
+            # Wait until seq changes or timeout
+            self._tick_cond.wait(timeout=timeout_s)
+            if self._stop_requested.is_set():
+                return False
+
+            return self._tick_seq != start_seq
+
+    def _on_trigger_event(self, ev: PvEvent, subscription=None) -> None:
+        # Return immediately; do not call put() here
+        self._trigger_q.put(ev)
+
+    def _trigger_worker_loop(self) -> None:
+        while not self._trigger_worker_stop.is_set():
+            ev = self._trigger_q.get()
+            try:
+                self._fire_triggers("monitor")
+            except Exception:
+                logging.exception("WORKER: Failed to fire monitor triggers")
+
+    def _on_plugin_event(self, ev: PvEvent, subscription=None) -> None:
+        """
+        If the PV emits a value, plugins are triggered.
+        PvEvent data provided for the plugin hook.
+        """
+        self._plugin_q.put(ev)
+    
+    def _plugin_worker_loop(self) -> None:
+        while not self._plugin_worker_stop.is_set():
+            ev = self._plugin_q.get()
+            # logging.debug("PLUGIN_WORKER: pv=%s", ev.pvname) 
+            try:
+                for plugin in self.plugins:
+                    plugin.on_monitor(ev)
+            except Exception:
+                logging.exception("WORKER: Failed to run plugin")
