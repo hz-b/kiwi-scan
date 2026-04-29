@@ -7,6 +7,7 @@ from typing import Optional
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.actuator.single import PvEvent
+from kiwi_scan.scan.range_exit_detector import RangeExitDetector
 
 # TODO: refactor with poll,monocm, ...
 # TODO: offsets for backlash and end of range
@@ -19,8 +20,13 @@ class CMScan(BaseScan):
         
         logging.info("Creating samplerate from scan dimensions: %s", self.scan_dimensions)
         dim = config.scan_dimensions[0]
+        if dim.start == dim.stop:
+            raise ArithmeticError(f"Start equals stop == {dim.start!r}")
+        self._start = dim.start
+        self._stop = dim.stop
         self.set_samplerate(dim)
         self.first_actuator = self.actuators[self.scan_dimensions[0].actuator]
+        dim = config.scan_dimensions[0]
         # ---- event-driven wakeup state (heartbeat-driven, timeout fallback) ----
         self._tick_cond = threading.Condition()
         self._tick_seq = 0
@@ -123,8 +129,12 @@ class CMScan(BaseScan):
         self._stop_requested.clear()
         primary_dim = self.scan_dimensions[0]
         primary = self.actuators[primary_dim.actuator]
-
-        entered_range = False
+        range_exit = RangeExitDetector(
+            self._start,
+            self._stop,
+            eps=0.001,   # TODO: could be taken from actuator backlash?
+            out_threshold=2,
+        )
         while True:
             if self._stop_requested.is_set():
                 break
@@ -141,17 +151,12 @@ class CMScan(BaseScan):
             if self._stop_requested.is_set():
                 break
 
+            if self.first_actuator.is_ready():
+                break
             # Prefer sync-subscription position; fall back to RBV
             pos = self.first_actuator.rbv
-
-            in_range = self.is_within_range(pos, primary_dim.start, primary_dim.stop)
-
-            # break only if out of range and the range is entered once
-            if in_range:
-                logging.debug(f"in range: {primary_dim.start}|{pos}|{primary_dim.stop}")
-                entered_range = True
-            elif entered_range:
-                logging.debug(f"out of range: {primary_dim.start}|{pos}|{primary_dim.stop}")
+            if range_exit.update(pos):
+                logging.info("Scan termination detected at pos=%s", pos)
                 break
 
             if self._position_sync_subscription_set:
@@ -177,6 +182,10 @@ class CMScan(BaseScan):
         4) Run DAQ while primary actuator is within range
         5) Restore original velocities
         """
+        try:
+            epics.ca.use_initial_context()
+        except Exception:
+            pass
         self.busyflag = True
         try:
             # 1) Move each actuator to start position

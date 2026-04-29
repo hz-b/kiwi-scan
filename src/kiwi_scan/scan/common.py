@@ -460,26 +460,6 @@ class BaseScan(ScanABC):
         finally:
             self._meta_mon_started = False
 
-    def is_within_range(self, current_position, start, stop):
-        """
-        Check if the actuator's current position is within the scan range.
-
-        Parameters:
-            current_position (float): The current position of the actuator.
-            start (float): The starting point of the scan range.
-            stop (float): The ending point of the scan range.
-
-        Returns:
-            bool: True if within range, False if out of range.
-        """
-        if start == stop:
-            return True
-
-        lower = min(start, stop)
-        upper = max(start, stop)
-
-        return lower <= current_position <= upper
-
     def read_detectors(self) -> List[Any]:
         """
         Read values (with metadata) from all configured detector PVs.

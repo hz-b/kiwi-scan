@@ -158,7 +158,6 @@ class PollScan(BaseScan):
         try:
             self._start_subscriptions()
             self.busyflag = True
-            entered_range = False
             self._position_sync_subscription_set = False
             while True:
                 if self._stop_requested.is_set():
