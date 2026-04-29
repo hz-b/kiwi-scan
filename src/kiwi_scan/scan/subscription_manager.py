@@ -224,7 +224,31 @@ class SubscriptionManager:
         """
         raw_config = self._actuator_configs.get(actuator_name)
         if raw_config is None:
-            raise ValueError(f"Unknown actuator '{actuator_name}' in subscription config")
+            # fallback: try first available actuator config
+            if self._actuator_configs:
+                fallback_name, raw_config = next(iter(self._actuator_configs.items()))
+                logger.warning(
+                    "Unknown actuator '%s' in subscription config. "
+                    "Falling back to actuator '%s'.",
+                    actuator_name,
+                    fallback_name,
+                )
+            else:
+                # second fallback: try more actuators
+                if self._actuators:
+                    fallback_name = next(iter(self._actuators.keys()))
+                    logger.warning(
+                        "Unknown actuator '%s' and no actuator_configs available. "
+                        "Using live actuator '%s' without config.",
+                        actuator_name,
+                        fallback_name,
+                    )
+                    raise ValueError(
+                        f"Cannot resolve actuator '{actuator_name}' to PV (no config available)"
+                    )
+                raise ValueError(
+                    f"Unknown actuator '{actuator_name}' in subscription config"
+                )
 
         if isinstance(raw_config, ActuatorConfig):
             return raw_config
