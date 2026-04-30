@@ -4,6 +4,7 @@
 import os
 import sys
 import argparse
+import difflib
 
 import kiwi_scan
 from kiwi_scan.yaml_loader import (
@@ -28,6 +29,103 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s"
 )
+
+
+_DIM_REQUIRED_KEYS = {"actuator", "start", "stop", "steps"}
+_DIM_OPTIONAL_KEYS = {"velocity"}
+_DIM_ALLOWED_KEYS = _DIM_REQUIRED_KEYS | _DIM_OPTIONAL_KEYS
+
+
+def _validate_dim_args(dim_args: list[str]) -> None:
+    """Validate --dim syntax/keys before constructing ScanDimension objects.
+
+    ScanDimension.from_dim_args currently raises low-level exceptions such as
+    KeyError for misspelled keys. This pre-validation keeps user-facing CLI
+    errors in argparse format while preserving the current order where config
+    loading errors are reported before semantic scan-range validation.
+    """
+    for spec in dim_args:
+        if not spec or not spec.strip():
+            raise ValueError("--dim must not be empty")
+
+        kv: dict[str, str] = {}
+        for part in spec.split(","):
+            part = part.strip()
+            if not part:
+                raise ValueError(f"Invalid --dim {spec!r}: empty comma-separated field")
+            if "=" not in part:
+                raise ValueError(
+                    f"Invalid --dim {spec!r}: field {part!r} is not KEY=VALUE"
+                )
+            key, value = part.split("=", 1)
+            key = key.strip()
+            value = value.strip()
+            if not key:
+                raise ValueError(f"Invalid --dim {spec!r}: empty key")
+            if not value:
+                raise ValueError(f"Invalid --dim {spec!r}: empty value for {key!r}")
+            if key in kv:
+                raise ValueError(f"Invalid --dim {spec!r}: duplicate key {key!r}")
+            kv[key] = value
+
+        unknown = sorted(set(kv) - _DIM_ALLOWED_KEYS)
+        if unknown:
+            details = []
+            for key in unknown:
+                suggestion = difflib.get_close_matches(key, _DIM_ALLOWED_KEYS, n=1)
+                if suggestion:
+                    details.append(f"{key!r} (did you mean {suggestion[0]!r}?)")
+                else:
+                    details.append(repr(key))
+            raise ValueError(
+                f"Invalid --dim {spec!r}: unknown key(s): {', '.join(details)}. "
+                f"Allowed keys are: {', '.join(sorted(_DIM_ALLOWED_KEYS))}"
+            )
+
+        missing = sorted(_DIM_REQUIRED_KEYS - set(kv))
+        if missing:
+            raise ValueError(
+                f"Invalid --dim {spec!r}: missing required key(s): {', '.join(missing)}"
+            )
+
+        for key in ("start", "stop"):
+            try:
+                float(kv[key])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid --dim {spec!r}: {key} must be a number, got {kv[key]!r}"
+                ) from exc
+
+        try:
+            int(kv["steps"])
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid --dim {spec!r}: steps must be an integer, got {kv['steps']!r}"
+            ) from exc
+
+        if "velocity" in kv:
+            try:
+                float(kv["velocity"])
+            except ValueError as exc:
+                raise ValueError(
+                    f"Invalid --dim {spec!r}: velocity must be a number, got {kv['velocity']!r}"
+                ) from exc
+
+
+def _validate_scan_dimensions(scan_dimensions: list[ScanDimension]) -> None:
+    """Validate parsed scan dimensions before executing a scan."""
+    for dim in scan_dimensions:
+        if dim.steps < 1:
+            raise ValueError(
+                f"Invalid --dim for actuator {dim.actuator!r}: steps must be >= 1, got {dim.steps}"
+            )
+
+        velocity = getattr(dim, "velocity", None)
+        if velocity is not None and velocity < 0:
+            raise ValueError(
+                f"Invalid --dim for actuator {dim.actuator!r}: velocity must be >= 0, got {velocity}"
+            )
+
 
 def _load_config_from_path(config_path: str, replacements: dict) -> ScanConfig:
     """Load a single YAML scan config from an explicit path."""
@@ -130,8 +228,16 @@ def main():
         set_valid_logging_level(args.log_level)
 
     # Parse structured input
-    scan_dimensions = ScanDimension.from_dim_args(args.dim)
-    replacements = parse_replacements(args.replace)
+    try:
+        _validate_dim_args(args.dim)
+        scan_dimensions = ScanDimension.from_dim_args(args.dim)
+    except (KeyError, TypeError, ValueError) as exc:
+        parser.error(str(exc))
+
+    try:
+        replacements = parse_replacements(args.replace)
+    except (TypeError, ValueError) as exc:
+        parser.error(f"invalid --replace: {exc}")
     replacements.update(get_env_replacements("KIWI_SCAN"))
 
     actuators = ScanDimension.get_actuators(scan_dimensions)
@@ -140,7 +246,7 @@ def main():
     if args.config_file:
         config_path = os.path.abspath(os.path.expanduser(args.config_file))
         if not os.path.isfile(config_path):
-            raise FileNotFoundError(f"--config-file not found: {config_path}")
+            parser.error(f"--config-file not found: {config_path}")
 
         # Show required replacements (if any) for this specific file
         replacements_help, replace_required = get_replacements_help_and_required(
@@ -150,12 +256,18 @@ def main():
         if replace_required:
             print(replacements_help)
 
-        config = _load_config_from_path(config_path, replacements)
+        try:
+            config = _load_config_from_path(config_path, replacements)
+        except (FileNotFoundError, OSError, ValueError) as exc:
+            parser.error(f"failed to load --config-file {config_path!r}: {exc}")
         config_label = config_path
     else:
         # Preset: load from config_dir
-        scan_configs = load_scan_configs(config_dir, replacements)
-        config = scan_configs[args.config]
+        try:
+            scan_configs = load_scan_configs(config_dir, replacements)
+            config = scan_configs[args.config]
+        except (FileNotFoundError, OSError, KeyError, ValueError) as exc:
+            parser.error(f"failed to load --config {args.config!r}: {exc}")
 
         replacements_help, replace_required = get_replacements_help_and_required(
             config_dir,
@@ -165,6 +277,11 @@ def main():
             print(replacements_help)
 
         config_label = args.config
+
+    try:
+        _validate_scan_dimensions(scan_dimensions)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Debug output
     print("Scan Type:", args.scan_type)
