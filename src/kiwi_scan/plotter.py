@@ -187,6 +187,9 @@ class Plotter:
         if multi_axis:
             fig, ax0 = plt.subplots(figsize=(8, 5))
             axes = {0: ax0}
+            # global color cycle across ALL axes
+            color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+            color_idx = 0
 
             # At the moment: up to 3 axes (0: left, 1/2: right with offset)
             for data in self.plots:
@@ -195,8 +198,9 @@ class Plotter:
                     # create new y-axis on the right
                     ax = ax0.twinx()
                     axes[data.axis] = ax
-                ax.plot(data.x, data.y, marker='o', linestyle='-', label=data.label)
-
+                color = color_cycle[color_idx % len(color_cycle)]
+                ax.plot(data.x, data.y, marker='o', linestyle='-', label=data.label, color=color)
+                color_idx += 1
             # Label axes
             for idx, ax in axes.items():
                 ax.set_xlabel('X')
