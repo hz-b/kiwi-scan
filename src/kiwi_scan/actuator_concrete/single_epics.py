@@ -180,8 +180,12 @@ class EpicsActuator(AbstractActuator):
         """
         Shortcut property to get the readback value.
         """
+        
         if self.rb_pv:
-            return self.rb_pv.get()
+            val = self.rb_pv.get(use_monitor=True)
+            if val is None:
+                val = self.rb_pv.get() # fallback poll once
+            return val
         return None
 
     @rbv.setter
@@ -200,7 +204,10 @@ class EpicsActuator(AbstractActuator):
         Shortcut property to get the commanded position value.
         """
         if self.cmd_pv:
-            return self.cmd_pv.get()
+            val = self.cmd_pv.get(use_monitor=True) 
+            if val is None: 
+                val = self.cmd_pv.get() # fallback once
+            return val
         return None
 
     @cmdv.setter
@@ -219,7 +226,10 @@ class EpicsActuator(AbstractActuator):
         Shortcut property to get the commanded position value.
         """
         if self.cmdvel_pv:
-            return self.cmdvel_pv.get()
+            val = self.cmdvel_pv.get(use_monitor=True) 
+            if val is None: 
+                val = self.cmdvel_pv.get() # fallback once
+            return val
         return None
 
     @cmdvelv.setter
@@ -279,7 +289,10 @@ class EpicsActuator(AbstractActuator):
 
     def get_velocity(self) -> Optional[float]:
         if self.get_velocity_pv:
-            return self.get_velocity_pv.get()
+            val = self.get_velocity_pv.get(use_monitor=True) 
+            if val is None: 
+                val = self.get_velocity_pv.get() # fallback once
+            return val
         return None
 
     def _issue_move(self, position: float) -> None:
@@ -392,8 +405,9 @@ class EpicsActuator(AbstractActuator):
         if not self.status_pv:
             return True
 
-        val = self.status_pv.get()
-
+        val = self.status_pv.get(use_monitor=True) 
+        if val is None: 
+            val = self.status_pv.get() # fallback poll once
         # -----------------------------------------------------------
         # Try bitmask logic if mask is non-zero
         # -----------------------------------------------------------
