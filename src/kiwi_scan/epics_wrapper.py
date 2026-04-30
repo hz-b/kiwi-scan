@@ -101,6 +101,7 @@ class EpicsPV:
             try:
                 user_cb(pvname=pvname, value=value, **kwargs)
             except TypeError:
+                # logging.error("Callback mismatch: %s %s", user_cb, e)
                 user_cb(pvname, value)
             except Exception:
                 logging.exception("Error in PV callback for '%s'", self.pvname)
