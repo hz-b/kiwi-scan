@@ -37,9 +37,15 @@ def _parse_name_value(spec: str) -> Tuple[str, float]:
         raise ValueError(f"Expected NAME=VALUE, got {spec!r}")
     name, s_val = spec.split("=", 1)
     name = name.strip()
+    s_val = s_val.strip()
     if not name:
         raise ValueError(f"Empty name in {spec!r}")
-    return name, float(s_val.strip())
+    if not s_val:
+        raise ValueError(f"Empty value in {spec!r}")
+    try:
+        return name, float(s_val)
+    except ValueError as exc:
+        raise ValueError(f"Expected numeric value in {spec!r}") from exc
 
 def _parse_name_value_any(spec: str) -> Tuple[str, Any]:
     """Parse NAME=VALUE where VALUE can be a float list (e.g. [1, 2])."""
@@ -61,7 +67,10 @@ def _parse_name_value_any(spec: str) -> Tuple[str, Any]:
             # fall back to float parsing below
             pass
 
-    return name, float(s_val)
+    try:
+        return name, float(s_val)
+    except ValueError as exc:
+        raise ValueError(f"Expected numeric value or JSON list in {spec!r}") from exc
 
 def _parse_monitor_spec(spec: str) -> Dict[str, Optional[str]]:
     """
@@ -276,6 +285,59 @@ def _start_monitors(
     logging.info("Started %d monitors via %s", len(monitor_handles), type(provider).__name__)
     return provider, monitor_handles, monitor_specs
 
+def _validate_cli_specs(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    raw_cfg: Dict[str, Any],
+    actuators: Dict[str, AbstractActuator],
+) -> None:
+    """Validate repeatable CLI specs before starting monitors or motion."""
+    acts_raw = raw_cfg.get("actuators") or {}
+
+    def _check_known(option: str, name: str) -> None:
+        if name not in actuators:
+            known = ", ".join(sorted(actuators)) or "<none>"
+            parser.error(f"{option} unknown actuator {name!r}. Known actuators: {known}")
+
+    for option, specs, parser_fn in (
+        ("--move", args.move, _parse_name_value),
+        ("--rel-move", args.rel_move, _parse_name_value_any),
+        ("--jog", args.jog, _parse_name_value),
+        ("--set-velocity", args.set_velocity, _parse_name_value),
+    ):
+        for spec in specs:
+            try:
+                name, _value = parser_fn(spec)
+            except ValueError as exc:
+                parser.error(f"{option}: {exc}")
+            _check_known(option, name)
+
+    for name in args.stop:
+        _check_known("--stop", name)
+
+    for spec in args.monitor:
+        try:
+            ms = _parse_monitor_spec(spec)
+        except ValueError as exc:
+            parser.error(f"--monitor: {exc}")
+
+        name = ms["name"]
+        raw_act = acts_raw.get(name)
+        if not isinstance(raw_act, dict):
+            known = ", ".join(sorted(acts_raw)) or "<none>"
+            parser.error(
+                f"--monitor unknown actuator {name!r}. "
+                "Use NAME:source, NAME@PV, or NAME. "
+                f"Known actuators: {known}"
+            )
+
+        if not ms["pv"]:
+            try:
+                _resolve_pv_for_source(ActuatorConfig.from_dict(raw_act), ms["source"] or "rbv")
+            except ValueError as exc:
+                parser.error(f"--monitor {spec!r}: {exc}")
+
+
 # ----------- immediate synchonous non blocking actions ---------------
 
 def _run_actions(args, actuators: Dict[str, AbstractActuator]) -> None:
@@ -331,20 +393,27 @@ def main() -> None:
     )
 
     # repeatable action options
-    p.add_argument("--monitor", action="append", default=[], help="Repeatable. SPEC = NAME:source | NAME@PV | NAME")
+    p.add_argument(
+        "--monitor",
+        action="append",
+        default=[],
+        metavar="NAME[:SOURCE]|NAME@PV",
+        help="Repeatable. Examples: --monitor energy:rbv, --monitor energy:status, --monitor energy@IOC:PV",
+    )
     p.add_argument("--monitor-duration", type=float, default=None, help="Stop monitors after N seconds")
     p.add_argument("--monitor-count", type=int, default=None, help="Stop after N total monitor events")
     p.add_argument("--out", default=None, help="Optional output file (append).")
-    p.add_argument("--move", action="append", default=[], help="Repeatable. SPEC = NAME=POS")
+    p.add_argument("--move", action="append", default=[], metavar="NAME=POS", help="Repeatable. Example: --move energy=250")
     p.add_argument(
         "--rel-move",
         action="append",
         default=[],
-        help="Repeatable. SPEC = NAME=DELTA (also supports lists for MultiActuator, e.g. name=[0.1, -0.2])",
+        metavar="NAME=DELTA",
+        help="Repeatable. Example: --rel-move energy=1.0. Also supports lists for MultiActuator, e.g. undulator=[0.1, -0.2]",
     )
-    p.add_argument("--jog", action="append", default=[], help="Repeatable. SPEC = NAME=VEL")
-    p.add_argument("--stop", action="append", default=[], help="Repeatable. SPEC = NAME")
-    p.add_argument("--set-velocity", action="append", default=[], help="Repeatable. SPEC = NAME=VEL")
+    p.add_argument("--jog", action="append", default=[], metavar="NAME=VEL", help="Repeatable. Example: --jog energy=0.2")
+    p.add_argument("--stop", action="append", default=[], metavar="NAME", help="Repeatable. Example: --stop energy")
+    p.add_argument("--set-velocity", action="append", default=[], metavar="NAME=VEL", help="Repeatable. Example: --set-velocity energy=5")
 
     p.add_argument("--keep-alive", action="store_true", help="Keep running until Ctrl+C (ignores moves done).")
 
@@ -355,8 +424,8 @@ def main() -> None:
 
     try:
         raw_cfg, origin = _load_raw_config(args)
-    except FileNotFoundError as exc:
-        raise SystemExit(f"Config file not found: {exc}")
+    except (FileNotFoundError, ValueError, TypeError) as exc:
+        p.error(f"failed to load config: {exc}")
 
     # Show required replacements help for presets (like scan_runner)
     if args.config and not args.config_file:
@@ -364,14 +433,19 @@ def main() -> None:
         if required:
             print(help_text)
 
-    actuators = _build_actuators(raw_cfg)
+    try:
+        actuators = _build_actuators(raw_cfg)
+    except (ValueError, TypeError) as exc:
+        p.error(str(exc))
+
+    _validate_cli_specs(p, args, raw_cfg, actuators)
 
     # Validate "monitors only" mode
     have_moves = bool(args.move or args.rel_move or args.jog or args.stop or args.set_velocity)
     have_monitors = bool(args.monitor)
     if have_monitors and not have_moves and not (args.monitor_duration or args.monitor_count or args.keep_alive):
-        raise SystemExit(
-            "You started monitors but provided no exit condition.\n"
+        p.error(
+            "You started monitors but provided no exit condition. "
             "Add --monitor-duration, --monitor-count, or --keep-alive."
         )
 
@@ -444,7 +518,7 @@ def main() -> None:
         for spec in args.move:
             name, pos = _parse_name_value(spec)
             if name not in actuators:
-                raise ValueError(f"--move unknown actuator {name!r}")
+                p.error(f"--move unknown actuator {name!r}")
             act = actuators[name]
             used_motion_actuators.append(act)
             futures.append(ex.submit(_with_lock, name, act.run_move, float(pos), True))
@@ -452,7 +526,7 @@ def main() -> None:
         for spec in args.rel_move:
             name, delta = _parse_name_value_any(spec)
             if name not in actuators:
-                raise ValueError(f"--rel-move unknown actuator {name!r}")
+                p.error(f"--rel-move unknown actuator {name!r}")
             act = actuators[name]
             used_motion_actuators.append(act)
             futures.append(ex.submit(_with_lock, name, act.run_rel_move, delta, True))
@@ -460,7 +534,7 @@ def main() -> None:
         for spec in args.jog:
             name, vel = _parse_name_value(spec)
             if name not in actuators:
-                raise ValueError(f"--jog unknown actuator {name!r}")
+                p.error(f"--jog unknown actuator {name!r}")
             act = actuators[name]
             used_motion_actuators.append(act)
             futures.append(ex.submit(_with_lock, name, act.jog, float(vel), True))
