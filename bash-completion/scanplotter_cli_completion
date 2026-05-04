@@ -1,5 +1,4 @@
 # Bash completion for scanplotter_cli
-
 _scanplotter_cli()
 {
     local cur prev opts
@@ -7,7 +6,7 @@ _scanplotter_cli()
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    opts="--help -h --x_column --series --join-tol --log-level"
+    opts="--help -h --x_column --series --join-tol --log-level --manifest-index --scan-index"
 
     case "$prev" in
         --log-level)
