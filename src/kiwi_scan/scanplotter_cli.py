@@ -3,22 +3,28 @@
 
 import argparse
 import logging
+from pathlib import Path
 from typing import List
 
+from kiwi_scan.manifestwriter import ManifestResolver
 from kiwi_scan.postmortem import PostMortemConfig, SeriesSpec, plot_postmortem
 
 _ALLOWED_SERIES_KEYS = {"file", "column", "axis", "label", "type"}
-_REQUIRED_SERIES_KEYS = {"file", "column"}
+_REQUIRED_SERIES_KEYS = {"column"}
+_AUTO_FILE_VALUES = {"", "auto", "manifest"}
 
 
 def _series_usage() -> str:
-    return "expected file=PATH,column=NAME[,axis=N,label=TEXT,type=scan|meta]"
+    return "expected column=NAME[,file=PATH|auto,axis=N,label=TEXT,type=scan|meta]"
 
 
 def parse_series_args(args: List[str]) -> List[SeriesSpec]:
     """
     Parse specs of form:
-        file=PATH,column=NAME,axis=N,label=TEXT,type=scan|meta
+        column=NAME[,file=PATH|auto,axis=N,label=TEXT,type=scan|meta]
+
+    If file is omitted or file=auto/manifest, scanplotter_cli resolves it
+    from the selected manifest before calling the post-mortem plotter.
 
     Raises:
         ValueError: if a spec is malformed. The CLI catches this and turns it
@@ -38,7 +44,7 @@ def parse_series_args(args: List[str]) -> List[SeriesSpec]:
             if key not in _ALLOWED_SERIES_KEYS:
                 allowed = ", ".join(sorted(_ALLOWED_SERIES_KEYS))
                 raise ValueError(f"Invalid --series {spec!r}: unknown key {key!r}. Allowed keys are: {allowed}")
-            if not value:
+            if key != "file" and not value:
                 raise ValueError(f"Invalid --series {spec!r}: empty value for {key!r}")
             if key in kv:
                 raise ValueError(f"Invalid --series {spec!r}: duplicate key {key!r}")
@@ -53,15 +59,46 @@ def parse_series_args(args: List[str]) -> List[SeriesSpec]:
         except ValueError as exc:
             raise ValueError(f"Invalid --series {spec!r}: axis must be an integer") from exc
 
-        source_type = kv.pop("type", "scan")
+        source_type = kv.pop("type", "scan").lower()
         if source_type not in {"scan", "meta"}:
             raise ValueError(f"Invalid --series {spec!r}: type must be 'scan' or 'meta'")
 
-        file = kv.pop("file")
+        file = kv.pop("file", "")
         column = kv.pop("column")
         label = kv.pop("label", None)
         result.append(SeriesSpec(file=file, column=column, axis=axis, label=label, source_type=source_type))
     return result
+
+
+def _resolve_manifest_series(series: List[SeriesSpec], args: argparse.Namespace) -> None:
+    unresolved = [s for s in series if s.file.strip().lower() in _AUTO_FILE_VALUES]
+    if not unresolved:
+        return
+
+    if args.manifest_file:
+        manifest_path = Path(args.manifest_file).expanduser()
+        resolver = ManifestResolver.from_manifest_file(str(manifest_path))
+        manifest_for_log = manifest_path
+    else:
+        resolver = ManifestResolver.from_env()
+        manifest_for_log = resolver.select_manifest(args.manifest_index)
+
+    for item in unresolved:
+        resolved = resolver.select_file(
+            source_type=item.source_type,
+            manifest_file=str(manifest_for_log),
+            manifest_index=args.manifest_index,
+            scan_index=args.scan_index,
+        )
+        item.file = str(resolved)
+        logging.info(
+            "Resolved --series type=%s column=%s from manifest=%s scan-index=%s -> %s",
+            item.source_type,
+            item.column,
+            manifest_for_log,
+            args.scan_index,
+            resolved,
+        )
 
 
 def main():
@@ -70,9 +107,12 @@ def main():
             "Post-mortem multi-axis plotting tool for scan + metadata files.\n\n"
             "Examples:\n"
             "  scanplotter_cli \\\n"
-            "    --x_column TS-ISO8601-ue521sgm1:monoGetEnergy \\\n"
-            "    --series file=scan_results-20251106.txt,column=ue521sgm1:liIDcics,axis=0,label=RingCurrent \\\n"
-            "    --series file=meta_ue52_pid.txt,column=VALUE,axis=1,label=PID_OUT,type=meta\n"
+            "    --x_column TS-ISO8601 \\\n"
+            "    --series file=scan_results-20251106.txt,column=ue521sgm1:monoGetEnergy,axis=0,label=eV\n\n"
+            "  scanplotter_cli \\\n"
+            "    --manifest-index 0 --scan-index 0 --x_column Position \\\n"
+            "    --series column=ue521sgm1:liIDcics,type=scan,axis=0,label=cts\n\n"
+            "    --series column=ue521sgm1:Status,type=meta,axis=1,label=State"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -82,10 +122,30 @@ def main():
         action="append",
         required=True,
         help=(
-            "Series spec: file=PATH,column=NAME[,axis=N,label=TEXT,type=scan|meta].\n"
+            "Series spec: column=NAME[,file=PATH|auto,axis=N,label=TEXT,type=scan|meta].\n"
+            "If file is omitted or file=auto, the file is resolved from the selected manifest.\n"
             "Repeat for multiple plotted series. Example: "
-            "--series file=scan.txt,column=intensity,axis=0,label=I0"
+            "--series column=intensity,type=scan,axis=0,label=I0"
         ),
+    )
+    parser.add_argument(
+        "--manifest-index",
+        type=int,
+        default=0,
+        help=(
+            "N-th newest manifest in KIWI_SCAN_DATA_DIR for auto-resolved series "
+            "(0=newest, default: 0). Ignored when --manifest-file is used."
+        ),
+    )
+    parser.add_argument(
+        "--manifest-file",
+        help="Explicit manifest YAML file for auto-resolved series; overrides --manifest-index.",
+    )
+    parser.add_argument(
+        "--scan-index",
+        type=int,
+        default=0,
+        help="M-th newest scan entry inside the selected manifest for auto-resolved series (0=newest, default: 0).",
     )
     parser.add_argument(
         "--join-tol",
@@ -105,19 +165,19 @@ def main():
 
     try:
         series = parse_series_args(args.series)
-    except ValueError as exc:
+        _resolve_manifest_series(series, args)
+        cfg = PostMortemConfig(
+            x_column=args.x_column,
+            series=series,
+            # join_on_time=None,   # TODO: using TS columns directly in build_combined_dataframe
+            join_tolerance=args.join_tol,
+        )
+        print(f"PostMortemConfig {cfg}")
+        plot_postmortem(cfg=cfg)
+    except (ValueError, FileNotFoundError, IndexError, OSError) as exc:
         parser.error(str(exc))
-
-    cfg = PostMortemConfig(
-        x_column=args.x_column,
-        series=series,
-        # join_on_time=None,   # TODO: using TS columns directly in build_combined_dataframe
-        join_tolerance=args.join_tol,
-    )
-    print(f"PostMortemConfig {cfg}")
-    plot_postmortem(
-        cfg=cfg,
-    )
+    except Exception as exc:
+        parser.error(f"Plotting failed: {exc}")
 
 
 if __name__ == "__main__":

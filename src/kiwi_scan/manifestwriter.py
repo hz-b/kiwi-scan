@@ -2,16 +2,18 @@
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
-from dataclasses import asdict, is_dataclass
-from datetime import datetime
+from dataclasses import asdict, is_dataclass, dataclass
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 from importlib.metadata import version, PackageNotFoundError
 import os
 import socket
 import getpass
 import yaml
 import logging
+    
+logger = logging.getLogger(__name__)
 
 def get_package_version(package_name: str = "kiwi-scan") -> str:
     try:
@@ -34,7 +36,7 @@ class ManifestWriter:
     DEFAULT_STATE_FILE = Path.home() / ".config" / "kiwi-scan" / "active_manifest"
     DEFAULT_MANIFEST_DIR = Path.cwd()
     # logger - available in classmethods 
-    logger = logging.getLogger(__name__)
+    logger = logger
 
     def __init__(self, filename: str):
         self.path = Path(filename).expanduser()
@@ -100,10 +102,8 @@ class ManifestWriter:
         metadata: Optional[Dict[str, Any]] = None,
     ) -> str:
         """
-        Create/select a new active manifest file.
-
-        If filename is omitted, a timestamped manifest filename is created.
-        The selected manifest is written to the persistent state file.
+        Create/select a new active manifest file. Timestamped manifest filename or filename.
+        The selected manifest is written to the state file.
 
         Returns:
             The new active manifest filename.
@@ -214,3 +214,213 @@ class ManifestWriter:
         if is_dataclass(value):
             return asdict(value)
         return value
+
+
+@dataclass(frozen=True)
+class ManifestScanRef:
+    """Resolved reference to one scan entry in a manifest file."""
+
+    manifest_file: Path
+    scan_id: Optional[str]
+    created_at: Optional[datetime]
+    data_file: Optional[Path]
+    metadata_file: Optional[Path]
+    scan_type: Optional[str]
+    raw: Dict[str, Any]
+
+class ManifestResolver:
+    """Read manifest files and select scan-data or metadata references."""
+
+    ENV_DATA_DIR = "KIWI_SCAN_DATA_DIR"
+
+    def __init__(self, data_dir: Optional[str] = None):
+        self.logger = logger
+        self.data_dir = self._resolve_data_dir(data_dir)
+        self.logger.debug(f"Using manifest data directory: {self.data_dir}")
+
+    @classmethod
+    def from_env(cls) -> "ManifestResolver":
+        return cls(os.environ.get(cls.ENV_DATA_DIR))
+
+    @classmethod
+    def from_manifest_file(cls, manifest_file: str) -> "ManifestResolver":
+        """Create a resolver using an explicit manifest's parent as fallback dir."""
+        return cls(str(Path(manifest_file).expanduser().parent))
+
+    @classmethod
+    def _resolve_data_dir(cls, data_dir: Optional[str]) -> Path:
+        value = data_dir or os.environ.get(cls.ENV_DATA_DIR)
+        if not value:
+            raise ValueError(
+                f"{cls.ENV_DATA_DIR} is not set. Set it, use --manifest-file, "
+                "or provide explicit file=... in every --series."
+            )
+
+        path = Path(value).expanduser()
+        if not path.is_dir():
+            raise FileNotFoundError(f"Manifest directory does not exist: {path}")
+        return path
+
+    def list_manifests(self) -> List[Path]:
+        """Return manifest*.yaml/yml files newest-first by manifest created_at."""
+        paths = set()
+        for pattern in ("manifest*.yaml", "manifest*.yml"):
+            paths.update(self.data_dir.glob(pattern))
+        
+        manifests = sorted(paths, key=self._manifest_sort_key, reverse=True)
+        self.logger.debug(f"Found {len(manifests)} manifest file(s) in {self.data_dir}")
+        return manifests
+
+    def select_manifest(self, index: int = 0) -> Path:
+        if index < 0:
+            raise IndexError("--manifest-index must be >= 0")
+
+        manifests = self.list_manifests()
+        if not manifests:
+            raise FileNotFoundError(
+                f"No manifest*.yaml or manifest*.yml files found in {self.data_dir}"
+            )
+        if index >= len(manifests):
+            raise IndexError(
+                f"--manifest-index {index} is out of range; found {len(manifests)} manifest file(s)"
+            )
+        selected = manifests[index]
+        self.logger.debug(f"Selected manifest index {index}: {selected}")
+        return selected
+
+    def list_scan_refs(self, manifest_file: str) -> List[ManifestScanRef]:
+        path = Path(manifest_file).expanduser()
+        data = self.load_manifest(path)
+        scans = data.get("scans") or []
+        if not isinstance(scans, list):
+            raise ValueError(f"Manifest {path} has invalid 'scans' section; expected a list")
+
+        refs: List[ManifestScanRef] = []
+        for entry in scans:
+            if not isinstance(entry, dict):
+                continue
+            refs.append(
+                ManifestScanRef(
+                    manifest_file=path,
+                    scan_id=entry.get("id"),
+                    created_at=self._parse_datetime(entry.get("created_at")),
+                    data_file=self._resolve_ref_path(path, entry.get("data_file")),
+                    metadata_file=self._resolve_ref_path(path, entry.get("metadata_file")),
+                    scan_type=entry.get("scan_type"),
+                    raw=entry,
+                )
+            )
+
+        sorted_refs = sorted(refs, key=self._scan_sort_key, reverse=True)
+        self.logger.debug(f"Resolved {len(sorted_refs)} scan reference(s) from manifest {path}")
+        return sorted_refs
+ 
+    def select_scan_ref(self, manifest_file: str, scan_index: int = 0) -> ManifestScanRef:
+        if scan_index < 0:
+            raise IndexError("--scan-index must be >= 0")
+
+        refs = self.list_scan_refs(manifest_file)
+        if not refs:
+            raise ValueError(f"Manifest {manifest_file} contains no scan entries")
+        if scan_index >= len(refs):
+            raise IndexError(
+                f"--scan-index {scan_index} is out of range; found {len(refs)} scan entry/entries"
+            )
+        return refs[scan_index]
+
+    def select_file(
+        self,
+        *,
+        source_type: str,
+        manifest_file: Optional[str] = None,
+        manifest_index: int = 0,
+        scan_index: int = 0,
+    ) -> Path:
+        """Select one scan or metadata file from a manifest entry."""
+        source_type = source_type.lower()
+        if source_type not in {"scan", "meta"}:
+            raise ValueError("source type must be 'scan' or 'meta'")
+
+        if manifest_file is None:
+            manifest_path = self.select_manifest(manifest_index)
+        else:
+            manifest_path = Path(manifest_file).expanduser()
+            if not manifest_path.is_file():
+                raise FileNotFoundError(f"Manifest file not found: {manifest_path}")
+
+        ref = self.select_scan_ref(str(manifest_path), scan_index)
+        selected = ref.data_file if source_type == "scan" else ref.metadata_file
+        field_name = "data_file" if source_type == "scan" else "metadata_file"
+
+        if selected is None:
+            scan_label = ref.scan_id or f"index {scan_index}"
+            raise ValueError(f"Manifest scan {scan_label!r} has no {field_name} reference")
+        if not selected.exists():
+            raise FileNotFoundError(
+                f"Manifest scan {ref.scan_id or scan_index!r} refers to missing {field_name}: {selected}"
+            )
+        return selected
+
+    @staticmethod
+    def load_manifest(path: Path) -> Dict[str, Any]:
+        path = Path(path).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(f"Manifest file not found: {path}")
+        with path.open("r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        if not isinstance(data, dict):
+            raise ValueError(f"Manifest {path} is invalid; expected a YAML mapping")
+        return data
+
+    def _manifest_sort_key(self, path: Path) -> float:
+        try:
+            data = self.load_manifest(path)
+            created_at = (data.get("manifest") or {}).get("created_at")
+            dt = self._parse_datetime(created_at)
+            if dt is not None:
+                return dt.timestamp()
+        except Exception:
+            pass
+        return path.stat().st_mtime
+
+    @staticmethod
+    def _scan_sort_key(ref: ManifestScanRef) -> float:
+        if ref.created_at is not None:
+            return ref.created_at.timestamp()
+        return 0.0
+
+    def _resolve_ref_path(self, manifest_file: Path, value: Optional[str]) -> Optional[Path]:
+        if not value:
+            return None
+
+        path = Path(str(value)).expanduser()
+        if path.is_absolute():
+            return path
+
+        candidates = [manifest_file.parent / path, self.data_dir / path]
+        for candidate in candidates:
+            if candidate.exists():
+                self.logger.debug(f"Resolved manifest path reference {value!r} to {candidate}")
+                return candidate
+
+        self.logger.debug(
+            f"Manifest path reference {value!r} did not exist relative to "
+            f"{manifest_file.parent} or {self.data_dir}; using {candidates[0]}"
+        )
+        return candidates[0]
+
+    @staticmethod
+    def _parse_datetime(value: Any) -> Optional[datetime]:
+        if value is None:
+            return None
+        if isinstance(value, datetime):
+            dt = value
+        else:
+            try:
+                dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+            except ValueError:
+                return None
+
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
