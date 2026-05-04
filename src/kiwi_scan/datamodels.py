@@ -214,6 +214,40 @@ class SubscriptionConfig:
         )
 
 @dataclass
+class MonitorConfig:
+    """Untyped monitor parameter block.
+
+    The selected monitor implementation is chosen by the top-level
+    ``monitor_type`` field. This block contains only monitor-specific
+    parameters, similar to the ``parameters`` block used by plugins.
+    """
+    parameters: Dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: Optional[Dict[str, Any]]) -> "MonitorConfig":
+        if data is None:
+            return cls()
+        if not isinstance(data, dict):
+            raise TypeError(f"monitor must be a mapping, got {type(data)}")
+        # The monitor type remains the top-level ScanConfig.monitor_type.
+        # The preferred YAML layout is:
+        #   monitor_type: print
+        #   monitor:
+        #     format: tsv
+        #     include_timestamps: true
+        #
+        # Be tolerant of the earlier transitional layout:
+        #   monitor:
+        #     parameters:
+        #       format: tsv
+        # so old configs do not silently fall back to defaults.
+        if set(data.keys()) == {"parameters"} and isinstance(data.get("parameters"), dict):
+            return cls(parameters=dict(data["parameters"]))
+
+        return cls(parameters=dict(data))
+
+
+@dataclass
 class ScanConfig:
     actuators: Dict[str, ActuatorConfig]
     detector_pvs: List[str]
@@ -222,6 +256,7 @@ class ScanConfig:
     nested_scans: Optional[List[ScanDimension]] = None
     plugin_configs: List[Dict[str, Any]] = field(default_factory=list)
     monitor_type: str = None
+    monitor: MonitorConfig = field(default_factory=MonitorConfig)
     stop_pv: Optional[str] = None
     data_dir: str = "."
     output_file: str = "scan_results.txt"
@@ -262,6 +297,8 @@ class ScanConfig:
         for sub_data in config_dict.get("subscriptions", []):
             subs.append(SubscriptionConfig.from_dict(sub_data))
 
+        monitor = MonitorConfig.from_dict(config_dict.get("monitor"))
+
         # Log unknown keys
         for key in config_dict:
             if key not in known_keys:
@@ -275,6 +312,7 @@ class ScanConfig:
             nested_scans=parse_dimensions("nested_scans"),
             plugin_configs=config_dict.get("plugin_configs", []),
             monitor_type=config_dict.get("monitor_type", None),
+            monitor=monitor,
             stop_pv=config_dict.get("stop_pv") or None,
             data_dir=config_dict.get("data_dir", "."),
             output_file=config_dict.get("output_file", "scan_results.txt"),

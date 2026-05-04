@@ -26,7 +26,7 @@ from kiwi_scan.datamodels import ScanConfig, ScanDimension
 import logging 
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s"
 )
 

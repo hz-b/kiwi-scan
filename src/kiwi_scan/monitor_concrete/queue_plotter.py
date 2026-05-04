@@ -5,6 +5,7 @@ import threading
 import time
 import queue
 import logging
+from typing import Any, Dict, Optional
 # TODO: lazy imports for headless applications?
 import matplotlib
 matplotlib.use('TkAgg')  # BEFORE importing pyplot TODO: this was to overcome some host limitations, do not hard code here
@@ -14,7 +15,9 @@ from tkinter import ttk
 from kiwi_scan.monitor.base import BaseMonitor
 
 class QueuePlotterMonitor(BaseMonitor):
-    def __init__(self):
+    def __init__(self, parameters: Optional[Dict[str, Any]] = None):
+        self.parameters = parameters or {}
+        logging.debug("Initialized QueuePlotterMonitor with parameters=%r", self.parameters)
         self.queue = queue.Queue()
         self.root = None  # Will be set in start()
 
