@@ -5,6 +5,7 @@ import os
 import sys
 import argparse
 import difflib
+from typing import List
 
 import kiwi_scan
 from kiwi_scan.yaml_loader import (
@@ -36,7 +37,7 @@ _DIM_OPTIONAL_KEYS = {"velocity"}
 _DIM_ALLOWED_KEYS = _DIM_REQUIRED_KEYS | _DIM_OPTIONAL_KEYS
 
 
-def _validate_dim_args(dim_args: list[str]) -> None:
+def _validate_dim_args(dim_args: List[str]) -> None:
     """Validate --dim syntax/keys before constructing ScanDimension objects.
 
     ScanDimension.from_dim_args currently raises low-level exceptions such as
@@ -112,7 +113,7 @@ def _validate_dim_args(dim_args: list[str]) -> None:
                 ) from exc
 
 
-def _validate_scan_dimensions(scan_dimensions: list[ScanDimension]) -> None:
+def _validate_scan_dimensions(scan_dimensions: List[ScanDimension]) -> None:
     """Validate parsed scan dimensions before executing a scan."""
     for dim in scan_dimensions:
         if dim.steps < 1:
