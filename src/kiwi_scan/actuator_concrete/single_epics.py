@@ -49,6 +49,8 @@ class EpicsActuator(AbstractActuator):
         self.backlash = config.backlash
         self.velocity = config.velocity
         self.start_command = config.start_command
+        self.ca_timeout = config.ca_timeout if config.ca_timeout else 1.0
+        logging.info(f"ActuatorConfig ca_timeout: {self.ca_timeout}")
 
         # Validate PV connections
         self._check_pvs()
@@ -184,7 +186,7 @@ class EpicsActuator(AbstractActuator):
         if self.rb_pv:
             val = self.rb_pv.get(use_monitor=True)
             if val is None:
-                val = self.rb_pv.get() # fallback poll once
+                val = self.rb_pv.get(timeout=self.ca_timeout) # fallback poll once
             return val
         return None
 
@@ -206,7 +208,7 @@ class EpicsActuator(AbstractActuator):
         if self.cmd_pv:
             val = self.cmd_pv.get(use_monitor=True) 
             if val is None: 
-                val = self.cmd_pv.get() # fallback once
+                val = self.cmd_pv.get(timeout=self.ca_timeout) # fallback once
             return val
         return None
 
@@ -228,7 +230,7 @@ class EpicsActuator(AbstractActuator):
         if self.cmdvel_pv:
             val = self.cmdvel_pv.get(use_monitor=True) 
             if val is None: 
-                val = self.cmdvel_pv.get() # fallback once
+                val = self.cmdvel_pv.get(timeout=self.ca_timeout) # fallback once
             return val
         return None
 
@@ -291,7 +293,7 @@ class EpicsActuator(AbstractActuator):
         if self.get_velocity_pv:
             val = self.get_velocity_pv.get(use_monitor=True) 
             if val is None: 
-                val = self.get_velocity_pv.get() # fallback once
+                val = self.get_velocity_pv.get(timeout=self.ca_timeout) # fallback once
             return val
         return None
 
@@ -407,7 +409,7 @@ class EpicsActuator(AbstractActuator):
 
         val = self.status_pv.get(use_monitor=True) 
         if val is None: 
-            val = self.status_pv.get() # fallback poll once
+            val = self.status_pv.get(timeout=self.ca_timeout) # fallback poll once
         # -----------------------------------------------------------
         # Try bitmask logic if mask is non-zero
         # -----------------------------------------------------------
@@ -445,7 +447,7 @@ class EpicsActuator(AbstractActuator):
 
         start = time.time()
         while True:
-            current = self.rb_pv.get()
+            current = self.rb_pv.get(timeout=self.ca_timeout)
             if current is None:
                 logging.warning("Readback PV returned None")
                 return True
@@ -456,7 +458,7 @@ class EpicsActuator(AbstractActuator):
             time.sleep(0.1)
 
     def is_in_position(self, target, in_position_band):
-        current = self.rb_pv.get()
+        current = self.rb_pv.get(timeout=self.ca_timeout)
         return abs(current - target) <= in_position_band
     
     def dwell(self) -> None:

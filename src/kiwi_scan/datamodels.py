@@ -35,6 +35,7 @@ class ActuatorConfig:
     stop_command: float = 0.0
     status_pv: Optional[str] = None
     queueing_delay: float = 0.01
+    ca_timeout: float = 1.0
     startup_timeout: float = 1.0
     in_position_band: float = -1.0
     dwell_time: float = 1.0

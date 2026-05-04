@@ -16,6 +16,7 @@ def _safe_poll() -> None:
     Best-effort; varies across pyepics versions.
     """
     try:
+        time.sleep(0.01)
         epics.ca.poll()
     except Exception:
         pass
@@ -112,7 +113,7 @@ class EpicsPV:
     def get(self, *, use_monitor: bool = False, timeout: Optional[float] = None) -> Any:
         """Safe get. If use_monitor=True but cache isn’t ready, falls back to direct get."""
         pv = self._require_pv()
-        t = min(self.timeout, 0.2) if timeout is None else float(timeout)
+        t = min(self.timeout, 1.0) if timeout is None else float(timeout)
 
         def _do_get() -> Any:
             """ Thread safe usage: self._ca(_do_get) """
