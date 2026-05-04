@@ -546,7 +546,7 @@ The post-mortem plotting tools can combine scan files and metadata files for lat
 - `KIWI_SCAN_PLUGIN_PATH` — extra plugin files/directories to import
 - `KIWI_SCAN_SCAN_PATH` — extra scan-type files/directories to import
 
-See [examples/beamline_env.sh](examples/env_setup.sh) for a setup example.
+See [examples/beamline_env.sh](examples/beamline_env.sh) for a setup example.
 
 ## YAML Configuration Reference
 - Forward compatibility: Unknown fields in dataclass-based YAML blocks are generally ignored during parsing.
