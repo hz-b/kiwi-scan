@@ -74,7 +74,7 @@ output_file: scan_results.txt
             result = subprocess.run(cmd, capture_output=True, text=True)
 
             self.assertEqual(result.returncode, 0, msg=result.stderr)
-            self.assertIn("Scan Type:", result.stdout)
+            # self.assertIn("Scan Type:", result.stdout) # obsolete because output is suppressed and converted to logging.info
 
 class TestScanDimension(unittest.TestCase):
     def test_from_dict_known_fields(self):

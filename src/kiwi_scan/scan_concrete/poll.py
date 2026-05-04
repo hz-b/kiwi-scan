@@ -67,7 +67,7 @@ class PollScan(BaseScan):
             getattr(subscription, "name", None),
         )
 
-    def scan(self, monitor: BaseMonitor = None) -> None:
+    def scan(self, positions, monitor: BaseMonitor = None):
         """
         Poll detector values.
         Now synchronized by heartbeat events when available, with poll timeout fallback.
@@ -170,28 +170,4 @@ class PollScan(BaseScan):
             self.busyflag = False
 
     def execute(self) -> None:
-        """
-        Execute polling within range.
-        """
-        if self.get_data_writing_enabled():
-            self.append_to_manifest()
-        logging.info(f"Starting polling from {self._start} to {self._stop}")
-        monitor = create_monitor(self.cfg)
-
-        # Monitor columns: detector PVs + plugin headers
-        plugin_headers = []
-        for plugin in self.plugins:
-            plugin_headers += plugin.get_headers(self.include_timestamps)
-
-        if monitor is not None:
-            monitor.start(self.cfg.detector_pvs + plugin_headers)
-
-        scan_thread = threading.Thread(target=self.scan, args=(monitor,), daemon=True)
-        scan_thread.start()
-
-        if monitor is not None:
-            monitor.loop()
-
-        scan_thread.join()
-        logging.info("Polling complete.")
-
+        self._execute_standard(None) 

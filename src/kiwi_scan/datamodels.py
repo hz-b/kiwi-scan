@@ -251,6 +251,7 @@ class MonitorConfig:
 class ScanConfig:
     actuators: Dict[str, ActuatorConfig]
     detector_pvs: List[str]
+    detector_pvs_monitor: bool = True
     scan_dimensions: Optional[List[ScanDimension]] = None
     parallel_scans: Optional[List[ScanDimension]] = None
     nested_scans: Optional[List[ScanDimension]] = None
@@ -307,6 +308,7 @@ class ScanConfig:
         return cls(
             actuators=actuators,
             detector_pvs=config_dict.get("detector_pvs", []),
+            detector_pvs_monitor=config_dict.get("detector_pvs_monitor", True),
             scan_dimensions=parse_dimensions("scan_dimensions"),
             parallel_scans=parse_dimensions("parallel_scans"),
             nested_scans=parse_dimensions("nested_scans"),

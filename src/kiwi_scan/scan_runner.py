@@ -284,17 +284,17 @@ def main():
         parser.error(str(exc))
 
     # Debug output
-    print("Scan Type:", args.scan_type)
+    logging.info(f"Scan Type: {args.scan_type}")
     if args.config_file:
-        print("Config File:", config_label)
+        logging.info(f"Config File: {config_label}")
     else:
-        print("Config:", config_label)
-    print("Replacements:", replacements)
+        logging.info(f"Config: {config_label}")
+    logging.info(f"Replacements: {replacements}")
 
-    print("Actuators:", actuators)
-    print("Scan Dimensions:")
+    logging.info(f"Actuators: {actuators}")
+    logging.info(f"Scan Dimensions:")
     for dim in scan_dimensions:
-        print(
+        logging.info(
             f"  Actuator: {dim.actuator}, "
             f"Start: {dim.start}, "
             f"Stop: {dim.stop}, "

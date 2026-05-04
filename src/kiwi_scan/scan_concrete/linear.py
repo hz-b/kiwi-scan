@@ -7,7 +7,6 @@ import math
 from typing import List, Dict, Any, Optional
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.datamodels import ScanConfig
-from kiwi_scan.monitor.factory import create_monitor
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan import stats
 import epics
@@ -112,24 +111,4 @@ class LinearScan(BaseScan):
         )
 
     def execute(self):
-        """
-        Execute the linear scan over the pre-defined positions.
-        """
-        if self.get_data_writing_enabled():
-            self.append_to_manifest()
-        monitor = create_monitor(self.cfg)
-        if monitor is not None: 
-            monitor.start(self.cfg.detector_pvs)
-
-        def _run_scan():
-            try:
-                epics.ca.use_initial_context()
-            except Exception:
-                pass
-            self.scan(self.positions, monitor)
-
-        scan_thread = threading.Thread(target=_run_scan)
-        scan_thread.start()
-        if monitor is not None:
-            monitor.loop()
-        scan_thread.join()
+        self._execute_standard(self.positions)

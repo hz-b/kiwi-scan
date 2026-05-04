@@ -23,6 +23,7 @@ from kiwi_scan.datamodels import ActuatorConfig, ScanDimension, ScanConfig
 from kiwi_scan.plugin.registry import create_plugin
 from kiwi_scan.dataloader import DataLoader, resolve_data_dir
 from kiwi_scan.monitor.base import BaseMonitor
+from kiwi_scan.monitor.factory import create_monitor
 from kiwi_scan.scan.scan_abs import ScanABC
 from kiwi_scan.epics_wrapper import EpicsPV
 from kiwi_scan.manifestwriter import ManifestWriter
@@ -54,8 +55,8 @@ class BaseScan(ScanABC):
         #pv = EpicsPV("TESTU171PGM1:Psi")
         #print(pv.get())
         super().__init__(config, data_dir)
-        self.busyflag = False
         logging.debug("Init BaseScan")
+        self.busyflag = False
         self.cfg = config
         # Perform config cleanup
         self._validate_and_filter_actuators()
@@ -212,7 +213,7 @@ class BaseScan(ScanABC):
             k = int(0.95 * (len(vs) - 1))
             return vs[k]
 
-        logging.info("========== PERF SUMMARY ==========")
+        print("========== PERF SUMMARY ==========")
         for name, values in sorted(self._perf.items()):
             n = len(values)
             if n == 0:
@@ -220,11 +221,17 @@ class BaseScan(ScanABC):
             total = sum(values)
             mean = total / n
             mx = max(values)
+
+            print(
+                f"[PERF] {name:<20} "
+                f"n={n} total={total:.3f}s mean={mean:.6f}s "
+                f"p95={p95(values):.6f}s max={mx:.6f}s"
+            )
             logging.info(
                 "[PERF] %-20s n=%d total=%.3fs mean=%.6fs p95=%.6fs max=%.6fs",
                 name, n, total, mean, p95(values), mx
             )
-        logging.info("==================================")
+        print("==================================")
 
     # -------------------- subscription/callback integration --------------------
 
@@ -322,6 +329,7 @@ class BaseScan(ScanABC):
     def _connect_detectors(self):
         logging.debug(f"Detector PVs: {self.cfg.detector_pvs}")
         logging.debug("Init Detectors")
+        logging.debug(f"Monitor: {self.cfg.detector_pvs_monitor}")
 
         self.detector_pvs = []
         for i, pvname in enumerate(self.cfg.detector_pvs):
@@ -335,6 +343,7 @@ class BaseScan(ScanABC):
             )
             logging.debug("Created detector PV: %s", pvname)
             self.detector_pvs.append(pv)
+            self.detector_pvs_monitor = self.cfg.detector_pvs_monitor;
 
     def _connect_actuators(self):
         logging.debug("Init Actuators")
@@ -491,22 +500,21 @@ class BaseScan(ScanABC):
 
     def read_detectors(self) -> List[Any]:
         """
-        Read values (with metadata) from all configured detector PVs.
-
-        This method loops over each PV in `self.detector_pvs` and calls
-        `pv.get_with_metadata()`.  If a PV returns `None`, a WARNING is logged
-        and that PV is skipped.  Any exception during the get is caught, logged
-        as an ERROR (including traceback), and the loop continues.
-
+        Read values (with metadata) from all detector PVs.
+        Settings from top level yaml config:
+            'set detector_pvs_monitor: True':  Read from cache for DAQ! 
+            'set detector_pvs_monitor: False':  Network performance tests.
+        Warning: PV returns `None`
+        Error:  Any exception during the get is logged including traceback
         Returns:
             List[Any]:
-                A list of “readings” where each element is whatever
-                `pv.get_with_metadata()` returned.   
+                A list of “readings” where each element is `pv.get_with_metadata()`.   
         """
         readings: List[Any] = []
         for pv in self.detector_pvs:
             try:
-                reading = pv.get_with_metadata(use_monitor=True) # read from cache 
+                # >>>> Read from cache for DAQ! 'set detector_pvs_monitor: False' only for network performance tests <<<< !
+                reading = pv.get_with_metadata(use_monitor=self.detector_pvs_monitor) 
                 if reading is None:
                     logging.warning("Received None for PV %s", pv.pvname)
                     readings.append(None)
@@ -550,6 +558,7 @@ class BaseScan(ScanABC):
         if not self._data_header_written:
             self.write_header_to_output_file()
 
+        # TODO: output format from cfg (as in print monitor)
         with open(self.output_file, "a", encoding="utf-8") as file:
             parts = []
 
@@ -715,7 +724,6 @@ class BaseScan(ScanABC):
         if not getattr(self, "_last_point", None):
             return []
         return list(self._last_point.keys())
-
 
     def load_data(self):
         """
@@ -915,6 +923,36 @@ class BaseScan(ScanABC):
                 logging.exception("Error stopping scan subscriptions")
             self.busyflag = False
             self._perf_report()
+    
+    def _execute_standard(self, positions):
+        if self.get_data_writing_enabled():
+            self.append_to_manifest()
+        else:
+            logging.debug("Data writer disabled, not added to manifest")
+        
+        monitor = create_monitor(self.cfg)
+        # Monitor columns: detector PVs + plugin headers
+        plugin_headers = []
+        for plugin in self.plugins:
+            plugin_headers += plugin.get_headers(self.include_timestamps)
+        if monitor is not None:
+            logging.debug("Starting monitor")
+            monitor.start(self.cfg.detector_pvs + plugin_headers)
+
+        def _run_scan():
+            try:
+                epics.ca.use_initial_context()
+            except Exception:
+                pass
+            self.scan(positions, monitor)
+
+        scan_thread = threading.Thread(target=_run_scan)
+        logging.info(f"Starting {self.__class__.__name__}.")
+        scan_thread.start()
+        if monitor is not None:
+            monitor.loop()
+        scan_thread.join()
+        logging.info(f"{self.__class__.__name__} scan complete.")
 
     def _prepare_positions(self, positions):
         """

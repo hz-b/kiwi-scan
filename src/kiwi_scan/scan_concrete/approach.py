@@ -50,10 +50,4 @@ class ApproachMove(BaseScan):
                       f"{self.cfg.scan_dimensions}: {pos[:5]} …")
 
     def execute(self):
-        """
-        Execute the move over the pre-defined positions.
-        """
-        if self.get_data_writing_enabled():
-            self.append_to_manifest()
-        self.scan(self.positions)
-
+        self._execute_standard(self.positions)

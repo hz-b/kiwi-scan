@@ -6,6 +6,7 @@ import threading
 import epics
 from typing import Optional
 from kiwi_scan.scan.common import BaseScan
+from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.scan.range_exit_detector import RangeExitDetector
@@ -68,7 +69,7 @@ class CMScan(BaseScan):
             getattr(subscription, "name", None),
         )
 
-    def run_daq(self):
+    def run_daq(self, monitor: BaseMonitor = None):
         """
         DAQ loop driven by heartbeat subscription when available.
         sampletime acts as timeout fallback (so it still works without heartbeat).
@@ -116,19 +117,22 @@ class CMScan(BaseScan):
             if self._position_sync_subscription_set:
                 self._position = pos
             self._fire_triggers("on_point")
-            dets = self.read_detectors()
+            vals = self.read_detectors()
 
             plugin_data = []
             for plugin in self.plugins:
                 plugin_data += plugin.on_scan_point(idx, pos)
-            dets = dets + plugin_data
+            vals = vals + plugin_data
 
-            self.save_to_file(pos, dets, self.include_timestamps)
+            self.save_to_file(pos, vals, self.include_timestamps)
+            # >>> Notify monitor/plotter
+            if monitor is not None:
+                logging.debug(f"{vals}")
+                monitor.update(vals)
             idx += 1
 
-    # -------------------- scan logic --------------------
-
-    def scan(self):
+    # ---------------- cm scan logic --------------------
+    def scan(self, positions, monitor: BaseMonitor = None):
         """
         1) Move to start position
         2) Store current velocities
@@ -136,10 +140,6 @@ class CMScan(BaseScan):
         4) Run DAQ while primary actuator is within range
         5) Restore original velocities
         """
-        try:
-            epics.ca.use_initial_context()
-        except Exception:
-            pass
         self.busyflag = True
         try:
             # 1) Move each actuator to start position
@@ -177,7 +177,7 @@ class CMScan(BaseScan):
             self._start_subscriptions()
 
             # 4) DAQ loop on primary actuator
-            self.run_daq()
+            self.run_daq(monitor)
 
             # 5) Restore original velocities
             for name, orig_vel in self._original_velocities.items():
@@ -191,17 +191,16 @@ class CMScan(BaseScan):
             self._stop_metadata_monitor()
             # MonoCMScan overrides BaseScan.scan(), so it must clear subscriptions itself
             try:
-                self._clear_subscriptions()
+                self._stop_subscriptions()
             except Exception:
-                logging.exception("Error clearing scan subscriptions")
+                logging.exception("Error stopping scan subscriptions")
+            
+            if monitor is not None:
+                monitor.close()
 
             self._fire_triggers("after")
             self.busyflag = False
 
     def execute(self):
-        if self.get_data_writing_enabled():
-            self.append_to_manifest()
-        logging.info(f"Starting CM scan.")
-        self.scan()
-        logging.info("CM complete.")
+        self._execute_standard(None)
 
