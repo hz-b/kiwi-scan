@@ -14,6 +14,10 @@ class RangeExitDetector:
         self.forward = stop > start
 
     def _in_range(self, pos, start, stop):
+        if pos is None or start is None or stop is None:
+            logging.debug(f"Could not detect range: {start}:{pos}:{stop}")
+            return False
+
         return start <= pos <= stop if start <= stop else stop <= pos <= start
 
     def _past_end(self, pos):

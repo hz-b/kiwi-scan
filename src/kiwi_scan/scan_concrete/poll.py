@@ -118,9 +118,13 @@ class PollScan(BaseScan):
 
                 # Prefer subscribed position if sync role is configured, else read rbv
                 pos = self._position
-                if self._position_sync_subscription_set:
+                if not self._position_sync_subscription_set:
                     pos = first_actuator.rbv
                     self._position = pos
+                    self._position_sync_subscription_set = False
+                if pos == None:
+                    continue
+
                 current_position = pos
                 
                 range_exit_detected = range_exit.update(pos) 
