@@ -8,7 +8,7 @@ WITH_VENV = if [ -z "$$VIRTUAL_ENV" ]; then source "$(CURDIR)/mkvenv.sh"; fi
 SCRIPTS = \
     scan_runner \
     actuator_runner \
-    scanplotter_cli_completion
+    scanplotter_cli
 
 SCRIPT_PATHS = $(foreach script,$(SCRIPTS),$(BASH_COMPLETION_DIR)/$(script))
 MOCK_IOC_SCRIPT = tests/hasmi_mock_ioc.py
