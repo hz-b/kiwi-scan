@@ -33,6 +33,11 @@ class ManifestWriter:
     ENV_MANIFEST_FILE = "KIWI_SCAN_MANIFEST_FILE"
     ENV_MANIFEST_STATE_FILE = "KIWI_SCAN_MANIFEST_STATE_FILE"
 
+    MODE_FULL = "full"
+    MODE_SMALL = "small"
+    MODE_OFF = "off"
+    VALID_MODES = {MODE_FULL, MODE_SMALL, MODE_OFF}
+
     DEFAULT_STATE_FILE = Path.home() / ".config" / "kiwi-scan" / "active_manifest"
     DEFAULT_MANIFEST_DIR = Path.cwd()
     # logger - available in classmethods 
@@ -144,6 +149,24 @@ class ManifestWriter:
     # Append scan entries
     # ------------------------------------------------------------------
 
+    @classmethod
+    def normalize_mode(cls, mode: Optional[str]) -> str:
+        """Return a validated manifest mode.
+
+        Accepted values are case-insensitive:
+          - full: write the complete scan entry including config
+          - small: write scan references only, without the full config
+          - off: do not write a manifest entry
+        """
+        if mode is None:
+            return cls.MODE_FULL
+
+        normalized = str(mode).strip().lower()
+        if normalized not in cls.VALID_MODES:
+            allowed = ", ".join(sorted(cls.VALID_MODES))
+            raise ValueError(f"Unsupported manifest_mode {mode!r}. Expected one of: {allowed}")
+        return normalized
+
     def append_scan_config(
         self,
         config: Any,
@@ -151,20 +174,27 @@ class ManifestWriter:
         path: Optional[str] = None,
         data_file: Optional[str] = None,
         metadata_file: Optional[str] = None,
+        mode: str = MODE_FULL,
     ) -> str:
         """
         Append one scan configuration entry to the manifest.
 
         Returns:
-            The generated scan id.
+            The generated scan id, or None when mode is ``off``.
         """
+        mode = self.normalize_mode(mode)
+        if mode == self.MODE_OFF:
+            self.logger.info("Manifest writing disabled by manifest_mode=off")
+            return None
+
         now = datetime.now().astimezone()
         scan_id = "scan_" + now.strftime("%Y%m%dT%H%M%S%z")
         self.logger.info(
-            "Appending scan to manifest: id=%s type=%s file=%s",
+            "Appending scan to manifest: id=%s type=%s file=%s mode=%s",
             scan_id,
             scan_type,
             data_file,
+            mode,
         )
 
         entry = {
@@ -174,8 +204,10 @@ class ManifestWriter:
             "path": path,
             "data_file": data_file,
             "metadata_file": metadata_file,
-            "config": self._to_plain_data(config),
+            "manifest_mode": mode,
         }
+        if mode == self.MODE_FULL:
+            entry["config"] = self._to_plain_data(config)
 
         self._append_entry(entry)
         self.logger.debug("Appended entry: %s", scan_id)

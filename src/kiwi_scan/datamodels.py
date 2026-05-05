@@ -267,6 +267,7 @@ class ScanConfig:
     debug: bool = False
     performance_report: bool = False
     data_writing_enabled: bool = True
+    manifest_mode: str = "full"
     triggers: Optional[ScanTriggers] = None
     metadata_pvs: List[str] = field(default_factory=list)          # EPICS PVs to monitor in parallel
     metadata_constants: Dict[str, Any] = field(default_factory=dict)  # key/value string constants
@@ -300,7 +301,13 @@ class ScanConfig:
             subs.append(SubscriptionConfig.from_dict(sub_data))
 
         monitor = MonitorConfig.from_dict(config_dict.get("monitor"))
-
+        manifest_mode = str(config_dict.get("manifest_mode", "full")).strip().lower()
+        if manifest_mode not in {"full", "small", "off"}:
+            raise ValueError(
+                "manifest_mode must be one of: full, small, off "
+                f"(got {config_dict.get('manifest_mode')!r})"
+            )
+        logging.info(f"manifest_mode: {manifest_mode}")
         # Log unknown keys
         for key in config_dict:
             if key not in known_keys:
@@ -324,6 +331,7 @@ class ScanConfig:
             debug=config_dict.get("debug", False),
             performance_report=config_dict.get("performance_report", False),
             data_writing_enabled=config_dict.get("data_writing_enabled", True),
+            manifest_mode=manifest_mode,
             triggers=triggers,
             metadata_pvs=config_dict.get("metadata_pvs", []),
             metadata_constants=config_dict.get("metadata_constants", {}),

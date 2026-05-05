@@ -58,6 +58,7 @@ class BaseScan(ScanABC):
         logging.debug("Init BaseScan")
         self.busyflag = False
         self.cfg = config
+        self.scan_type = self.__class__.__name__
         # Perform config cleanup
         self._validate_and_filter_actuators()
 
@@ -139,6 +140,7 @@ class BaseScan(ScanABC):
             getattr(self.cfg, "debug", False)
             or getattr(self.cfg, "performance_report", False)
         )
+        self._manifest_mode = getattr(self.cfg, "manifest_mode", "full")
         if self._perf_enabled:
             logging.info("Performance reporting enabled")
         else:
@@ -1115,6 +1117,7 @@ class BaseScan(ScanABC):
                 path=getattr(self.cfg, "data_dir", None),
                 data_file=self.output_file,
                 metadata_file=self._metadata_out,
+                mode=self._manifest_mode 
             )
 
         except Exception:

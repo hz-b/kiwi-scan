@@ -515,6 +515,19 @@ scan_runner --newmanifest [optional_filename.yaml]
 ```
 Each scan engine appends its configuration and output file reference to the active manifest.
 
+Manifest writing can be controlled from YAML with `manifest_mode`:
+
+```yaml
+# default: full manifest entry including the full scan config
+manifest_mode: full
+
+# smaller manifest entry: data and metadata file references only, no full config block
+manifest_mode: small
+
+# do not append manifest entries for this scan
+manifest_mode: off
+```
+
 If no filename is given, a timestamped file is created (in `KIWI_SCAN_DATA_DIR` if set).
 `kiwi_scan.scan.common` provides `append_to_manifest(self, scan_type: str = None) -> None` for external scan types.
 
@@ -585,6 +598,7 @@ integration_time: 0.0
 debug: False
 performance_report: False
 data_writing_enabled: True
+manifest_mode: full
 triggers: {}
 metadata_pvs: []
 metadata_constants: {}
