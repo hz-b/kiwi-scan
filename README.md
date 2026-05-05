@@ -584,6 +584,7 @@ See [examples/beamline_env.sh](examples/beamline_env.sh) for a setup example.
 ```yaml
 actuators: {}
 detector_pvs: []
+detector_pvs_monitor: True
 scan_dimensions: []
 parallel_scans: []
 nested_scans: []
@@ -636,6 +637,7 @@ For `tsv` and `csv`, one header row is written followed by one row per scan poin
 | `ready_value` | int or string | Status value considered ready. |
 | `ready_bitmask` | int | Bitmask for status-based ready logic. |
 | `queueing_delay` | float | Delay after EPICS writes. |
+| `ca_timeout` | float | EPICS  CA timeout. |
 | `startup_timeout` | float | Timeout waiting for motion to start. |
 | `in_position_band` | float | Allowed tolerance. |
 | `dwell_time` | float | Delay after motion completes. |
