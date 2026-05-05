@@ -229,7 +229,8 @@ class MonitorConfig:
         if data is None:
             return cls()
         if not isinstance(data, dict):
-            raise TypeError(f"monitor must be a mapping, got {type(data)}")
+            logging.error(f"monitor config must be a mapping, got {type(data)}")
+            return cls()
         # The monitor type remains the top-level ScanConfig.monitor_type.
         # The preferred YAML layout is:
         #   monitor_type: print
