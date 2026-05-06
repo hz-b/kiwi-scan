@@ -1,3 +1,5 @@
+[![PyPI version](https://img.shields.io/pypi/v/kiwi-scan.svg)](https://pypi.org/project/kiwi-scan/)
+
 # kiwi-scan
 
 `kiwi-scan`: A Modular Scan Framework for Commissioning and Diagnostics in EPICS Environments
@@ -170,9 +172,13 @@ print("scan finished")
 
 ## Installation
 
-Basic installation:
+Install the latest released version from PyPI:
 
-Editable/development installation:
+```bash
+pip install kiwi-scan
+```
+
+For development, clone the repository and install it in editable mode:
 
 ```bash
 pip install -e ".[dev]"
