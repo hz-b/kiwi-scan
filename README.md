@@ -491,14 +491,17 @@ That pattern is handy for hysteresis checks, warm-up sweeps, and repeatability m
 
 After installation, the main entry points are:
 
-- `scan_runner` — execute scans from YAML + CLI dimensions
-- `actuator_runner` — send one-off actuator commands and optional monitors
-
+- `scan_runner` - execute scans from YAML + CLI dimensions + other options
+- `actuator_runner` - actuator commands and run optional monitors + formatted output
+- `scanplotter_cli` - plot scan data, optionally use manifest and file index
+- `manifestfiles` - a simple tool to list files referenced in manifests
 Examples:
 
 ```bash
 scan_runner --help
 actuator_runner --help
+scanplotter_cli --help
+manifestfiles --help
 ```
 
 ## Output files
