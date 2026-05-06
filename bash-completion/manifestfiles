@@ -1,0 +1,29 @@
+_manifestfiles()
+{
+    local cur prev words cword
+    _init_completion || return
+
+    local opts="-h --help --data-dir --manifest-file --include-meta --include-manifest --missing"
+
+    case "$prev" in
+        --data-dir)
+            _filedir -d
+            return
+            ;;
+        --manifest-file)
+            _filedir '@(yaml|yml)'
+            return
+            ;;
+    esac
+
+    # Complete long options by default.
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+        return
+    fi
+
+    # Positional arguments are not used by manifestfiles.
+    COMPREPLY=()
+}
+
+complete -F _manifestfiles manifestfiles 

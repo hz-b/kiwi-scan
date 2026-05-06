@@ -8,10 +8,10 @@ WITH_VENV = if [ -z "$$VIRTUAL_ENV" ]; then source "$(CURDIR)/mkvenv.sh"; fi
 SCRIPTS = \
     scan_runner \
     actuator_runner \
-    scanplotter_cli
+    scanplotter_cli \
+    manifestfiles
 
 SCRIPT_PATHS = $(foreach script,$(SCRIPTS),$(BASH_COMPLETION_DIR)/$(script))
-MOCK_IOC_SCRIPT = tests/hasmi_mock_ioc.py
 
 .PHONY: help all install_completion uninstall_completion clean cscope tag lint test
 
