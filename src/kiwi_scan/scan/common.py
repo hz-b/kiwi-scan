@@ -73,7 +73,7 @@ class BaseScan(ScanABC):
         self.nested_scans    = config.nested_scans    or []
         self.trigger_manager = TriggerManager.from_config(self.cfg.triggers)
         # Prepare I/O
-        self.data_dir = resolve_data_dir(data_dir, config.data_dir)
+        self.data_dir = os.path.abspath(resolve_data_dir(data_dir, config.data_dir))
         logging.info(f"Data directory: {self.data_dir}")
 
         self._data_writer_lock = threading.RLock()
@@ -928,7 +928,8 @@ class BaseScan(ScanABC):
     
     def _execute_standard(self, positions):
         if self.get_data_writing_enabled():
-            self.append_to_manifest()
+            with self._time_block("manifest:append"):
+                self.append_to_manifest()
         else:
             logging.debug("Data writer disabled, not added to manifest")
         
@@ -1114,7 +1115,7 @@ class BaseScan(ScanABC):
             writer.append_scan_config(
                 config=self.cfg,
                 scan_type=scan_type or getattr(self, "scan_type", self.__class__.__name__),
-                path=getattr(self.cfg, "data_dir", None),
+                path=self.data_dir,
                 data_file=self.output_file,
                 metadata_file=self._metadata_out,
                 mode=self._manifest_mode 

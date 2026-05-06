@@ -46,13 +46,26 @@ class ManifestWriter:
     def __init__(self, filename: str):
         self.path = Path(filename).expanduser()
         self.logger.debug("Initialized ManifestWriter with path: %s", self.path)
-    
+
+    @staticmethod
+    def _absolute_path_value(value: Optional[str], base_dir: Optional[str] = None) -> Optional[str]:
+        """Return an absolute, user-expanded path string for manifest references."""
+        if not value:
+            return None
+
+        path = Path(str(value)).expanduser()
+        if path.is_absolute():
+            return str(path)
+
+        if base_dir:
+            return str(Path(base_dir).expanduser().joinpath(path).resolve(strict=False))
+
+        return str(path.resolve(strict=False))
+
     @classmethod
     def _create_manifest_header(cls) -> Dict[str, Any]:
         """
         Create the initial manifest header structure.
-        Can be called from other class methods and has access to 
-        class level attributes for later extension.
         Returns:
             A dictionary containing the manifest header and empty scan list.
         """
@@ -183,6 +196,7 @@ class ManifestWriter:
             The generated scan id, or None when mode is ``off``.
         """
         mode = self.normalize_mode(mode)
+        absolute_path = self._absolute_path_value(path)
         if mode == self.MODE_OFF:
             self.logger.info("Manifest writing disabled by manifest_mode=off")
             return None
@@ -201,9 +215,9 @@ class ManifestWriter:
             "id": scan_id,
             "created_at": now.isoformat(timespec="seconds"),
             "scan_type": scan_type,
-            "path": path,
-            "data_file": data_file,
-            "metadata_file": metadata_file,
+            "path": absolute_path,
+            "data_file": self._absolute_path_value(data_file, absolute_path),
+            "metadata_file": self._absolute_path_value(metadata_file, absolute_path),
             "manifest_mode": mode,
         }
         if mode == self.MODE_FULL:
@@ -283,25 +297,44 @@ class ManifestResolver:
     def _resolve_data_dir(cls, data_dir: Optional[str]) -> Path:
         value = data_dir or os.environ.get(cls.ENV_DATA_DIR)
         if not value:
-            raise ValueError(
-                f"{cls.ENV_DATA_DIR} is not set. Set it, use --manifest-file, "
-                "or provide explicit file=... in every --series."
-            )
+            return None
 
         path = Path(value).expanduser()
         if not path.is_dir():
             raise FileNotFoundError(f"Manifest directory does not exist: {path}")
         return path
 
+    def _active_manifest_fallback(self) -> Optional[Path]:
+        active = ManifestWriter.get_active_manifest()
+        if not active:
+            return None
+
+        path = Path(active).expanduser()
+        if path.is_file():
+            self.logger.debug(f"Found active manifest fallback: {path}")
+            return path
+
+        self.logger.debug(f"Ignoring active manifest fallback because it does not exist: {path}")
+        return None
+
     def list_manifests(self) -> List[Path]:
         """Return manifest*.yaml/yml files newest-first by manifest created_at."""
         paths = set()
-        for pattern in ("manifest*.yaml", "manifest*.yml"):
-            paths.update(self.data_dir.glob(pattern))
-        
+        if self.data_dir is not None:
+            for pattern in ("manifest*.yaml", "manifest*.yml"):
+                paths.update(self.data_dir.glob(pattern))
+
         manifests = sorted(paths, key=self._manifest_sort_key, reverse=True)
-        self.logger.debug(f"Found {len(manifests)} manifest file(s) in {self.data_dir}")
-        return manifests
+        if manifests:
+            self.logger.debug(f"Found {len(manifests)} manifest file(s) in {self.data_dir}")
+            return manifests
+
+        active_manifest = self._active_manifest_fallback()
+        if active_manifest is not None:
+            return [active_manifest]
+
+        self.logger.debug(f"Found no manifest file(s) in {self.data_dir}")
+        return []
 
     def select_manifest(self, index: int = 0) -> Path:
         if index < 0:
@@ -309,8 +342,10 @@ class ManifestResolver:
 
         manifests = self.list_manifests()
         if not manifests:
+            location = self.data_dir if self.data_dir is not None else f"{self.ENV_DATA_DIR} is not set"
             raise FileNotFoundError(
-                f"No manifest*.yaml or manifest*.yml files found in {self.data_dir}"
+                f"No manifest*.yaml or manifest*.yml files found in {location}, "
+                "and no active manifest fallback is available"
             )
         if index >= len(manifests):
             raise IndexError(
@@ -359,6 +394,47 @@ class ManifestResolver:
                 f"--scan-index {scan_index} is out of range; found {len(refs)} scan entry/entries"
             )
         return refs[scan_index]
+
+
+
+    def list_files(
+        self,
+        manifest_file: str,
+        *,
+        include_meta: bool = False,
+        include_manifest: bool = False,
+        missing: bool = False,
+    ) -> List[Path]:
+        """Return files referenced by one manifest as absolute paths.
+
+        By default only existing scan data files are returned. Metadata sidecars
+        and the manifest file itself can be included explicitly. Duplicate paths
+        are removed while preserving manifest order.
+        """
+        manifest_path = Path(manifest_file).expanduser()
+        refs = self.list_scan_refs(str(manifest_path))
+        result: List[Path] = []
+        seen = set()
+
+        def add(path: Optional[Path]) -> None:
+            if path is None:
+                return
+            full = path.expanduser().resolve(strict=False)
+            if full in seen:
+                return
+            if missing or full.exists():
+                seen.add(full)
+                result.append(full)
+
+        if include_manifest:
+            add(manifest_path)
+
+        for ref in refs:
+            add(ref.data_file)
+            if include_meta:
+                add(ref.metadata_file)
+
+        return result
 
     def select_file(
         self,
@@ -430,6 +506,9 @@ class ManifestResolver:
             return path
 
         candidates = [manifest_file.parent / path, self.data_dir / path]
+        if self.data_dir is not None:
+            candidates.append(self.data_dir / path)
+
         for candidate in candidates:
             if candidate.exists():
                 self.logger.debug(f"Resolved manifest path reference {value!r} to {candidate}")
@@ -437,7 +516,7 @@ class ManifestResolver:
 
         self.logger.debug(
             f"Manifest path reference {value!r} did not exist relative to "
-            f"{manifest_file.parent} or {self.data_dir}; using {candidates[0]}"
+            f"{', '.join(str(candidate.parent) for candidate in candidates)}; using {candidates[0]}"
         )
         return candidates[0]
 

@@ -65,8 +65,9 @@ Issues = "https://github.com/hz-b/kiwi-scan/issues"
 
 [project.scripts]
 scan_runner = "kiwi_scan.scan_runner:main"
-scanplotter_cli = "kiwi_scan.scanplotter_cli:main"
 actuator_runner = "kiwi_scan.actuator_runner:main"
+scanplotter_cli = "kiwi_scan.scanplotter_cli:main"
+manifestfiles = "kiwi_scan.manifestfiles:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

@@ -5,7 +5,7 @@ import os
 import sys
 import argparse
 import difflib
-from typing import List
+from typing import List, Dict
 
 import kiwi_scan
 from kiwi_scan.yaml_loader import (
@@ -38,18 +38,16 @@ _DIM_ALLOWED_KEYS = _DIM_REQUIRED_KEYS | _DIM_OPTIONAL_KEYS
 
 
 def _validate_dim_args(dim_args: List[str]) -> None:
-    """Validate --dim syntax/keys before constructing ScanDimension objects.
-
-    ScanDimension.from_dim_args currently raises low-level exceptions such as
-    KeyError for misspelled keys. This pre-validation keeps user-facing CLI
-    errors in argparse format while preserving the current order where config
-    loading errors are reported before semantic scan-range validation.
+    """
+    Validate --dim syntax/keys before constructing ScanDimension objects.
+    ScanDimension.from_dim_args raises low-level exceptions such as
+    KeyError for misspelled keys. 
     """
     for spec in dim_args:
         if not spec or not spec.strip():
             raise ValueError("--dim must not be empty")
 
-        kv: dict[str, str] = {}
+        kv: Dict[str, str] = {}
         for part in spec.split(","):
             part = part.strip()
             if not part:

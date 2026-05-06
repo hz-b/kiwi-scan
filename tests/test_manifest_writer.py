@@ -120,6 +120,92 @@ class TestManifestWriter(unittest.TestCase):
                 resolver.select_file(source_type="scan", manifest_index=0, scan_index=1),
                 data_dir / "newer_scan.txt",
             )
+    
+    def test_manifest_resolver_lists_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            old_state = os.environ.get(ManifestWriter.ENV_MANIFEST_STATE_FILE)
+            os.environ[ManifestWriter.ENV_MANIFEST_STATE_FILE] = os.path.join(tmpdir, "active_manifest")
+            try:
+                manifest_path = os.path.join(tmpdir, "manifest.yaml")
+                data_path = os.path.join(tmpdir, "scan.txt")
+                meta_path = os.path.join(tmpdir, "scan_meta.txt")
+                open(data_path, "w", encoding="utf-8").close()
+                open(meta_path, "w", encoding="utf-8").close()
+
+                ManifestWriter.newmanifest(manifest_path)
+                writer = ManifestWriter.from_active()
+                writer.append_scan_config(
+                    {"test": 123},
+                    scan_type="test",
+                    path=tmpdir,
+                    data_file="scan.txt",
+                    metadata_file="scan_meta.txt",
+                )
+
+                resolver = ManifestResolver(tmpdir)
+                files = resolver.list_files(manifest_path, include_meta=True, include_manifest=True)
+
+                self.assertEqual(
+                    files,
+                    [
+                        Path(manifest_path).resolve(),
+                        Path(data_path).resolve(),
+                        Path(meta_path).resolve(),
+                    ],
+                )
+            finally:
+                if old_state is None:
+                    os.environ.pop(ManifestWriter.ENV_MANIFEST_STATE_FILE, None)
+                else:
+                    os.environ[ManifestWriter.ENV_MANIFEST_STATE_FILE] = old_state
+
+    def test_append_stores_absolute_file_references(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest_path = os.path.join(tmpdir, "manifest.yaml")
+            ManifestWriter.newmanifest(manifest_path)
+
+            writer = ManifestWriter.from_active()
+            self.assertIsNotNone(writer)
+
+            writer.append_scan_config(
+                {"test": 123},
+                scan_type="test",
+                path=".",
+                data_file="scan.txt",
+                metadata_file="scan_meta.txt",
+            )
+
+            with open(manifest_path, "r", encoding="utf-8") as f:
+                data = f.read()
+
+            self.assertIn(f"path: {os.getcwd()}", data)
+            self.assertIn(f"data_file: {os.path.join(os.getcwd(), 'scan.txt')}", data)
+            self.assertIn(f"metadata_file: {os.path.join(os.getcwd(), 'scan_meta.txt')}", data)
+
+    def test_resolver_falls_back_to_active_manifest(self):
+        with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as manifest_dir:
+            state_file = os.path.join(state_dir, "active_manifest")
+            manifest_path = os.path.join(manifest_dir, "manifest_from_tmp.yaml")
+
+            old_state = os.environ.get(ManifestWriter.ENV_MANIFEST_STATE_FILE)
+            old_data_dir = os.environ.get(ManifestResolver.ENV_DATA_DIR)
+            os.environ[ManifestWriter.ENV_MANIFEST_STATE_FILE] = state_file
+            os.environ.pop(ManifestResolver.ENV_DATA_DIR, None)
+            try:
+                ManifestWriter.newmanifest(manifest_path)
+                resolver = ManifestResolver.from_env()
+
+                self.assertEqual(resolver.select_manifest(), Path(manifest_path))
+            finally:
+                if old_state is None:
+                    os.environ.pop(ManifestWriter.ENV_MANIFEST_STATE_FILE, None)
+                else:
+                    os.environ[ManifestWriter.ENV_MANIFEST_STATE_FILE] = old_state
+
+                if old_data_dir is None:
+                    os.environ.pop(ManifestResolver.ENV_DATA_DIR, None)
+                else:
+                    os.environ[ManifestResolver.ENV_DATA_DIR] = old_data_dir
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
