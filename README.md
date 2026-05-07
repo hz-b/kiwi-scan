@@ -170,6 +170,11 @@ finally:
 print("scan finished")
 ```
 
+## Dependencies
+
+kiwi-scan depends on pyepics which depends on Epics Base Version 3.14.12 or higher.
+Installing the bash completions package (e.g. Debian: ```sudo apt install bash-completion```) is highly recommended for the CLI tools.
+
 ## Installation
 
 Install the latest released version from PyPI:
@@ -772,6 +777,12 @@ Public releases use clean semantic versions (X.Y.Z) on PyPI, each mapped to a ti
 
 - **KIWI Scan Presentation**  
   https://indico.in2p3.fr/event/37441/contributions/171970/attachments/101030/156847/kiwi-scan.pdf
+
+- **HASMI: A Configurable Python Framework for Automated Harmonic Analysis and Scan Orchestration at EMIL**  
+  A. Balzer, A. Efimenko, P. Sreelatha Devi, K. Holldack,  
+  Helmholtz-Zentrum Berlin (HZB), Berlin, Germany,  
+  *Proceedings of ICALEPCS 2025*, THAG004 (2025).  
+  https://proceedings.jacow.org/icalepcs2025/pdf/THAG004.pdf
 
 ## License
 
