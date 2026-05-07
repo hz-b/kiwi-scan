@@ -71,7 +71,12 @@ output_file: scan_results.txt
                 "--dim", "actuator=x,start=0,stop=1,steps=2"
             ]
 
-            result = subprocess.run(cmd, capture_output=True, text=True)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=tmp_path,
+            )
 
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             # self.assertIn("Scan Type:", result.stdout) # obsolete because output is suppressed and converted to logging.info
@@ -277,6 +282,8 @@ class TestLinearScan(unittest.TestCase):
             velocity=0.0
         )
         actuator_cfg = ActuatorConfig(pv="PV:ACT1")
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="kiwi-scan-")
+        self.addCleanup(self.tmpdir.cleanup)
         self.config = ScanConfig(
             actuators={"motor1": actuator_cfg},
             detector_pvs=[],
@@ -289,7 +296,7 @@ class TestLinearScan(unittest.TestCase):
             debug=False
         )
 
-        self.linear = LinearScan(self.config)
+        self.linear = LinearScan(self.config, data_dir=self.tmpdir.name)
 
     def test_initialization(self):
         self.assertIsInstance(self.linear, LinearScan)
@@ -340,6 +347,8 @@ class TestApproachMove(unittest.TestCase):
             pv="PV:ACT1",
             stop_pv=None
         )
+        self.tmpdir = tempfile.TemporaryDirectory(prefix="kiwi-scan-")
+        self.addCleanup(self.tmpdir.cleanup)
         self.config = ScanConfig(
             actuators={"motor1": actuator_cfg},
             detector_pvs=[],
@@ -353,7 +362,7 @@ class TestApproachMove(unittest.TestCase):
         )
 
         # Instantiate
-        self.approach = ApproachMove(self.config)
+        self.approach = ApproachMove(self.config, data_dir=self.tmpdir.name)
 
     def test_initialization(self):
         # Should be the right type

@@ -38,8 +38,8 @@ def resolve_data_dir(base_dir: Optional[str], relative_dir: str) -> str:
     candidate=base_dir
     if base_dir:
         candidate = os.path.join(base_dir, relative_dir)
-        if os.path.isdir(candidate):
-            return candidate
+        os.makedirs(candidate, exist_ok=True)
+        return candidate
     logging.info(f"Path {candidate} does not exist")
     fallback = get_scan_data_dir(relative_dir)
     if not os.path.isdir(fallback):
