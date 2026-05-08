@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
+from typing import Optional
 import logging
 import threading
 import time
@@ -126,26 +127,31 @@ class EpicsPV:
         
         return _do_get()
 
-    def get_with_metadata(self, *, use_monitor: bool = False, timeout: Optional[float] = None) -> Optional[Dict[str, Any]]:
+    def get_with_metadata(self, *, use_monitor: bool = False, timeout: Optional[float] = None, full: Optional[bool] = False) -> Optional[Dict[str, Any]]:
         """Return dict with value + timestamp-ish metadata."""
         pv = self._require_pv()
         t = min(self.timeout, 0.2) if timeout is None else float(timeout)
 
         def _do() -> Optional[Dict[str, Any]]:
-            """ Thread safe usage: self._ca(_do) """
-            val = pv.get(timeout=t, use_monitor=use_monitor)
-            if val is None and use_monitor:
-                val = pv.get(timeout=t, use_monitor=False)
-            if val is None:
-                return None
-            # pyepics has pv.timestamp, pv.severity, pv.status sometimes
-            meta: Dict[str, Any] = {"value": val}
-            try:
-                meta["timestamp"] = float(getattr(pv, "timestamp"))
-            except Exception:
-                meta["timestamp"] = time.time()
-            meta["pvname"] = self.pvname
-            return meta
+            if full:
+                meta = pv.get_with_metadata(use_monitor=use_monitor)
+                # print(f"----------------------- {meta}")
+                return meta
+            else:
+                """ Thread safe usage: self._ca(_do) """
+                val = pv.get(timeout=t, use_monitor=use_monitor)
+                if val is None and use_monitor:
+                    val = pv.get(timeout=t, use_monitor=False)
+                if val is None:
+                    return None
+                # pyepics has pv.timestamp, pv.severity, pv.status sometimes
+                meta: Dict[str, Any] = {"value": val}
+                try:
+                    meta["timestamp"] = float(getattr(pv, "timestamp"))
+                except Exception:
+                    meta["timestamp"] = time.time()
+                meta["pvname"] = self.pvname
+                return meta
 
         return _do()
 
@@ -241,3 +247,126 @@ class EpicsPV:
         obj._pv = epics.PV(pvname, auto_monitor=True)
 
         return obj
+
+NO_ALARM = 0
+MINOR_ALARM = 1
+MAJOR_ALARM = 2
+INVALID_ALARM = 3
+
+STATUS_NAMES = {
+    0: "NO_ALARM",
+    1: "READ",
+    2: "WRITE",
+    3: "HIHI",
+    4: "HIGH",
+    5: "LOLO",
+    6: "LOW",
+    7: "STATE",
+    8: "COS",
+    9: "COMM",
+    10: "TIMEOUT",
+    11: "HWLIMIT",
+    12: "CALC",
+    13: "SCAN",
+    14: "LINK",
+    15: "SOFT",
+    16: "BAD_SUB",
+    17: "UDF",
+    18: "DISABLE",
+    19: "SIMM",
+    20: "READ_ACCESS",
+    21: "WRITE_ACCESS",
+}
+
+SEVERITY_NAMES = {
+    NO_ALARM: "NO_ALARM",
+    MINOR_ALARM: "MINOR",
+    MAJOR_ALARM: "MAJOR",
+    INVALID_ALARM: "INVALID",
+}
+
+SEVERITY_RANK = {
+    "NO_ALARM": 0,
+    "MINOR": 1,
+    "MAJOR": 2,
+    "INVALID": 3,
+    "ERROR": 4,
+}
+
+
+
+def severity_name(severity: Optional[int]) -> str:
+    """
+    Return EPICS severity name.
+
+    Examples
+    --------
+    >>> severity_name(3)
+    'INVALID'
+
+    >>> severity_name(None)
+    'UNKNOWN'
+    """
+    if severity is None:
+        return "UNKNOWN"
+
+    return SEVERITY_NAMES.get(
+        severity,
+        f"UNKNOWN_SEVERITY({severity})",
+    )
+
+def severity_rank(severity: Optional[int]) -> int:
+    """
+    Convert EPICS severity to sortable rank.
+
+    Examples
+    --------
+    >>> severity_rank(0)
+    0
+
+    >>> severity_rank(2)
+    2
+
+    >>> severity_rank(None)
+    4
+    """
+    return SEVERITY_RANK.get(severity_name(severity), SEVERITY_RANK["ERROR"])
+
+def status_name(status: Optional[int]) -> str:
+    """
+    Return EPICS alarm status name.
+
+    Examples
+    --------
+    >>> status_name(17)
+    'UDF'
+
+    >>> status_name(None)
+    'UNKNOWN'
+    """
+    if status is None:
+        return "UNKNOWN"
+
+    return STATUS_NAMES.get( status, f"UNKNOWN_STATUS({status})")
+
+def alarm_info(
+    status: Optional[int],
+    severity: Optional[int],
+) -> str:
+    """
+    Return formatted EPICS alarm information.
+    """
+    return (
+        f"status={status_name(status)} "
+        f"severity={severity_name(severity)}"
+    )
+
+def has_alarm( severity: Optional[int]) -> bool:
+    """
+    True if PV is in alarm state or invalid.
+    """
+    if severity is None:
+        return True
+
+    return severity != NO_ALARM
+
