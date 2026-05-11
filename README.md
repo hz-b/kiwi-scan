@@ -690,9 +690,9 @@ Arrays are used for multiple actuators
 
 Additional user and developer documentation:
 
-- [Trigger manager](https://github.com/hz-b/kiwi-scan/blob/main/docs/trigger-manager.md) - scan trigger phases, YAML configuration, and trigger execution.
-- [Plugins](https://github.com/hz-b/kiwi-scan/blob/main/docs/plugins.md) - plugin API, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
-- [vim](https://github.com/hz-b/kiwi-scan/blob/main/docs/vim.md) - simple syntax highlighting setup
+- [Trigger manager](https://github.com/hz-b/kiwi-scan/blob/master/docs/trigger-manager.md) - scan trigger phases, YAML configuration, and trigger execution.
+- [Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) - plugin API, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
+- [vim](https://github.com/hz-b/kiwi-scan/blob/master/docs/vim.md) - simple syntax highlighting setup
 
 
 ## Contributing
