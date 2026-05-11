@@ -611,3 +611,6 @@ def main() -> None:
 
     logging.debug("Config origin: %s", origin)
     print(f"Done. events_seen={seen} dropped={dr}")
+
+if __name__ == "__main__":
+    main()

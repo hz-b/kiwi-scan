@@ -65,7 +65,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--include-meta",
         action="store_true",
-        help="Also print metadata sidecar files referenced by scan entries.",
+        help="Also print metadata files referenced by scan entries.",
     )
     parser.add_argument(
         "--include-manifest",
@@ -81,10 +81,13 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--log-level",
         type=int,
         default=logging.WARNING,
-        help="Python logging level (10=DEBUG,20=INFO,...). Default: 30.",
+        help="MBBO record level (0..5) mapped to Python logging",
     )
+    
     args = parser.parse_args(argv)
-    logging.basicConfig(level=args.log_level)
+    
+    if args.log_level is not None:
+        set_valid_logging_level(args.log_level)
 
     try:
         if args.data_dir or not args.manifest_file:
@@ -112,7 +115,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
     except (FileNotFoundError, ValueError, IndexError) as exc:
         parser.exit(2, f"manifestfiles_cli: error: {exc}\n")
-
 
 if __name__ == "__main__":
     main()
