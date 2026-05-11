@@ -40,7 +40,7 @@ class EpicsActuator(AbstractActuator):
             self.jog_command_pv = EpicsPV(jog_cfg.command_pv) if jog_cfg.command_pv else None
 
         # Config parameters
-        self.in_band = config.in_position_band
+        self.in_pos_band = config.in_position_band
         self.dwell_time = config.dwell_time
         self.ready_value = config.ready_value
         self.ready_bitmask = config.ready_bitmask
@@ -263,17 +263,23 @@ class EpicsActuator(AbstractActuator):
         timeout: Optional[float] = None,
         interval: float = 0.1,
         msg: str = "Timeout waiting for condition",
-    ) -> None:
+    ) -> bool:
         """
         Wait until `condition()` returns True.
-        If `timeout` is None, wait indefinitely. Otherwise, stop after `timeout` seconds.
+        Individual failed condition function reads are handled by the condition function (and return False). 
+        This method keeps polling until the configured timeout expires.
+
+        Returns: 
+            True if the condition was observed. 
+            False on timeout.
         """
         start = time.time()
         while not condition():
             if timeout is not None and (time.time() - start) > timeout:
-                logging.error(msg)
-                return
+                logging.warning(msg)
+                return False
             time.sleep(interval)
+        return True
 
     def start_actuator(self) -> None:
         if self.start_pv:
@@ -299,8 +305,12 @@ class EpicsActuator(AbstractActuator):
 
     def _issue_move(self, position: float) -> None:
         logging.info(f"[{self.pvname}] move to {position}")
+        success = False
         if self.pv:
             success = self.pv.put(position)
+        else:
+            logging.error("Cannot issue move: setter PV is not configured")
+
         if not success:
             logging.error(f"Failed to write position to {self.pvname}")
         self.start_actuator()
@@ -349,7 +359,7 @@ class EpicsActuator(AbstractActuator):
             self.rel_move(delta)
             if sync:
                 try:
-                    if cur is not None and self.in_band >= 0:
+                    if cur is not None and self.in_pos_band >= 0:
                         self.wait_until_done(float(cur) + float(delta))
                     else:
                         self.wait_for_startup_and_done()
@@ -403,46 +413,81 @@ class EpicsActuator(AbstractActuator):
         if sync:
             self.wait_for_startup_and_done()
     
-    def is_ready(self) -> bool:
+    def _read_status_value(self) -> Optional[Any]:
+        """Read the status PV using monitor cache with one CA fallback poll."""
         if not self.status_pv:
-            return True
+            return None
 
-        val = self.status_pv.get(use_monitor=True) 
-        if val is None: 
-            val = self.status_pv.get(timeout=self.ca_timeout) # fallback poll once
-        # -----------------------------------------------------------
-        # Try bitmask logic if mask is non-zero
-        # -----------------------------------------------------------
+        val = self.status_pv.get(use_monitor=True)
+        if val is None:
+            val = self.status_pv.get(timeout=self.ca_timeout)
+        return val
+
+    def _status_value_is_ready(self, val: Any) -> bool:
+        """Decode a concrete status-PV value into ready/not-ready."""
         mask = getattr(self, "ready_bitmask", 0)
         logging.debug("is_ready(): mask=%r val=%r", mask, val)
-        if val is None:
-            return False
+
         if mask:
             try:
                 status = int(val)
-                logging.debug(f"is_ready(): status={status}")
                 mask = int(mask)
-                logging.debug(f"is_ready(): mask={mask}")
-                # ready_value may be int or "0x0B22"
-                ready_val = int(self.ready_value, 0) if isinstance(self.ready_value, str) else int(self.ready_value)
-                logging.debug(f"is_ready(): ready_val={ready_val}")
-                logging.debug(f"is_ready(): mask={mask} status={status} ready_val={ready_val}")
+                # ready_value may be int or a string such as "0x0B22".
+                ready_val = (
+                    int(self.ready_value, 0)
+                    if isinstance(self.ready_value, str)
+                    else int(self.ready_value)
+                )
+                logging.debug(
+                    "is_ready(): status=%r mask=%r ready_val=%r",
+                    status,
+                    mask,
+                    ready_val,
+                )
                 return (status & mask) == ready_val
             except (TypeError, ValueError):
-                logging.debug(f"is_ready(): failed if mask!")
-                # fall back to original logic
-                pass
+                logging.debug("is_ready(): failed bitmask evaluation", exc_info=True)
+                # Fall back to simple comparison below.
 
-        # -----------------------------------------------------------
-        #  Default: Simple comparison logic
-        # -----------------------------------------------------------
         try:
             return float(val) == float(self.ready_value)
         except (TypeError, ValueError):
             return str(val).strip() == str(self.ready_value).strip()
 
+    def _ready_state(self) -> Optional[bool]:
+        """
+        Return the actuator state..
+
+        Returns:
+            True:  status was read successfully and decodes as ready.
+            False: status was read successfully and decodes as not ready.
+            None:  status is unknown, for example during a short CA disconnect.
+        """
+        if not self.status_pv:
+            return True
+
+        val = self._read_status_value()
+        if val is None:
+            logging.debug(f"[{self.pvname}] status state unknown")
+            return None
+
+        return self._status_value_is_ready(val)
+
+    def is_ready(self) -> bool:
+        """Return True only when the status PV confirms the ready state."""
+        return self._ready_state() is True
+
+    def is_moving(self) -> bool:
+        """
+        Return True only when the status PV confirms a not-ready state.
+
+        Unknown status is not treated as moving.  This prevents a
+        short CA disconnect from satisfying the startup wait by accident.
+        """
+        return self._ready_state() is False
+
     def in_position_check(self, target: float, timeout: float = 0) -> bool:
-        if self.in_band < 0 or not self.rb_pv:
+        if self.in_pos_band < 0 or not self.rb_pv:
             return True
 
         start = time.time()
@@ -451,7 +496,7 @@ class EpicsActuator(AbstractActuator):
             if current is None:
                 logging.warning("Readback PV returned None")
                 return True
-            if abs(current - target) <= self.in_band:
+            if abs(current - target) <= self.in_pos_band:
                 return True
             if timeout and (time.time() - start) >= timeout:
                 return False
@@ -466,13 +511,27 @@ class EpicsActuator(AbstractActuator):
     
     def wait_for_startup_and_done(self):
         logging.debug(f"[{self.pvname}] waiting for move to start")
-        self._wait_for_condition(self.is_moving, self.startup_timeout)
+        started = self._wait_for_condition(
+            self.is_moving,
+            self.startup_timeout,
+            msg=(
+                f"[{self.pvname}] move start was not observed within "
+                f"{self.startup_timeout}s"
+            ),
+        )
+        if not started:
+            logging.warning(
+                f"[{self.pvname}] move start was not observed; "
+                "this may be a fast move, status delay, or short disconnect"
+            )
+
         logging.debug(f"[{self.pvname}] waiting for ready state")
+        # TODO: Add configurable timeout
         self._wait_for_condition(self.is_ready)
 
     def wait_until_done(self, position: float) -> None:
         has_status = bool(self.status_pv)
-        has_band = self.in_band >= 0
+        has_band = self.in_pos_band >= 0
         t0 = time.time()
 
         if has_status and has_band:
@@ -501,6 +560,7 @@ class EpicsActuator(AbstractActuator):
 
         elapsed = time.time() - t0
         logging.info(f"[{self.pvname}] done in {elapsed:.3f}s")
+        self._last_move_time = elapsed
 
     def stop(self) -> None:
         if self.stop_pv:
