@@ -9,7 +9,7 @@ import os
 import time
 from typing import Dict, Any, Optional, List, Tuple
 
-from kiwi_scan.actuator.single import PvEvent
+from kiwi_scan.actuator.single import PvEvent, AbstractActuator
 from kiwi_scan.epics_wrapper import EpicsPV, has_alarm, alarm_info, severity_name, severity_rank
 from kiwi_scan.plugin.base import ScanPlugin
 from kiwi_scan.plugin.registry import register_plugin
@@ -128,7 +128,7 @@ class LoggingPlugin(ScanPlugin):
         if isinstance(configured, (list, tuple, set)):
             return [str(name) for name in configured]
 
-        self.logger.warning("Ignoring invalid actuator_trace parameter: %r", configured)
+        self.logger.info("Ignoring invalid actuator_trace parameter: %r", configured)
         return list(actuators.keys())
 
     def _build_actuator_pv_map(self) -> Dict[str, Tuple[str, str]]:
@@ -209,38 +209,29 @@ class LoggingPlugin(ScanPlugin):
         except (TypeError, ValueError):
             return str(value).strip() == str(ready_value).strip()
 
-    def _read_actuator_value(self, actuator: Any, source: str) -> Any:
+    def _read_actuator_value(self, actuator: AbstractActuator, source: str) -> Any:
         if source == "rbv":
             return actuator.rbv
         if source == "cmd":
-            try:
-                cmd = actuator.cmdv
-            except Exception:
-                cmd = None
-            if cmd is not None:
-                return cmd
-            pv = getattr(actuator, "pv", None)
-            if pv is not None and hasattr(pv, "get"):
-                return pv.get(use_monitor=True)
-            return None
+            return actuator.cmdv
         if source == "status":
-            pv = getattr(actuator, "status_pv", None)
-            if pv is not None and hasattr(pv, "get"):
-                return pv.get(use_monitor=True)
-            return None
-        raise ValueError(f"Unsupported actuator trace source: {source}")
+            return actuator.is_moving()
 
     def _get_or_read_actuator_value(self, actuator_name: str, source: str) -> Any:
+        """ TODO: this refreches non cached values only once.
+            This normally works because the event fed cache is used. 
+        """
         key = f"{actuator_name}:{source}"
         cached = self._last_events.get(key)
-        if cached is not None:
+        if cached is not None and cached.get("value", None) is not None:
+            self.logger.debug(f"Get cached: {key}")
             return cached.get("value")
-
         try:
             actuator = self.scan.get_actuator(actuator_name)
+            self.logger.debug(f"Get {key}")
             value = self._read_actuator_value(actuator, source)
         except Exception as exc:
-            self.logger.debug(
+            self.logger.warning(
                 "Failed to read actuator trace value %s:%s: %s",
                 actuator_name,
                 source,
@@ -283,7 +274,7 @@ class LoggingPlugin(ScanPlugin):
             rbv = self._get_or_read_actuator_value(name, "rbv")
             cmd = self._get_or_read_actuator_value(name, "cmd")
             status = self._get_or_read_actuator_value(name, "status")
-
+            self.logger.debug(f"rbv={rbv},cmd={cmd}, status={status}")
             ready = self._decode_ready_from_status(name, status)
             if ready is None:
                 try:

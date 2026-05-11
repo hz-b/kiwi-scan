@@ -81,7 +81,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--log-level",
         type=int,
-        default=logging.WARNING,
+        default=3,   # WARNING
         help="MBBO record level (0..5) mapped to Python logging",
     )
     

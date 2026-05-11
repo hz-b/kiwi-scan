@@ -212,6 +212,26 @@ Output columns depend on enabled features:
 | alarm trace | `AlarmState`, `AlarmPV`, `AlarmSeverity`, `AlarmStatus` |
 | point timing | `PointDtS` |
 
+Route PV events to the plugin, important for the actuator trace feature:
+```yaml
+# refers to an actuator "m1" defined in actuators section
+subscriptions:
+  - name: m1_rbv_trace
+    role: plugin
+    actuator: m1
+    source: rbv
+
+  - name: m1_cmd_trace
+    role: plugin
+    actuator: m1
+    source: cmd
+    
+  - name: m1_status_trace
+    role: plugin
+    actuator: m1
+    source: status
+```
+
 ### `JogPIDPlugin`
 
 `JogPIDPlugin` is a simple closed-loop controller example.
