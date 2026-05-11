@@ -308,7 +308,7 @@ class ScanConfig:
                 "manifest_mode must be one of: full, small, off "
                 f"(got {config_dict.get('manifest_mode')!r})"
             )
-        logging.info(f"manifest_mode: {manifest_mode}")
+        logging.debug(f"manifest_mode: {manifest_mode}")
         # Log unknown keys
         for key in config_dict:
             if key not in known_keys:

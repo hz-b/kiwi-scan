@@ -9,6 +9,7 @@ import logging
 import os
 import queue
 import signal
+import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
@@ -27,7 +28,7 @@ from kiwi_scan.actuator.factory import create_actuator
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.WARNING,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s"
 )
 
@@ -449,11 +450,37 @@ def main() -> None:
             "Add --monitor-duration, --monitor-count, or --keep-alive."
         )
 
-    # Setup shutdown handling
+    # Setup shutdown handling.
+    # First Ctrl-C requests a graceful stop and sends stop commands.
+    # Second Ctrl-C forces process exit    
     stop_all = threading.Event()
+    sigint_count = 0
 
     def _sigint(_signum, _frame):
+        nonlocal sigint_count
+        sigint_count += 1
+
+        if sigint_count >= 2:
+            print(
+                "Second Ctrl-C received: forcing actuator_runner exit.",
+                file=sys.stderr,
+                flush=True,
+            )
+            os._exit(130)
+
+        print(
+            "Ctrl-C received: stopping actuators. "
+            "Press Ctrl-C again to force exit.",
+            file=sys.stderr,
+            flush=True,
+        )
         stop_all.set()
+
+        for act in actuators.values():
+            try:
+                act.stop()
+            except Exception:
+                logging.exception("Failed to stop actuator during Ctrl-C handling")
 
     signal.signal(signal.SIGINT, _sigint)
 

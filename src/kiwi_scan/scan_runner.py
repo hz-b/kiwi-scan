@@ -142,6 +142,7 @@ def _safe_load_config_index(config_dir: str) -> dict:
     except FileNotFoundError:
         return {}
 
+# TODO: signal handler: gracefully stop on CTRL+C, abort in second
 def main():
 
     config_dir = os.environ.get("KIWI_SCAN_CONFIG_DIR", get_scan_config_dir())
