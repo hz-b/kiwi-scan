@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Iterable, List, Optional
 
 from kiwi_scan.manifestwriter import ManifestResolver
+from kiwi_scan.scan.tools import set_valid_logging_level
 
 
 def _manifest_paths(resolver: ManifestResolver, explicit_files: Iterable[str]) -> List[Path]:

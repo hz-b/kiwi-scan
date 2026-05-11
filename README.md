@@ -369,82 +369,14 @@ export KIWI_SCAN_REPLACE_DET_PV1=ue521sgm1:detA
 export KIWI_SCAN_REPLACE_DET_PV2=ue521sgm1:detB
 ```
 
-## Plugin example
+## Plugin developer description and example
 
 Plugins are instantiated from `plugin_configs` and discovered from the built-in plugin package plus any files or directories listed in `KIWI_SCAN_PLUGIN_PATH`.
 New plugin classes must be derived from the interface defined in [plugin base class](src/kiwi_scan/plugin/base.py)
 
-Create `plugins/drift_watch.py`:
+For detailed description check the plugin user and developer documentation:
 
-```python
-import time
-from typing import Dict, Any, List
-from kiwi_scan.plugin.registry import register_plugin
-from kiwi_scan.plugin.base import ScanPlugin
-
-@register_plugin("DriftWatchPlugin")
-class DriftWatchPlugin(ScanPlugin):
-    """
-    Minimal plugin example:
-    - receives (name, parameters, scan) from the plugin factory
-    - listens to subscription events with role="plugin"
-    - writes two extra columns on every scan point
-    """
-
-    def __init__(self, name, parameters=None, scan=None):
-        super().__init__(name, parameters or {}, scan)
-        self.limit = float(self.parameters.get("limit", 0.03))
-        self.latest_drift = None
-
-    def get_headers(self, timestamps: bool):
-        headers = ["LatestDrift", "DriftAlarm"]
-        return self.expand_headers(headers, timestamps)
-
-    def get_values(self, idx: int, pos: Dict[str, Any]) -> List[Any]:
-        if self.latest_drift is None:
-            drift = float("nan")
-            alarm = 0
-        else:
-            drift = self.latest_drift
-            alarm = int(abs(drift) > self.limit)
-        return [ drift, alarm ]
-    
-    def on_monitor(self, ev):
-        self.logger.debug(f"{ev}")
-        try:
-            self.actuator = self.scan.get_actuator("energy");
-            rbv = self.actuator.rbv
-            self.latest_drift = float(ev.value)
-            alarm = int(abs(self.latest_drift) > self.limit)
-            if alarm and self.actuator.is_ready(): 
-                # drift while actuator ready
-                self.logger.warning(f"drift={self.latest_drift}, @rbv={rbv}")
-        except Exception:
-            self.latest_drift = None
-```
-
-Enable it:
-
-```bash
-export KIWI_SCAN_PLUGIN_PATH="$PWD/plugins"
-```
-
-Then run a scan with a subscription that feeds plugin events:
-
-```yaml
-subscriptions:
-  - name: drift_feed
-    role: plugin
-    pv: ${IOC_MONO}:DRIFT
-
-plugin_configs:
-  - type: DriftWatchPlugin
-    name: drift_watch
-    parameters:
-      limit: 0.03
-```
-
-Use this example with `--scan_type linear`, the built-in `LinearScan` dispatches the `plugin` subscription role to `plugin.on_monitor(...)`.
+[Plugins](docs/plugins.md) — plugin API, plugin discovery, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
 
 ## External scan-type example
 
@@ -754,9 +686,14 @@ Arrays are used for multiple actuators
 | `steps` | int | Number of scan points. |
 | `velocity` | float | Optional velocity for continuous-style scans. |
 
-## Development status
+## Docs
 
-This project is under active development. YAML fields, scan-engine hooks, and plugin APIs may still change between minor releases.
+Additional user and developer documentation:
+
+- [Trigger manager](https://github.com/hz-b/kiwi-scan/blob/main/docs/trigger-manager.md) - scan trigger phases, YAML configuration, and trigger execution.
+- [Plugins](https://github.com/hz-b/kiwi-scan/blob/main/docs/plugins.md) - plugin API, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
+- [vim](https://github.com/hz-b/kiwi-scan/blob/main/docs/vim.md) - simple syntax highlighting setup
+
 
 ## Contributing
 

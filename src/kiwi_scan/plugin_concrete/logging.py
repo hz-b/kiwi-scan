@@ -176,10 +176,12 @@ class LoggingPlugin(ScanPlugin):
         }
     
     def _decode_ready_from_status(self, actuator_name: str, value: Any) -> Optional[bool]:
-    """ Determine the ready status for transition cycle trace only. 
+        """ 
+        Determine the ready status for transition cycle trace only. 
         This mirrors the implementation from the actuator framework
         The function is processed from a monitor event context. 
-        Use is_ready() in regular ca_context"""
+        Use is_ready() in regular ca_context 
+        """
         try:
             actuator = self.scan.get_actuator(actuator_name)
         except Exception:
