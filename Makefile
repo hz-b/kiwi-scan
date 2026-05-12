@@ -48,10 +48,19 @@ cscope: ## Build cscope and ctags indexes for the repository
 	ctags -R --languages=Python .
 
 tag: ## Create a version+timestamp git tag from HEAD
-	@ts=$$(git show -s --format=%cd --date=format:%Y%m%d.%H%M%S HEAD); \
-	tag="$(VERSION)+$$ts"; \
+	@base="$(VERSION)"; \
+	if git rev-parse "$$base" >/dev/null 2>&1; then \
+		echo "ERROR: release tag $$base already exists"; \
+		exit 1; \
+	fi; \
+	ts=$$(git show -s --format=%cd --date=format:%Y%m%d%H%M%S HEAD); \
+	tag="$$base+$$ts"; \
+	if git rev-parse "$$tag" >/dev/null 2>&1; then \
+		echo "ERROR: tag $$tag already exists"; \
+		exit 1; \
+	fi; \
 	echo "Creating tag $$tag"; \
-	git tag -a $$tag -m "Release $$tag"
+	git tag -a "$$tag" -m "Release $$tag"
 
 lint: ## Run pylint on src/kiwi_scan (uses mkvenv.sh when needed)
 	@echo 'For pylint install extra packages: pip install -e ".[dev]"'
