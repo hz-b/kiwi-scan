@@ -13,6 +13,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 - Added documentation for the trigger manager.
 - Added documentation for the plugin system.
+- Added documentation for the API.
+- Added documentation for the actuator framework.
+- Added documentation for the data models and YAML reference.
+- Added documentation for kiwi scan types.
 - Added documentation for vim syntax.
 - Added basic version of vim syntax highlighting.
 - Added `scan_trigger_cli` for executing configured trigger phases from the command line.
