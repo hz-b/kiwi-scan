@@ -225,6 +225,7 @@ User and developer documentation:
 
 - [Actuator framework](https://github.com/hz-b/kiwi-scan/blob/master/docs/actuator.md) - small common abstract interface to actuator like devices. 
 - [YAML reference](https://github.com/hz-b/kiwi-scan/blob/master/docs/yaml.md) - data model description. 
+- [API reference](https://github.com/hz-b/kiwi-scan/blob/master/docs/api.md) - public API description. 
 - [Trigger manager](https://github.com/hz-b/kiwi-scan/blob/master/docs/trigger-manager.md) - scan trigger phases, YAML configuration, and trigger execution.
 - [Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) - plugin API, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
 - [Scan Types](https://github.com/hz-b/kiwi-scan/blob/master/docs/scans.md) - provided and custom kiwi scan types.
