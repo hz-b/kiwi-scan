@@ -1,0 +1,50 @@
+_scantrigger_cli()
+{
+    local cur prev words cword
+    _init_completion || return
+
+    local opts
+    opts="--help -h --config --config-file --phase --replace --log-level"
+
+    local configs
+    configs="sim mono"
+
+    local phases
+    phases="before on_point after_point after monitor"
+
+    local log_levels
+    log_levels="0 1 2 3 4 5"
+
+    case "$prev" in
+        --config)
+            COMPREPLY=( $(compgen -W "$configs" -- "$cur") )
+            return
+            ;;
+        --config-file)
+            _filedir '@(yaml|yml)'
+            return
+            ;;
+        --phase)
+            COMPREPLY=( $(compgen -W "$phases" -- "$cur") )
+            return
+            ;;
+        --log-level)
+            COMPREPLY=( $(compgen -W "$log_levels" -- "$cur") )
+            return
+            ;;
+        --replace)
+            # Replacements are KEY=VALUE arguments, no completion.
+            return
+            ;;
+    esac
+
+    # After --replace, allow more KEY=VALUE entries when the current word starts with "-".
+    if [[ "$cur" == -* ]]; then
+        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+        return
+    fi
+
+    COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+}
+
+complete -F _scantrigger_cli scantrigger_cli

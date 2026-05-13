@@ -77,7 +77,7 @@ def main() -> None:
             "Execute one configured kiwi-scan trigger phase without running a scan.\n\n"
             "Examples:\n"
             "  scan_trigger_cli --config-file ./mono.yaml --phase after\n"
-            "  scan_trigger_cli --config mono --replace IOC_MONO=ue521sgm1:monoGetEnergy --phase on_point\n"
+            "  scan_trigger_cli --config mono --replace IOC_MONO=ue521sgm1 --phase after\n"
         ),
     )
 

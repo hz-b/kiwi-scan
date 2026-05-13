@@ -68,7 +68,7 @@ scan_runner = "kiwi_scan.scan_runner:main"
 actuator_runner = "kiwi_scan.actuator_runner:main"
 scanplotter_cli = "kiwi_scan.scanplotter_cli:main"
 manifestfiles = "kiwi_scan.manifestfiles:main"
-scan_trigger_cli = "kiwi_scan.scan_trigger_cli:main"
+scantrigger_cli = "kiwi_scan.scantrigger_cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

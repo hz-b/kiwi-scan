@@ -9,6 +9,7 @@ SCRIPTS = \
     scan_runner \
     actuator_runner \
     scanplotter_cli \
+    scantrigger_cli \
     manifestfiles
 
 SCRIPT_PATHS = $(foreach script,$(SCRIPTS),$(BASH_COMPLETION_DIR)/$(script))
