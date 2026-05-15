@@ -767,11 +767,11 @@ class BaseScan(ScanABC):
                 n_fields = len(st)
             except Exception:
                 n_fields = 0
-
+            # TODO: any number of stats, PVs, cleanup 
             if n_fields >= 5:
-                base_headers += ["PositionMean", "PositionStd", "PositionMin", "PositionMax", "PositionNSamples"]
+                base_headers += ["StatsMean", "StatsStd", "StatsMin", "StatsMax", "StatsNSamples"]
             else:
-                base_headers += ["PositionMean", "PositionStd"]
+                base_headers += ["StatsMean", "StatsStd"]
 
         # Scan-point timestamp (one per row)
         base_headers += ["TS-ISO8601"]  # scan_point_timestamp in ISO8601
