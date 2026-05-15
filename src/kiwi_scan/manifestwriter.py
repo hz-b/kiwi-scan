@@ -92,10 +92,10 @@ class ManifestWriter:
           3. None
         """
         filename = cls.get_active_manifest()
-        cls.logger.debug("No active manifest found")
         if filename is None:
+            cls.logger.warning("No active manifest found")
             return None
-        cls.logger.debug("Using active manifest: %s", filename)
+        cls.logger.info("Using active manifest: %s", filename)
         return cls(filename)
 
     @classmethod
@@ -278,9 +278,8 @@ class ManifestResolver:
     """Read manifest files and select scan-data or metadata references."""
 
     ENV_DATA_DIR = "KIWI_SCAN_DATA_DIR"
-
+    logger = logger
     def __init__(self, data_dir: Optional[str] = None):
-        self.logger = logger
         self.data_dir = self._resolve_data_dir(data_dir)
         self.logger.debug(f"Using manifest data directory: {self.data_dir}")
 
@@ -296,9 +295,17 @@ class ManifestResolver:
     @classmethod
     def _resolve_data_dir(cls, data_dir: Optional[str]) -> Path:
         value = data_dir or os.environ.get(cls.ENV_DATA_DIR)
+        # Fall back to the currently active manifest
         if not value:
+            cls.logger.info(f"{cls.ENV_DATA_DIR} is not set.")
+            active_manifest = ManifestWriter.get_active_manifest()
+            if active_manifest:
+                active_path = Path(active_manifest).expanduser()
+                if active_path.is_file():
+                    return active_path.parent
+        if not value:
+            cls.logger.info("No active manifest.")
             return None
-
         path = Path(value).expanduser()
         if not path.is_dir():
             raise FileNotFoundError(f"Manifest directory does not exist: {path}")
@@ -324,6 +331,12 @@ class ManifestResolver:
             for pattern in ("manifest*.yaml", "manifest*.yml"):
                 paths.update(self.data_dir.glob(pattern))
 
+        # Also include the active manifest even if it lives outside data_dir.
+        active_manifest = ManifestWriter.get_active_manifest()
+        if active_manifest:
+            active_path = Path(active_manifest).expanduser()
+            if active_path.is_file():
+                paths.add(active_path)
         manifests = sorted(paths, key=self._manifest_sort_key, reverse=True)
         if manifests:
             self.logger.debug(f"Found {len(manifests)} manifest file(s) in {self.data_dir}")
