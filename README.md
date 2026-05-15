@@ -155,6 +155,7 @@ Examples:
 scan_runner --help
 actuator_runner --help
 scanplotter_cli --help
+scantrigger_cli --help
 manifestfiles --help
 ```
 See the [Makefile helpers](#makefile-helpers) section for information how to install the bash completion scripts.

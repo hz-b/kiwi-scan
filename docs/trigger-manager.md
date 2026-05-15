@@ -52,7 +52,7 @@ The default phases are:
 | `after` | Executed once after the scan finishes or during scan cleanup. |
 | `monitor` | Executed when a subscription with trigger behavior feeds the trigger worker. |
 
-Custom phase names are also accepted when they are present in the YAML trigger block. They can be fired explicitly from custom scan engines, plugins or from `scan_trigger_cli --phase PHASE`.
+Custom phase names are also accepted when they are present in the YAML trigger block. They can be fired explicitly from custom scan engines, plugins or from `scantrigger_cli --phase PHASE`.
 
 ## TriggerAction fields
 

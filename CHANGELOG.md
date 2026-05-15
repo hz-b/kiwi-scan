@@ -19,7 +19,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Added documentation for kiwi scan types.
 - Added documentation for vim syntax.
 - Added basic version of vim syntax highlighting.
-- Added `scan_trigger_cli` for executing configured trigger phases from the command line.
+- Added `scantrigger_cli` for executing configured trigger phases from the command line.
 - Enhanced LoggingPlugin: Alarm log, actuator trace, point to point timing.
 
 ### Changed
