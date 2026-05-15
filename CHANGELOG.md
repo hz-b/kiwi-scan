@@ -24,8 +24,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 - Improved EPICS actuator waits: short CA disconnects are handled as unknown status instead of motion.
-- Improved actuator_runner: Stop active actuators on interrupt, forced exit on second Ctrl-C
-
+- Improved actuator_runner: Stop active actuators on interrupt, forced exit on second Ctrl-C.
+- Include temporary manifest files in scan file lists.
 ---
 
 ## [0.2.0] - 2026-05-06

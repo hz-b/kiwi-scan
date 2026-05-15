@@ -1,6 +1,6 @@
 # Actuator Framework
 
-The interface is defined in the `AbstractActuator` class. 
+The interface is defined in the [AbstractActuator](../src/kiwi_scan/actuator/single.py) class. 
 
 Concrete backends implement the real hardware access, for example EPICS PVs or an undulator-specific multi-axis actuator.
 
@@ -30,7 +30,7 @@ Scans only need a common actuator API:
 - read back position
 - check ready / moving state
 - optionally subscribe to PV monitor events
-
+- read setpoints 
 
 ## `actuator/single.py`
 
@@ -287,7 +287,7 @@ actuator_runner \
 actuator_runner \
   --config-file ./mono.yaml \
   --move energy=400 \
-  --log-level 1
+  --log-level 2
 ```
 
 ### Move two actuators
@@ -305,17 +305,6 @@ actuator_runner \
 actuator_runner \
   --config-file ./mono.yaml \
   --rel-move energy=1.0
-```
-
-### Multi-axis relative move
-
-For a `MultiActuator`, list values can be passed as JSON.  
-Quote the argument so the shell does not interpret the brackets.
-
-```bash
-actuator_runner \
-  --config-file ./mono.yaml \
-  --rel-move 'undulator=[0.1, -0.2]'
 ```
 
 ### Set velocity and move
@@ -468,5 +457,3 @@ Monitor subscriptions are removed before the tool exits.
 
 - `actuator_runner` validates actuator names and malformed `NAME=VALUE` arguments before starting motion.
 - Monitor-only mode needs an exit condition: `--monitor-duration`, `--monitor-count`, or `--keep-alive`.
-- For shell safety, quote JSON-like list arguments such as `'undulator=[0.1, -0.2]'`.
-- `actuator_concrete.*` classes are implementation details. The stable integration point is the actuator interface and YAML configuration.

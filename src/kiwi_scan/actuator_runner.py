@@ -149,8 +149,14 @@ def _build_actuators(raw_cfg: Dict[str, Any]) -> Dict[str, AbstractActuator]:
     for name, v in acts_raw.items():
         if not isinstance(v, dict):
             raise TypeError(f"Actuator '{name}' must be a mapping, got {type(v)}")
-        cfg = ActuatorConfig.from_dict(v)
-        actuators[name] = create_actuator(cfg)
+        try:
+            cfg = ActuatorConfig.from_dict(v)
+            actuators[name] = create_actuator(cfg)
+        except ConnectionError as exc:
+            raise ConnectionError(
+                f"Failed to create actuator '{name}': {exc}"
+            ) from exc
+
     return actuators
 
 
@@ -436,8 +442,8 @@ def main() -> None:
 
     try:
         actuators = _build_actuators(raw_cfg)
-    except (ValueError, TypeError) as exc:
-        p.error(str(exc))
+    except (ValueError, TypeError, ConnectionError) as exc:
+        p.error(f"failed to build actuators: {exc}")
 
     _validate_cli_specs(p, args, raw_cfg, actuators)
 

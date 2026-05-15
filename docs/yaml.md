@@ -61,6 +61,8 @@ monitor:
 
 For `tsv` and `csv`, one header row is written followed by one row per scan point. For `json`, one JSON object is written per scan point. Diagnostic messages use normal logging, so stdout remains a machine-readable data stream.
 
+`monitor_type: plot` needs no extra monitor parameters.
+
 ### ActuatorConfig
 
 | Field | Type | Meaning |
@@ -102,6 +104,7 @@ Built-in phases are:
 
 - `before`
 - `on_point`
+- `after_point`
 - `after`
 - `monitor`
 
