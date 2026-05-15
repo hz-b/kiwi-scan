@@ -17,7 +17,6 @@ class EpicsActuator(AbstractActuator):
 
     def __init__(self, config: ActuatorConfig):
         super().__init__(config)
-        logging.debug("Actuator PVs")
 
         # Wrap PVs
         self.pv = EpicsPV(config.pv) if config.pv else None
@@ -33,7 +32,6 @@ class EpicsActuator(AbstractActuator):
         # pvname -> list of callback indices (pyepics returns an int id per add_callback)
         self._epics_cb_indices: Dict[str, List[int]] = {}
 
-        logging.debug("Acuator Jog Config")
         jog_cfg = self.config.jog
         if jog_cfg:
             self.jog_velocity_pv = EpicsPV(jog_cfg.velocity_pv) if jog_cfg.velocity_pv else None
@@ -50,7 +48,7 @@ class EpicsActuator(AbstractActuator):
         self.velocity = config.velocity
         self.start_command = config.start_command
         self.ca_timeout = config.ca_timeout if config.ca_timeout else 1.0
-        logging.info(f"ActuatorConfig ca_timeout: {self.ca_timeout}")
+        logging.debug(f"ActuatorConfig ca_timeout: {self.ca_timeout}")
 
         # Validate PV connections
         self._check_pvs()
