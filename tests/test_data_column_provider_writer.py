@@ -64,7 +64,6 @@ class TestDataColumnProviderWriter(unittest.TestCase):
         scan.plugins = []
         scan.include_timestamps = False
         scan._last_point = {}
-        scan._stats = None
         scan._data_column_providers = []
         scan.add_column_provider(collector)
         return scan

@@ -111,7 +111,6 @@ class BaseScan(ScanABC):
         self.sync_controller = SyncController(
             getattr(self.cfg, "subscriptions", None) or []
         )
-        self._sync_legacy_role_callbacks()
         logging.debug("_validate_config")
         
         self._validate_config()
@@ -135,10 +134,6 @@ class BaseScan(ScanABC):
         self._position: Any = None
         self._last_point: Dict[str, Any] = {}
         self._data_column_providers: List[DataColumnProvider] = []
-        # TODO: cleanup legacy single-stat tuple support
-        #          -> _stats used by LinearScan._on_sync_event()
-        #          -> BaseScan.save_to_file(), _update_last_point_cache(), and write_header_to_output_file()
-        self._stats: Optional[Tuple[float, float]] = None
         self._daq_is_on = False   # safe to take data for stats
         self.integration_time = config.integration_time
         self._perf_enabled: bool = bool(
@@ -242,26 +237,10 @@ class BaseScan(ScanABC):
 
     # -------------------- subscription/callback integration --------------------
 
-    def _sync_legacy_role_callbacks(self) -> None:
-        """Mirror legacy ROLE_CALLBACKS into SubscriptionManager.
-
-        This keeps external scan classes that still populate ROLE_CALLBACKS
-        working while the preferred API is register_subscription_role(...).
-        """
-        role_callbacks = getattr(self, "ROLE_CALLBACKS", None) or {}
-        if not isinstance(role_callbacks, dict):
-            return
-
-        for role, handler in role_callbacks.items():
-            if callable(handler):
-                self.subscription_manager.register_role(role, handler)
-
     def register_subscription_role(self, role: str, handler) -> None:
         self.subscription_manager.register_role(role, handler)
 
     def _start_subscriptions(self) -> None:
-        # Pick up any late-bound legacy ROLE_CALLBACKS before starting.
-        self._sync_legacy_role_callbacks()
         self.subscription_manager.start()
 
     def _stop_subscriptions(self) -> None:
@@ -595,32 +574,6 @@ class BaseScan(ScanABC):
         except (ValueError, TypeError):
             return str(value)
 
-    def _legacy_stats_headers(self) -> List[str]:
-        st = getattr(self, "_stats", None)
-        if st is None:
-            return []
-        try:
-            n_fields = len(st)
-        except Exception:
-            n_fields = 0
-        if n_fields >= 5:
-            return ["StatsMean", "StatsStd", "StatsMin", "StatsMax", "StatsNSamples"]
-        return ["StatsMean", "StatsStd"]
-
-    def _legacy_stats_values(self) -> List[Any]:
-        st = getattr(self, "_stats", None)
-        if st is None:
-            return []
-        try:
-            n_fields = len(st)
-        except Exception:
-            n_fields = 0
-        if n_fields >= 5:
-            mean, stddev, vmin, vmax, ns = st
-            return [float(mean), float(stddev), float(vmin), float(vmax), int(ns)]
-        mean, stddev = st
-        return [float(mean), float(stddev)]
-
     def save_to_file(self, position, detector_values, include_timestamps=True):
         """
         Writes one line:
@@ -636,9 +589,6 @@ class BaseScan(ScanABC):
         line_ts_iso = datetime.now(timezone.utc).isoformat()
 
         provider_values = self._get_data_column_values()
-        if not provider_values:
-            provider_values = self._legacy_stats_values()
-
         # Update in-memory last-point cache (used by get_value)
         try:
             self._update_last_point_cache(
@@ -707,28 +657,6 @@ class BaseScan(ScanABC):
         provider_headers = self._get_data_column_headers(include_timestamps)
         if provider_headers:
             self._update_data_column_provider_cache(last, include_timestamps)
-        else:
-            # Backward compatibility for external scans still setting _stats.
-            # New code should use a data column provider instead.
-            st = getattr(self, "_stats", None)
-            if st is not None:
-                try:
-                    n_fields = len(st)
-                except Exception:
-                    n_fields = 0
-
-                if n_fields >= 5:
-                    mean, stddev, vmin, vmax, ns = st
-                    last["PositionMean"] = float(mean)
-                    last["PositionStd"] = float(stddev)
-                    last["PositionMin"] = float(vmin)
-                    last["PositionMax"] = float(vmax)
-                    last["PositionNSamples"] = int(ns)
-                else:
-                    mean, stddev = st
-                    last["PositionMean"] = float(mean)
-                    last["PositionStd"] = float(stddev)
-
         last["TS-ISO8601"] = line_ts_iso
 
         # Build ordered data headers (one per dict in values)
@@ -844,10 +772,7 @@ class BaseScan(ScanABC):
         provider_headers = self._get_data_column_headers(self.include_timestamps)
         if provider_headers:
             base_headers += provider_headers
-        else:
-            # Backward compatibility for external/custom scans still using _stats.
-            base_headers += self._legacy_stats_headers()
-
+        
         # Scan-point timestamp (one per row)
         base_headers += ["TS-ISO8601"]  # scan_point_timestamp in ISO8601
 

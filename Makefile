@@ -46,7 +46,7 @@ clean: ## Remove local virtualenv, caches, tags, and egg-info
 	@find . -type d -name "__pycache__" -exec rm -r {} +
 
 cscope: ## Build cscope and ctags indexes for the repository
-	find . -path ./.venv -prune -o -name "*.py" -print > cscope.files
+	find . \( -path ./.venv -o -path ./build -o -path ./dist \) -prune -o -name "*.py" -print > cscope.files
 	cscope -b -i cscope.files
 	ctags -R --languages=Python .
 

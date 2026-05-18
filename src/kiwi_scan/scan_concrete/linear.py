@@ -41,14 +41,13 @@ class LinearScan(BaseScan):
                 print(f"[DEBUG] LinearScan {nm}: {len(pts)} points "
                       f"from {pts[0]} to {pts[-1]}")
             print(f"{self.positions}")
-        self.ROLE_CALLBACKS = {
-            "heartbeat": self._on_heartbeat_event,
-            "sync": self._on_sync_event,
-            "status": self._on_status_event,
-            "stop": self._on_stop_event,
-            "trigger": self._on_trigger_event,
-            "plugin": self._on_plugin_event,
-        }
+        
+        self.register_subscription_role("heartbeat", self._on_heartbeat_event)
+        self.register_subscription_role("sync", self._on_sync_event)
+        self.register_subscription_role("status", self._on_status_event)
+        self.register_subscription_role("stop", self._on_stop_event)
+        self.register_subscription_role("trigger", self._on_trigger_event)
+        self.register_subscription_role("plugin", self._on_plugin_event)
 
         # Generic provider columns: one stats group per sync subscription.
         self.stats_collector = StatsCollector(
