@@ -458,7 +458,7 @@ class SubscriptionManager:
             logger.info("Started %d subscriptions", len(self._subscriptions))
 
         except Exception:
-            logger.exception("Failed to start subscriptions")
+            logger.error("Failed to start subscriptions")
             self._stop_active_handles()
             self._reset_runtime_state()
             self._started = False

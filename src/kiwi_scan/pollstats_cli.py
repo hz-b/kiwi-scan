@@ -177,7 +177,10 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         manager.start()
-
+    except ConnectionError as exc:
+        logging.error("Failed to start manager: %s", exc)
+        return 1
+    try:
         while True:
             if args.duration is not None:
                 elapsed = time.monotonic() - t_start
@@ -194,7 +197,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
             if args.reset_each_print:
                 collector.reset_window()
-
     except KeyboardInterrupt:
         return 130
     finally:
