@@ -76,6 +76,17 @@ def _print_row(values, *, sep="\t"):
 
     _LAST_LINE = line
 
+
+def _print_row_multiline(headers, values):
+    ts = values[0]
+    print()
+    print(ts)
+
+    for h, v in zip(headers[1:], values[1:]):
+        print(f"  {h:20s} { _format_value(v) }")
+
+    sys.stdout.flush()
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="stats_collector_cli",
@@ -154,6 +165,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         parser.error(f"No subscriptions with role={args.role!r} found in config")
 
     collector = StatsCollector(subscriptions, role=args.role)
+    compact_mode = len(subscriptions) <= 2
 
     manager = SubscriptionManager(
         subscriptions,
@@ -193,8 +205,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             if not args.no_timestamp:
                 values = [datetime.now(timezone.utc).isoformat()] + values
 
-            _print_row(values, sep=sep)
-
+            if compact_mode:
+                _print_row(values, sep=sep)
+            else:
+                _print_row_multiline(headers, values)
             if args.reset_each_print:
                 collector.reset_window()
     except KeyboardInterrupt:
