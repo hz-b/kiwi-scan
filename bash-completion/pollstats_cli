@@ -1,0 +1,56 @@
+_pollstats_cli_completion()
+{
+    local cur prev words cword
+    _init_completion || return
+
+    local opts="
+        --config
+        --config-file
+        --role
+        --interval
+        --duration
+        --reset-each-print
+        --no-timestamp
+        --replace
+        --log-level
+        --help
+        -h
+    "
+
+    case "$prev" in
+        --config-file)
+            COMPREPLY=( $(compgen -f -- "$cur") )
+            return
+            ;;
+        --log-level)
+            COMPREPLY=( $(compgen -W "0 1 2 3 4 5" -- "$cur") )
+            return
+            ;;
+        --role)
+            COMPREPLY=( $(compgen -W "sync heartbeat status stop trigger plugin" -- "$cur") )
+            return
+            ;;
+        --config)
+            local config_dir
+            config_dir="${KIWI_SCAN_CONFIG_DIR}"
+
+            if [[ -n "$config_dir" && -d "$config_dir" ]]; then
+                local configs
+                configs=$(find "$config_dir" -maxdepth 1 -type f -name "*.yaml" 2>/dev/null \
+                    | sed 's#.*/##' \
+                    | sed 's/\.yaml$//')
+
+                COMPREPLY=( $(compgen -W "$configs" -- "$cur") )
+            fi
+            return
+            ;;
+        --replace)
+            COMPREPLY=()
+            return
+            ;;
+    esac
+
+    COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+}
+
+complete -F _pollstats_cli_completion pollstats_cli
