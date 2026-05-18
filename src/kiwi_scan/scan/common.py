@@ -32,6 +32,7 @@ from .metadata_monitor import MetadataCAMonitor
 from .trigger_manager import TriggerManager
 from .subscription_manager import SubscriptionManager
 from .sync_controller import SyncController
+from .column_provider import DataColumnProvider
 
 
 class BaseScan(ScanABC):
@@ -133,6 +134,10 @@ class BaseScan(ScanABC):
         self._meta_mon_started = False
         self._position: Any = None
         self._last_point: Dict[str, Any] = {}
+        self._data_column_providers: List[DataColumnProvider] = []
+        # TODO: cleanup legacy single-stat tuple support
+        #          -> _stats used by LinearScan._on_sync_event()
+        #          -> BaseScan.save_to_file(), _update_last_point_cache(), and write_header_to_output_file()
         self._stats: Optional[Tuple[float, float]] = None
         self._daq_is_on = False   # safe to take data for stats
         self.integration_time = config.integration_time
@@ -528,10 +533,98 @@ class BaseScan(ScanABC):
             # logging.debug("PV %s → %r", pv.pvname, reading)
         return readings
 
+    # -------------------- data column provider integration --------------------
+
+    def add_column_provider(self, provider: DataColumnProvider) -> None:
+        """Register an object that contributes dynamic scan-file columns."""
+        if provider is None:
+            return
+        if not hasattr(self, "_data_column_providers"):
+            self._data_column_providers = []
+        self._data_column_providers.append(provider)
+
+    def _get_data_column_providers(self) -> List[DataColumnProvider]:
+        return list(getattr(self, "_data_column_providers", []) or [])
+
+    def _get_data_column_headers(self, include_timestamps: bool) -> List[str]:
+        headers: List[str] = []
+        for provider in self._get_data_column_providers():
+            try:
+                headers += list(provider.get_headers(include_timestamps))
+            except Exception:
+                logging.exception("Failed to read data column provider headers from %s", provider)
+        return headers
+
+    def _get_data_column_values(self) -> List[Any]:
+        values: List[Any] = []
+        for provider in self._get_data_column_providers():
+            try:
+                values += list(provider.get_values())
+            except Exception:
+                logging.exception("Failed to read data column provider values from %s", provider)
+        return values
+
+    def _update_data_column_provider_cache(
+        self,
+        last: Dict[str, Any],
+        include_timestamps: bool,
+    ) -> None:
+        for provider in self._get_data_column_providers():
+            try:
+                provider.update_last_point(last, include_timestamps)
+            except Exception:
+                logging.exception("Failed to update last-point cache from %s", provider)
+
+    def _reset_data_column_provider_windows(self) -> None:
+        """Start a new provider data window for the next scan point."""
+        for provider in self._get_data_column_providers():
+            reset = getattr(provider, "reset_window", None)
+            if not callable(reset):
+                continue
+            try:
+                reset()
+            except Exception:
+                logging.exception("Failed to reset data column provider %s", provider)
+
+    @staticmethod
+    def _format_scan_value(value: Any) -> str:
+        if value is None:
+            return ""
+        try:
+            return f"{float(value):.12e}"
+        except (ValueError, TypeError):
+            return str(value)
+
+    def _legacy_stats_headers(self) -> List[str]:
+        st = getattr(self, "_stats", None)
+        if st is None:
+            return []
+        try:
+            n_fields = len(st)
+        except Exception:
+            n_fields = 0
+        if n_fields >= 5:
+            return ["StatsMean", "StatsStd", "StatsMin", "StatsMax", "StatsNSamples"]
+        return ["StatsMean", "StatsStd"]
+
+    def _legacy_stats_values(self) -> List[Any]:
+        st = getattr(self, "_stats", None)
+        if st is None:
+            return []
+        try:
+            n_fields = len(st)
+        except Exception:
+            n_fields = 0
+        if n_fields >= 5:
+            mean, stddev, vmin, vmax, ns = st
+            return [float(mean), float(stddev), float(vmin), float(vmax), int(ns)]
+        mean, stddev = st
+        return [float(mean), float(stddev)]
+
     def save_to_file(self, position, detector_values, include_timestamps=True):
         """
         Writes one line:
-          line_timestamp_utc  position  [mean stddev]  det_value [det_timestamp_utc] ...
+          position  [provider columns]  line_timestamp_utc  det_value [det_timestamp_utc] ...
         Args:
             position (float): The current position of the actuator.
             detector_values (list): The list of dictionaries containing detector readings and metadata.
@@ -541,6 +634,10 @@ class BaseScan(ScanABC):
 
         # Independent per-line timestamp (UTC ISO 8601)
         line_ts_iso = datetime.now(timezone.utc).isoformat()
+
+        provider_values = self._get_data_column_values()
+        if not provider_values:
+            provider_values = self._legacy_stats_values()
 
         # Update in-memory last-point cache (used by get_value)
         try:
@@ -564,38 +661,16 @@ class BaseScan(ScanABC):
         with open(self.output_file, "a", encoding="utf-8") as file:
             parts = []
 
-            # Line timestamp + position
-            parts.append(f"{float(position):.12e}")
-
-            # Optional stats stored as a tuple (support (mean,std) and (mean,std,min,max,n))
-            st = getattr(self, "_stats", None)
-            if st is not None:
-                try:
-                    n_fields = len(st)
-                except Exception:
-                    n_fields = 0
-
-                if n_fields >= 5:
-                    mean, stddev, vmin, vmax, ns = st
-                    parts.append(f"{float(mean):.12e}")
-                    parts.append(f"{float(stddev):.12e}")
-                    parts.append(f"{float(vmin):.12e}")
-                    parts.append(f"{float(vmax):.12e}")
-                    parts.append(f"{int(ns)}")
-                else:
-                    mean, stddev = st
-                    parts.append(f"{float(mean):.12e}")
-                    parts.append(f"{float(stddev):.12e}")
-
+            # Position + provider columns + row timestamp
+            parts.append(self._format_scan_value(position))
+            for value in provider_values:
+                parts.append(self._format_scan_value(value))
             parts.append(line_ts_iso)
 
             # Detector values (+ optional detector timestamps)
             for det in detector_values:
                 value = det.get("value")
-                try:
-                    parts.append(f"{float(value):.12e}")
-                except (ValueError, TypeError):
-                    parts.append(str(value))
+                parts.append(self._format_scan_value(value))
 
                 if include_timestamps:
                     ts = det.get("timestamp")
@@ -629,24 +704,30 @@ class BaseScan(ScanABC):
         # Base columns
         last["Position"] = float(position) if position is not None else position
 
-        st = getattr(self, "_stats", None)
-        if st is not None:
-            try:
-                n_fields = len(st)
-            except Exception:
-                n_fields = 0
+        provider_headers = self._get_data_column_headers(include_timestamps)
+        if provider_headers:
+            self._update_data_column_provider_cache(last, include_timestamps)
+        else:
+            # Backward compatibility for external scans still setting _stats.
+            # New code should use a data column provider instead.
+            st = getattr(self, "_stats", None)
+            if st is not None:
+                try:
+                    n_fields = len(st)
+                except Exception:
+                    n_fields = 0
 
-            if n_fields >= 5:
-                mean, stddev, vmin, vmax, ns = st
-                last["PositionMean"] = float(mean)
-                last["PositionStd"] = float(stddev)
-                last["PositionMin"] = float(vmin)
-                last["PositionMax"] = float(vmax)
-                last["PositionNSamples"] = int(ns)
-            else:
-                mean, stddev = st
-                last["PositionMean"] = float(mean)
-                last["PositionStd"] = float(stddev)
+                if n_fields >= 5:
+                    mean, stddev, vmin, vmax, ns = st
+                    last["PositionMean"] = float(mean)
+                    last["PositionStd"] = float(stddev)
+                    last["PositionMin"] = float(vmin)
+                    last["PositionMax"] = float(vmax)
+                    last["PositionNSamples"] = int(ns)
+                else:
+                    mean, stddev = st
+                    last["PositionMean"] = float(mean)
+                    last["PositionStd"] = float(stddev)
 
         last["TS-ISO8601"] = line_ts_iso
 
@@ -760,18 +841,12 @@ class BaseScan(ScanABC):
         # Base columns always present
         base_headers = ["Position"]
 
-        # Add online stats columns if available/used
-        st = getattr(self, "_stats", None)
-        if st is not None:
-            try:
-                n_fields = len(st)
-            except Exception:
-                n_fields = 0
-            # TODO: any number of stats, PVs, cleanup 
-            if n_fields >= 5:
-                base_headers += ["StatsMean", "StatsStd", "StatsMin", "StatsMax", "StatsNSamples"]
-            else:
-                base_headers += ["StatsMean", "StatsStd"]
+        provider_headers = self._get_data_column_headers(self.include_timestamps)
+        if provider_headers:
+            base_headers += provider_headers
+        else:
+            # Backward compatibility for external/custom scans still using _stats.
+            base_headers += self._legacy_stats_headers()
 
         # Scan-point timestamp (one per row)
         base_headers += ["TS-ISO8601"]  # scan_point_timestamp in ISO8601
@@ -875,6 +950,7 @@ class BaseScan(ScanABC):
                     continue
 
                 # 4) read detectors & save & monitor
+                self._reset_data_column_provider_windows()
                 self._daq_is_on = True
                 with self._time_block("triggers:on_point", idx=idx):
                     self._fire_triggers("on_point")

@@ -10,6 +10,7 @@ SCRIPTS = \
     actuator_runner \
     scanplotter_cli \
     scantrigger_cli \
+    pollstats_cli \
     manifestfiles
 
 SCRIPT_PATHS = $(foreach script,$(SCRIPTS),$(BASH_COMPLETION_DIR)/$(script))
@@ -39,6 +40,7 @@ uninstall_completion: ## Remove installed bash completion files
 
 clean: ## Remove local virtualenv, caches, tags, and egg-info
 	@rm -rf .venv
+	@rm -rf dist
 	@rm -f tags cscope.files cscope.out
 	@find src -maxdepth 1 -type d -name "*.egg-info" -exec rm -rf {} +
 	@find . -type d -name "__pycache__" -exec rm -r {} +
@@ -77,4 +79,7 @@ test: ## Run the current test scripts (uses mkvenv.sh when needed)
 	python3 tests/test_registry_trigger_and_callbacks.py; \
 	python3 tests/test_subscription_manager.py; \
 	python3 tests/test_scanlib.py; \
-	python3 tests/test_manifest_writer.py
+	python3 tests/test_manifest_writer.py; \
+	python3 tests/test_data_column_provider_writer.py; \
+	python3 tests/test_stats_collector.py
+

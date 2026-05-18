@@ -1,15 +1,14 @@
-# SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
+# SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin fuer Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
 import logging
-import threading
-import math
-from typing import List, Dict, Any, Optional
-from kiwi_scan.scan.common import BaseScan
-from kiwi_scan.datamodels import ScanConfig
+from typing import Dict, List
+
 from kiwi_scan.actuator.single import PvEvent
-from kiwi_scan import stats
-import epics
+from kiwi_scan.datamodels import ScanConfig
+from kiwi_scan.scan.common import BaseScan
+from kiwi_scan.scan.stats_collector import StatsCollector
+
 
 class LinearScan(BaseScan):
     """
@@ -50,64 +49,38 @@ class LinearScan(BaseScan):
             "trigger": self._on_trigger_event,
             "plugin": self._on_plugin_event,
         }
-        # Online stats for sync position samples (updated only while DAQ is on)
-        self._mean_stat = stats.Mean()
-        self._var_stat = stats.Var()
-        self._daq_was_on = False
 
-        # NEW: min/max/count for the current DAQ-on window
-        self._sync_n = 0
-        self._sync_min = None
-        self._sync_max = None
-
-        # Keep a default stats tuple (now 5 fields)
-        self._stats = (0.0, 0.0, 0.0, 0.0, 0)
+        # Generic provider columns: one stats group per sync subscription.
+        self.stats_collector = StatsCollector(
+            getattr(self.cfg, "subscriptions", None) or [],
+            role="sync",
+        )
+        self.add_column_provider(self.stats_collector)
 
     def _on_sync_event(self, ev: PvEvent, subscription=None) -> None:
-        """
-        Sync callback: keep online mean/std/min/max/n of sync position samples.
-        """
+        """Record sync events and feed the per-subscription StatsCollector."""
         self._last_sync = ev
 
-        try:
-            pos = float(ev.value)
-        except Exception:
-            logging.debug("[sync] %s value=%r not float-convertible", ev.pvname, ev.value)
-            return
+        self.sync_controller.note_event(getattr(subscription, "name", None))
 
-        # DAQ off: reset once on falling edge; expose mean=pos, std=0, min=max=pos, n=0
-        if not self._daq_is_on:
-            if self._daq_was_on:
-                self._mean_stat = stats.Mean()
-                self._var_stat = stats.Var()
-                self._sync_n = 0
-                self._sync_min = None
-                self._sync_max = None
+        if self._is_position_sync_subscription(subscription):
+            try:
+                self._position = float(ev.value)
+            except Exception:
+                self._position = ev.value
 
-            self._stats = (pos, 0.0, pos, pos, 0)
-            self._daq_was_on = False
-            return
+        self.stats_collector.update(
+            ev,
+            subscription,
+            collect=bool(getattr(self, "_daq_is_on", False)),
+        )
 
-        # DAQ on: update online stats + min/max/count
-        self._daq_was_on = True
-
-        self._mean_stat.update(pos)
-        self._var_stat.update(pos)
-
-        self._sync_n += 1
-        if self._sync_min is None or pos < self._sync_min:
-            self._sync_min = pos
-        if self._sync_max is None or pos > self._sync_max:
-            self._sync_max = pos
-
-        mean = float(self._mean_stat.get())
-        var = float(self._var_stat.get() or 0.0)
-        std = math.sqrt(var) if var > 0.0 else 0.0
-
-        self._stats = (mean, std, float(self._sync_min), float(self._sync_max), int(self._sync_n))
-        logging.info(
-            "[sync] %s: value=%r, mean=%f, std=%f, min=%f, max=%f, n=%d, source=%s",
-            ev.pvname, ev.value, mean, std, self._sync_min, self._sync_max, self._sync_n, ev.source
+        logging.debug(
+            "[sync] %s=%r daq=%s sub=%s",
+            ev.pvname,
+            ev.value,
+            getattr(self, "_daq_is_on", False),
+            getattr(subscription, "name", None),
         )
 
     def execute(self):
