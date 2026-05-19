@@ -53,12 +53,14 @@ def _register_builtin_scan_types() -> None:
     from kiwi_scan.scan_concrete.cm import CMScan
     from kiwi_scan.scan_concrete.linear import LinearScan
     # from kiwi_scan.scan_concrete.monocm import MonoCMScan
+    from kiwi_scan.scan_concrete.para import ParaScan
     from kiwi_scan.scan_concrete.poll import PollScan
 
     register_scan_class("linear", LinearScan)
     register_scan_class("approach", ApproachMove)
     # register_scan_class("monocm", MonoCMScan)
     register_scan_class("poll", PollScan)
+    register_scan_class("para", ParaScan)
     register_scan_class("cm", CMScan)
 
     _BUILTINS_REGISTERED = True
