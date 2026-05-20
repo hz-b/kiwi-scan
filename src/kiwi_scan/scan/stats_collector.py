@@ -102,7 +102,7 @@ class StatsCollector:
         Scan subscriptions.  Only subscriptions whose ``role`` matches ``role``
         get statistics columns.
     role:
-        Subscription role to collect.  The linear scan uses ``sync``.
+        Subscription role to collect.  The linear scan uses ``stat``.
     prefix_fn:
         Optional callable that maps a :class:`SubscriptionConfig` to a column
         prefix.  The default uses the actuator name when it is unique, otherwise
@@ -125,7 +125,7 @@ class StatsCollector:
         self,
         subscriptions: Optional[Sequence[SubscriptionConfig]] = None,
         *,
-        role: str = "sync",
+        role: str = "stat",
         prefix_fn: Optional[Callable[[SubscriptionConfig], str]] = None,
         fields: Optional[Iterable[str]] = None,
     ) -> None:

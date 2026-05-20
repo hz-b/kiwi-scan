@@ -43,30 +43,21 @@ class LinearScan(BaseScan):
             print(f"{self.positions}")
         
         self.register_subscription_role("heartbeat", self._on_heartbeat_event)
-        self.register_subscription_role("sync", self._on_sync_event)
+        self.register_subscription_role("stat", self._on_stat_event)
         self.register_subscription_role("status", self._on_status_event)
         self.register_subscription_role("stop", self._on_stop_event)
         self.register_subscription_role("trigger", self._on_trigger_event)
         self.register_subscription_role("plugin", self._on_plugin_event)
 
-        # Generic provider columns: one stats group per sync subscription.
+        # Generic provider columns: one stats group per stat subscription.
         self.stats_collector = StatsCollector(
             getattr(self.cfg, "subscriptions", None) or [],
-            role="sync",
+            role="stat",
         )
         self.add_column_provider(self.stats_collector)
 
-    def _on_sync_event(self, ev: PvEvent, subscription=None) -> None:
-        """Record sync events and feed the per-subscription StatsCollector."""
-        self._last_sync = ev
-
-        self.sync_controller.note_event(getattr(subscription, "name", None))
-
-        if self._is_position_sync_subscription(subscription):
-            try:
-                self._position = float(ev.value)
-            except Exception:
-                self._position = ev.value
+    def _on_stat_event(self, ev: PvEvent, subscription=None) -> None:
+        """Record stat events and feed the per-subscription StatsCollector."""
 
         self.stats_collector.update(
             ev,
@@ -75,7 +66,7 @@ class LinearScan(BaseScan):
         )
 
         logging.debug(
-            "[sync] %s=%r daq=%s sub=%s",
+            "[stat] %s=%r daq=%s sub=%s",
             ev.pvname,
             ev.value,
             getattr(self, "_daq_is_on", False),
