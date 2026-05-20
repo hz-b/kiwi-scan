@@ -9,7 +9,7 @@ import queue
 from typing import List, Any, Dict, Optional, Tuple, Iterator
 from datetime import timezone
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
 import os
 import time
 import random
@@ -385,7 +385,7 @@ class BaseScan(ScanABC):
         if rate_hz is None:
             rate_hz = getattr(self.cfg, "sample_rate_hz", 1.0)
         self._apply_sample_rate(rate_hz)
-
+    
     def task_delay(self, start_time, sampletime, index):
         """
         Time between sample points
@@ -845,6 +845,7 @@ class BaseScan(ScanABC):
         except Exception:
             pass
         self.busyflag = True
+        self._stop_requested.clear()
         self.write_header_to_output_file()
         try:
             self._start_subscriptions()
@@ -864,20 +865,34 @@ class BaseScan(ScanABC):
 
             self._fire_triggers("before")
             for idx in range(n_steps):
+                if self._stop_requested.is_set():
+                    logging.info("Stop requested—aborting scan before step %d.", idx)
+                    break
+
                 self._daq_is_on = False
                 # 1) broadcast every move
                 for name, act in self.actuators.items():
                     if name not in new_positions:
                         continue
                     tgt = new_positions[name][idx]
+                    if self._stop_requested.is_set():
+                        logging.info("Stop requested—skipping remaining move commands.")
+                        break
                     logging.info(f"[{name}] moving to {tgt}")
                     act.move(tgt)
+
+                if self._stop_requested.is_set():
+                    break
 
                 # 2) wait for all in parallel
                 self._parallel_wait(
                     {name: self.actuators[name] for name in new_positions},
                     {name: new_positions[name][idx] for name in new_positions}
                 )
+
+                if self._stop_requested.is_set():
+                    logging.info("Stop requested—aborting scan after actuator wait.")
+                    break
 
                 # 3) skip detector‐read on the overshoot step
                 if overshoot_applied and idx == 0:
@@ -890,7 +905,9 @@ class BaseScan(ScanABC):
                     self._fire_triggers("on_point")
                 if self.integration_time > 0.0:
                     logging.info(f"DAQ for integration_time = {self.integration_time}")
-                    time.sleep(self.integration_time)
+                    if self._stop_requested.wait(self.integration_time):
+                        logging.info("Stop requested during integration time")
+                        break
                 else:
                     logging.info(f"integration_time = {self.integration_time}")
                 ## pos_snapshot = {n: new_positions[n][idx] for n in new_positions}
@@ -1053,20 +1070,63 @@ class BaseScan(ScanABC):
                 targets={'motor1': 10.0, 'motor2': 5.0}
             )
         """
+        def _wait_one(name, act):
+            try:
+                return act.wait_until_done(targets[name], self._stop_requested)
+            except TypeError:
+                return act.wait_until_done(targets[name])
+
         with ThreadPoolExecutor(max_workers=len(acts)) as exe:
             futures = {
-                exe.submit(act.wait_until_done, targets[name]): name
+                exe.submit(_wait_one, name, act): name
                 for name, act in acts.items()
             }
-            for fut in as_completed(futures):
-                name = futures[fut]
-                try:
-                    fut.result()
-                except Exception as e:
-                    logging.error(f"[{name}] wait failed: {e}")
-    def stop(self):
-        """ To be implemented in concrete classes """
-        print("> Stop not implemented <")
+
+            pending = set(futures)
+            while pending:
+                done, pending = wait(
+                    pending,
+                    timeout=0.1,
+                    return_when=FIRST_COMPLETED,
+                )
+
+                for fut in done:
+                    name = futures[fut]
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        logging.error(f"[{name}] wait failed: {e}")
+
+                if self._stop_requested.is_set():
+                    logging.info("Stop requested—waiting for actuator wait workers to exit.")
+                    # Do not return immediately. Workers now observe stop_event.
+                    # Loop until pending is empty.
+
+    def stop(self) -> None:
+        """Request scan stop and best-effort stop all configured actuators."""
+        logging.info("Stop requested for %s", self.__class__.__name__)
+
+        try:
+            self._stop_requested.set()
+        except Exception:
+            logging.debug("Failed to set scan stop event", exc_info=True)
+
+        self._daq_is_on = False
+
+        actuators = getattr(self, "actuators", {}) or {}
+        for name, actuator in actuators.items():
+            try:
+                logging.info("Stopping actuator '%s'", name)
+                actuator.stop()
+            except Exception:
+                logging.exception("Failed to stop actuator '%s'", name)
+
+        try:
+            with self._tick_cond:
+                self._tick_seq += 1
+                self._tick_cond.notify_all()
+        except Exception:
+            logging.debug("Failed to wake scan wait condition", exc_info=True)
 
     @property
     def busy(self) -> bool:

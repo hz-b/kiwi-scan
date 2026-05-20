@@ -5,6 +5,7 @@ import os
 import sys
 import argparse
 import difflib
+import signal
 from typing import List, Dict
 
 import kiwi_scan
@@ -18,7 +19,7 @@ from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
 from kiwi_scan.manifestwriter import ManifestWriter
 from kiwi_scan.scan.tools import (
     load_scan_configs,
-    scan_with_config,
+    create_scan_with_config,
     get_scan_config_dir,
     set_valid_logging_level,
 )
@@ -142,7 +143,6 @@ def _safe_load_config_index(config_dir: str) -> dict:
     except FileNotFoundError:
         return {}
 
-# TODO: signal handler: gracefully stop on CTRL+C, abort in second
 def main():
 
     config_dir = os.environ.get("KIWI_SCAN_CONFIG_DIR", get_scan_config_dir())
@@ -305,12 +305,48 @@ def main():
     # Override YAML scan_dimensions with CLI scan dimensions (existing behavior)
     config.scan_dimensions = scan_dimensions
     kiwi_scan.load_all_plugins()
-    # Execute the scan
-    scan_with_config(
+
+    scan = create_scan_with_config(
         scantype=args.scan_type,
         config=config,
-        data_dir=data_dir
+        data_dir=data_dir,
     )
+    if scan is None:
+        return 1
+
+    sigint_count = 0
+
+    def _sigint(_signum, _frame):
+        nonlocal sigint_count
+        sigint_count += 1
+
+        if sigint_count >= 2:
+            print(
+                "Second Ctrl-C received: interrupting scan_runner.",
+                file=sys.stderr,
+                flush=True,
+            )
+            os._exit(130)
+
+        print(
+            "Ctrl-C received: stopping scan actuators. "
+            "Press Ctrl-C again to interrupt.",
+            file=sys.stderr,
+            flush=True,
+        )
+        try:
+            scan.stop()
+        except Exception:
+            logging.exception("Failed to stop scan during Ctrl-C handling")
+
+    previous_sigint_handler = signal.getsignal(signal.SIGINT)
+    signal.signal(signal.SIGINT, _sigint)
+    try:
+        scan.execute()
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint_handler)
+
+    return 0
 
 
 if __name__ == "__main__":

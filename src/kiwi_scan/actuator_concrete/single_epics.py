@@ -3,6 +3,7 @@
 
 import time
 import logging
+import threading
 from abc import ABC, abstractmethod
 from typing import Callable, Optional, Any, Dict, List
 
@@ -261,6 +262,7 @@ class EpicsActuator(AbstractActuator):
         timeout: Optional[float] = None,
         interval: float = 0.1,
         msg: str = "Timeout waiting for condition",
+        stop_event: Optional[threading.Event] = None,
     ) -> bool:
         """
         Wait until `condition()` returns True.
@@ -273,12 +275,23 @@ class EpicsActuator(AbstractActuator):
         """
         start = time.time()
         while not condition():
+            if stop_event is not None and stop_event.is_set():
+                logging.info("Stop requested while waiting for actuator condition")
+                return False
+
             if timeout is not None and (time.time() - start) > timeout:
                 logging.warning(msg)
                 return False
-            time.sleep(interval)
-        return True
 
+            if stop_event is not None:
+                if stop_event.wait(interval):
+                    logging.info("Stop requested while waiting for actuator condition")
+                    return False
+            else:
+                time.sleep(interval)
+
+        return True
+    
     def start_actuator(self) -> None:
         if self.start_pv:
             success = self.start_pv.put(self.start_command)
@@ -484,21 +497,39 @@ class EpicsActuator(AbstractActuator):
         """
         return self._ready_state() is False
 
-    def in_position_check(self, target: float, timeout: float = 0) -> bool:
+    def in_position_check(
+        self,
+        target: float,
+        timeout: float = 0,
+        stop_event: Optional[threading.Event] = None,
+    ) -> bool:
         if self.in_pos_band < 0 or not self.rb_pv:
             return True
 
         start = time.time()
+
         while True:
+            if stop_event is not None and stop_event.is_set():
+                logging.info(f"[{self.pvname}] in-position check aborted by stop_event")
+                return False
+
             current = self.rb_pv.get(timeout=self.ca_timeout)
             if current is None:
                 logging.warning("Readback PV returned None")
                 return True
+
             if abs(current - target) <= self.in_pos_band:
                 return True
+
             if timeout and (time.time() - start) >= timeout:
                 return False
-            time.sleep(0.1)
+
+            if stop_event is not None:
+                if stop_event.wait(0.1):
+                    logging.info(f"[{self.pvname}] in-position check aborted by stop_event")
+                    return False
+            else:
+                time.sleep(0.1)
 
     def is_in_position(self, target, in_position_band):
         current = self.rb_pv.get(timeout=self.ca_timeout)
@@ -506,8 +537,8 @@ class EpicsActuator(AbstractActuator):
     
     def dwell(self) -> None:
         time.sleep(self.dwell_time)
-    
-    def wait_for_startup_and_done(self):
+
+    def wait_for_startup_and_done(self, stop_event: Optional[threading.Event] = None) -> None:
         logging.debug(f"[{self.pvname}] waiting for move to start")
         started = self._wait_for_condition(
             self.is_moving,
@@ -516,7 +547,10 @@ class EpicsActuator(AbstractActuator):
                 f"[{self.pvname}] move start was not observed within "
                 f"{self.startup_timeout}s"
             ),
+            stop_event=stop_event,
         )
+        if stop_event is not None and stop_event.is_set():
+            return
         if not started:
             logging.warning(
                 f"[{self.pvname}] move start was not observed; "
@@ -525,40 +559,72 @@ class EpicsActuator(AbstractActuator):
 
         logging.debug(f"[{self.pvname}] waiting for ready state")
         # TODO: Add configurable timeout
-        self._wait_for_condition(self.is_ready)
+        self._wait_for_condition(self.is_ready, stop_event=stop_event)
+    
+    def _stop_requested(self, stop_event: Optional[threading.Event]) -> bool:
+        return stop_event is not None and stop_event.is_set()
 
-    def wait_until_done(self, position: float) -> None:
+
+    def _dwell_interruptible(
+        self,
+        stop_event: Optional[threading.Event] = None,
+    ) -> bool:
+        """Return False if dwell was interrupted by stop_event."""
+        if self.dwell_time <= 0:
+            return True
+
+        logging.debug(f"[{self.pvname}] dwell for {self.dwell_time}s")
+
+        if stop_event is not None:
+            return not stop_event.wait(self.dwell_time)
+
+        self.dwell()
+        return True
+    
+    def wait_until_done(
+        self,
+        position: float,
+        stop_event: Optional[threading.Event] = None,
+    ) -> None:
         has_status = bool(self.status_pv)
         has_band = self.in_pos_band >= 0
         t0 = time.time()
 
-        if has_status and has_band:
-            self.wait_for_startup_and_done()
-            logging.debug(f"[{self.pvname}] waiting in-band")
-            if not self.in_position_check(position):
-                logging.warning(f"{self.pvname} never reached in-band position")
-            self.dwell()
+        try:
+            if self._stop_requested(stop_event):
+                logging.info(f"[{self.pvname}] wait aborted before start")
+                return
 
-        elif not has_status and has_band:
-            logging.debug(f"[{self.pvname}] waiting in-band only")
-            if not self.in_position_check(position):
-                logging.warning(f"{self.pvname} band timeout")
-            self.dwell()
+            if has_status:
+                self.wait_for_startup_and_done(stop_event=stop_event)
+                if self._stop_requested(stop_event):
+                    logging.info(f"[{self.pvname}] wait aborted after status wait")
+                    return
 
-        elif has_status and not has_band:
-            self.wait_for_startup_and_done()
-            self.dwell()
+            if has_band:
+                logging.debug(f"[{self.pvname}] waiting in-band")
+                if not self.in_position_check(position, stop_event=stop_event):
+                    if self._stop_requested(stop_event):
+                        logging.info(f"[{self.pvname}] in-band wait aborted")
+                        return
+                    logging.warning(f"{self.pvname} never reached in-band position")
 
-        elif self.dwell_time > 0:
-            logging.debug(f"[{self.pvname}] dwell only")
-            self.dwell()
+                if self._stop_requested(stop_event):
+                    logging.info(f"[{self.pvname}] wait aborted after in-band check")
+                    return
 
-        else:
-            logging.info(f"[{self.pvname}] no wait conditions")
+            if has_status or has_band or self.dwell_time > 0:
+                if not self._dwell_interruptible(stop_event):
+                    logging.info(f"[{self.pvname}] dwell interrupted")
+                    return
+            else:
+                logging.info(f"[{self.pvname}] no wait conditions")
 
-        elapsed = time.time() - t0
-        logging.info(f"[{self.pvname}] done in {elapsed:.3f}s")
-        self._last_move_time = elapsed
+        finally:
+            elapsed = time.time() - t0
+            logging.info(f"[{self.pvname}] done in {elapsed:.3f}s")
+            self._last_move_time = elapsed
+
 
     def stop(self) -> None:
         if self.stop_pv:
