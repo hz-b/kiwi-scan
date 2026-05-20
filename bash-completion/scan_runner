@@ -8,7 +8,7 @@ _scan_runner_completion() {
     opts="-h --help --scan_type --config --config-file --dim --replace --log-level --newmanifest"
 
     # Fixed-value lists
-    local scan_types="linear approach monocm cm poll"
+    local scan_types="linear approach monocm cm poll para"
     local configs="monoidcan dcmpiezo monocm mono monoid idpresetmode"
 
     case "$prev" in
