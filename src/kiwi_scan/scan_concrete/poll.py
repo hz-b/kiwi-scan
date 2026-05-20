@@ -42,6 +42,10 @@ class PollScan(BaseScan):
         self.register_subscription_role("sync", self._on_sync_event)
         self.register_subscription_role("status", self._on_status_event)
         self.register_subscription_role("stop", self._on_stop_event)
+        
+        self._maxindex = 0
+        if self.scan_dimensions:
+            self._maxindex = self.scan_dimensions[0].steps
 
     def _on_sync_event(self, ev: PvEvent, subscription=None) -> None:
         """
@@ -159,6 +163,10 @@ class PollScan(BaseScan):
                 if self._last_sync is None:
                     current_position = first_actuator.rbv
                     self._position = current_position
+                
+                if index >= self._maxindex:
+                    break
+
                 
         finally:
             self._stop_metadata_monitor()

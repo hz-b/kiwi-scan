@@ -63,6 +63,10 @@ class ParaScan(BaseScan):
         self.register_subscription_role("stop", self._on_stop_event)
         self.register_subscription_role("trigger", self._on_trigger_event)
         self.register_subscription_role("plugin", self._on_plugin_event)
+        
+        self._maxindex = 0
+        if self.scan_dimensions:
+            self._maxindex = self.scan_dimensions[0].steps
 
         # Generic provider columns: one stats group per stat subscription.
         self.stats_collector = StatsCollector(
@@ -329,6 +333,8 @@ class ParaScan(BaseScan):
 
                 self._acquire_point(index, snapshot, monitor)
                 index += 1
+                if index >= self._maxindex:
+                    break
 
                 # Idle state after DAQ:
                 # Do not allow another point only because the readback changed
