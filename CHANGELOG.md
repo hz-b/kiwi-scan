@@ -8,6 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed
 - Add sample_rate_hz to scan config and BaseScan. Calculating rate from steps in dimensions is depricated.
+- mkvenv.sh now finds the kiwi-scan repository root from the script path, so it can be sourced from any working directory. A KIWI_SCAN_REPO_ROOT override is available for custom layouts.
 
 ---
 

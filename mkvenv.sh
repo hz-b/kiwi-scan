@@ -2,6 +2,19 @@
 # installs or updates the kiwi-scan package, and modifies the shell prompt to indicate the (development) environment.
 # It must be sourced to affect the current shell
 
+# Resolve the kiwi-scan repo root from the script location, but allow an override for unusual setups.
+_mkvenv_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_mkvenv_repo_root="${KIWI_SCAN_REPO_ROOT:-$_mkvenv_script_dir}"
+_kiwi_old_pwd="$PWD"
+
+if [ ! -f "$_mkvenv_repo_root/pyproject.toml" ] && [ ! -f "$_mkvenv_repo_root/setup.py" ]; then
+    echo "mkvenv.sh: cannot find pyproject.toml or setup.py in: $_mkvenv_repo_root" >&2
+    echo "Set KIWI_SCAN_REPO_ROOT to the kiwi-scan checkout root, or source the script by absolute path." >&2
+    return 1 2>/dev/null || exit 1
+fi
+
+cd "$_mkvenv_repo_root"
+
 export VIRTUAL_ENV_DISABLE_PROMPT=1
 
 # Function to clean the shell prompt
@@ -39,6 +52,7 @@ else
     pip install -e .[dev]
 fi
 
+cd "$_kiwi_old_pwd"
 # Update the shell prompt to indicate the kiwi-scan development environment
 add_kiwi_to_prompt
 
