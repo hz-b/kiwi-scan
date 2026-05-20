@@ -114,7 +114,14 @@ class PollScan(BaseScan):
                     logging.debug("Stop event set")
                     break
 
-                self._wait_for_sync(timeout_s=self.sampletime, stop_event=self._stop_requested)
+                if self.sync_controller.is_enabled():
+                    self._wait_for_sync(
+                        timeout_s=self.sampletime,
+                        stop_event=self._stop_requested,
+                    )
+                else:
+                    if self._stop_requested.wait(self.sampletime):
+                        break
 
                 if self._stop_requested.is_set():
                     logging.debug("Stop event set")

@@ -102,7 +102,16 @@ class CMScan(BaseScan):
             if self._stop_requested.is_set():
                 break
             self._fire_triggers("after_point")
-            self._wait_for_sync(timeout_s=self.sampletime, stop_event=self._stop_requested)
+            # --------------------------------------- block scan task
+            if self.sync_controller.is_enabled():
+                self._wait_for_sync(
+                    timeout_s=self.sampletime,
+                    stop_event=self._stop_requested,
+                )
+            else:
+                if self._stop_requested.wait(self.sampletime):
+                    break
+            # ---------------------------------------
             if self._stop_requested.is_set():
                 break
 
@@ -155,6 +164,9 @@ class CMScan(BaseScan):
             for name, actuator in self.actuators.items():
                 try:
                     vel = actuator.get_velocity()
+                    if vel is None:
+                        logging.warning("Could not read original velocity for actuator '%s'; velocity restore will be skipped", name)
+                        continue
                     self._original_velocities[name] = vel
                     logging.info(f"Stored velocity for actuator '{name}': {vel}")
                 except Exception as e:
@@ -183,6 +195,9 @@ class CMScan(BaseScan):
             for name, orig_vel in self._original_velocities.items():
                 actuator = self.actuators[name]
                 try:
+                    if orig_vel is None:
+                        logging.warning("Skipping velocity restore for actuator '%s': original velocity is None", name)
+                        continue
                     actuator.set_velocity(orig_vel)
                     logging.info(f"Restored velocity for actuator '{name}' to {orig_vel}")
                 except Exception as e:
