@@ -26,7 +26,7 @@ class CMScan(BaseScan):
             raise ArithmeticError(f"Start equals stop == {dim.start!r}")
         self._start = dim.start
         self._stop = dim.stop
-        self.set_samplerate(dim)
+        self.set_samplerate()
         self.first_actuator = self.actuators[self.scan_dimensions[0].actuator]
 
         self.register_subscription_role("heartbeat", self._on_heartbeat_event)

@@ -36,6 +36,7 @@ data_dir: .
 output_file: scan_results.txt
 include_timestamps: False
 integration_time: 0.0
+sample_rate_hz: 1.0
 debug: False
 performance_report: False
 data_writing_enabled: True

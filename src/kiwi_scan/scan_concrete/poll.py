@@ -34,7 +34,7 @@ class PollScan(BaseScan):
             raise ValueError("PollScan requires at least one ScanDimension")
 
         logging.info("Creating samplerate from scan dimensions: %s", self.scan_dimensions)
-        self.set_samplerate(self.scan_dimensions[0])
+        self.set_samplerate()
         self._start = self.scan_dimensions[0].start
         self._stop = self.scan_dimensions[0].stop
 

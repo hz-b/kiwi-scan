@@ -87,8 +87,10 @@ class BaseScan(ScanABC):
 
         # copy runtime flags
         self.include_timestamps = config.include_timestamps
-        self.samplerate = 1.0
+        self.sample_rate_hz = 1.0
         self.sampletime = 1.0
+        self._apply_sample_rate(getattr(config, "sample_rate_hz", None))
+
         self.debug = config.debug
         if self.debug:
             logging.basicConfig(level=logging.INFO)
@@ -363,20 +365,27 @@ class BaseScan(ScanABC):
         if not (self.scan_dimensions or self.parallel_scans or self.nested_scans):
             raise ValueError("No scan dimensions provided in ScanConfig.")
 
-    def set_samplerate(self, dim: ScanDimension):
-        """
-        Safely sets the samplerate and sampletime based on dim.steps.
-        Args:
-            dim: Object with a 'steps' attribute representing the number of steps.
-        Raises:
-            ValueError: If steps is zero or negative.
-        """
-        steps = dim.steps
-        if steps <= 0:
-            raise ValueError(f"Steps must be positive, got {steps}")
-        self.samplerate = steps
-        self.sampletime = 1.0 / self.samplerate
-    
+    def _apply_sample_rate(self, sample_rate_hz: Optional[float]) -> None:
+        """Store the current scan sample rate and derived sample period."""
+        if sample_rate_hz is None:
+            sample_rate_hz = 1.0
+
+        rate = float(sample_rate_hz)
+        if rate <= 0.0:
+            logging.error(f"sample_rate_hz must be positive, got {rate}")
+            rate = rate * -1.0
+
+        self.sample_rate_hz = rate
+        self.sampletime = 1.0 / rate
+
+    def set_samplerate( self, dim: Optional[ScanDimension] = None, sample_rate_hz: Optional[float] = None):
+        """ Set the scan sample rate.  """
+
+        rate_hz = sample_rate_hz
+        if rate_hz is None:
+            rate_hz = getattr(self.cfg, "sample_rate_hz", 1.0)
+        self._apply_sample_rate(rate_hz)
+
     def task_delay(self, start_time, sampletime, index):
         """
         Time between sample points

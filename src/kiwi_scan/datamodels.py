@@ -265,6 +265,7 @@ class ScanConfig:
     output_file: str = "scan_results.txt"
     include_timestamps: bool = False
     integration_time: float = 0.0
+    sample_rate_hz: float = 1.0
     debug: bool = False
     performance_report: bool = False
     data_writing_enabled: bool = True
@@ -329,6 +330,7 @@ class ScanConfig:
             output_file=config_dict.get("output_file", "scan_results.txt"),
             include_timestamps=config_dict.get("include_timestamps", False),
             integration_time=config_dict.get("integration_time", 0.0),
+            sample_rate_hz=config_dict.get("sample_rate_hz", 1.0),
             debug=config_dict.get("debug", False),
             performance_report=config_dict.get("performance_report", False),
             data_writing_enabled=config_dict.get("data_writing_enabled", True),

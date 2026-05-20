@@ -55,7 +55,7 @@ class ParaScan(BaseScan):
             raise ValueError("ParaScan requires at least one ScanDimension")
 
         logging.info("Creating parasitical samplerate from scan dimensions: %s", self.scan_dimensions)
-        self.set_samplerate(self.scan_dimensions[0])
+        self.set_samplerate(sample_rate_hz=20)
 
         self.register_subscription_role("heartbeat", self._on_heartbeat_event)
         self.register_subscription_role("sync", self._on_sync_event)

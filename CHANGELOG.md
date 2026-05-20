@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+- Add sample_rate_hz to scan config and BaseScan. Calculating rate from steps in dimensions is depricated.
+
 ---
 
 ## [0.2.1] - 2026-05-15
