@@ -12,12 +12,12 @@ class TestStatsCollector(unittest.TestCase):
             actuator="energy",
             source="rbv",
             name="mono_energy",
-            role="sync",
+            role="stat",
         )
         self.beta = SubscriptionConfig(
             pv="XXX:Beta",
             name="beta",
-            role="sync",
+            role="stat",
         )
         self.status = SubscriptionConfig(
             pv="XXX:Status",
