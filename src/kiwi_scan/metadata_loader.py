@@ -123,10 +123,10 @@ def parse_metadata_file(path: str) -> Optional[MetadataFile]:
             dtype={"PV": str, "VALUE": str},
         )
 
-        # Ensure timestamps are UTC-aware datetime
+        # Preserve timezone from ISO8601 strings for plotting
         for col in ("TS-ISO8601", "PV-TS-ISO8601"):
             if col in df_raw.columns:
-                df_raw[col] = pd.to_datetime(df_raw[col], utc=True, errors="coerce")
+                df_raw[col] = pd.to_datetime(df_raw[col], errors="coerce")
 
         # Parse VALUE column
         if "VALUE" in df_raw.columns:

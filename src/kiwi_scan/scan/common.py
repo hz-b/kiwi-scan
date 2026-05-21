@@ -594,8 +594,8 @@ class BaseScan(ScanABC):
         """
         logging.debug(f"Detector values to be written: {detector_values}")
 
-        # Independent per-line timestamp (UTC ISO 8601)
-        line_ts_iso = datetime.now(timezone.utc).isoformat()
+        # Independent per-line timestamp time zone aware (ISO 8601)
+        line_ts_iso = datetime.now().astimezone().isoformat()
 
         provider_values = self._get_data_column_values()
         # Update in-memory last-point cache (used by get_value)
@@ -636,7 +636,7 @@ class BaseScan(ScanABC):
                     if ts is None:
                         parts.append("")
                     else:
-                        parts.append(datetime.fromtimestamp(ts, tz=timezone.utc).isoformat())
+                        parts.append(datetime.fromtimestamp(ts).astimezone().isoformat())
 
             line = "\t".join(parts) + "\n"
             logging.debug(f"Save line to file:{line}")
@@ -700,7 +700,7 @@ class BaseScan(ScanABC):
                             else:
                                 last["TS-" + header] = ""
                         else:
-                            iso = datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+                            iso = datetime.fromtimestamp(float(ts)).astimezone().isoformat()
                             if header in detector_names:
                                 last["TS-ISO8601-" + header] = iso
                             else:

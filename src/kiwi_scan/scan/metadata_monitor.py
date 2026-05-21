@@ -158,7 +158,7 @@ class MetadataCAMonitor:
                         value = None
 
                 row = [
-                    datetime.now(tz=timezone.utc).isoformat(),
+                    datetime.now().astimezone().isoformat(),
                     pvname,
                     self._fmt_value(value),
                     self._ts_to_iso(ts),
@@ -172,7 +172,7 @@ class MetadataCAMonitor:
     def _on_event(self, **kwargs) -> None:
         try:
             event = {
-                "recv_ts": datetime.now(tz=timezone.utc).isoformat(),
+                "recv_ts": datetime.now().astimezone().isoformat(),
                 "pv": kwargs.get("pvname") or kwargs.get("pv") or "UNKNOWN",
                 "value": kwargs.get("value"),
                 "pv_ts": self._ts_to_iso(kwargs.get("timestamp")),
@@ -193,7 +193,7 @@ class MetadataCAMonitor:
             if ts is None:
                 return ""
             if isinstance(ts, (int, float)):
-                return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+                return datetime.fromtimestamp(float(ts)).astimezone().isoformat()
             return str(ts)
         except Exception:
             return ""

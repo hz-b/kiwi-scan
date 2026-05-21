@@ -83,9 +83,9 @@ class DataLoader:
                 date_format='ISO8601'  # kiwi-scan format
             )
 
-            # Ensure UTC timezone explicitly after loading
+            # Preserve timezone from ISO8601 strings for plotting
             for col in timestamp_cols:
-                df[col] = pd.to_datetime(df[col], utc=True, errors='coerce')
+                df[col] = df[col] = pd.to_datetime(df[col], errors='coerce')
 
             return df
 
