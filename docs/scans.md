@@ -7,6 +7,7 @@
 - **poll** - Poll-based scan reading detector values at fixed intervals or synchronized DAQ and subscriptions.
 - **linear** - Standard multi actuator point-by-point linear scan between start and stop positions.
 - **approach** - Nonlinear approach-style scan with denser points near the target.
+- **para** - Passive parasitical step scan that observes externally moved actuators and records points after they are in range and ready.
 
 Example:
 
@@ -41,19 +42,24 @@ For point-by-point scans, actuators can define `backlash`. If backlash compensat
 
 It creates evenly spaced positions from `start` to `stop` for each configured actuator. If `steps < 2`, only the start position is used.
 
-`LinearScan` can write simple online statistics for values received through a subscription.
 
-During a scan point, sync monitor events may arrive faster than the detector readout. Instead of writing every sync event `LinearScan` computes statistical summary of sync events for the current DAQ window (configure `integration_time`).
+#### Stats
+`LinearScan` creates one `StatsCollector` for all configured `stat` subscriptions and registers it as a column provider (see stats.md).
+
+That way, `LinearScan` can write simple online statistics for values received through multiple subscriptions.
+
+During a scan point, stat monitor events should happen faster than the detector readout. Instead of writing every stat event, `LinearScan` computes a statistical summary for the current DAQ window (configure `integration_time`).
+
 
 The following columns are added to the main scan output:
 
 | Column | Meaning |
 |---|---|
-| `StatsMean` | Mean value of collected samples |
-| `StatsStd` | Standard deviation of collected samples |
-| `StatsMin` | Minimum value |
-| `StatsMax` | Maximum value |
-| `StatsNSamples` | Number of samples collected during the DAQ window |
+| `<name>Mean` | Mean value of collected samples |
+| `<name>Std` | Standard deviation of collected samples |
+| `<name>Min` | Minimum value |
+| `<name>Max` | Maximum value |
+| `<name>NSamples` | Number of samples collected during the DAQ window |
 
 Example configuration:
 
@@ -62,16 +68,10 @@ subscriptions:
   - actuator: energy
     source: rbv
     name: mono_energy
-    role: sync
-```
-
-or
-
-```yaml
-subscriptions:
+    role: stat
   - pv: "XXX:Beta"
     name: beta
-    role: sync
+    role: stat
 ```
 ### `approach`
 
@@ -84,6 +84,62 @@ Typical use cases:
 - approach sequences
 - testing closed loop systems with different step sizes
 - when the target region is more important part of the range
+
+### `para`
+
+`para` is a passive parasitical step-scan type. It does not command actuator motion. Instead, an external process or operator moves the configured actuators, and `para` records one scan point when all configured actuators are inside their configured scan ranges and all of them report ready.
+
+This makes `para` useful as the step-scan counterpart to `poll`: `poll` samples continuously while an actuator is moving, while `para` waits for externally created stable step positions and then runs the normal point-acquisition pipeline.
+
+The scan loop is:
+
+1. wait for an external actuator move to happen
+2. wait until all configured actuators are ready
+3. check that all readbacks are inside the configured `start`/`stop` ranges
+4. run the normal DAQ point pipeline: `on_point` triggers, optional `integration_time`, detector reads, `after_point` triggers, plugins, monitor update, and file writing
+5. wait for the next externally initiated movement before accepting another point
+
+The first configured scan dimension is written as the standard `Position` column. For multi-actuator setups, all configured actuator readbacks are checked for range and readiness.
+
+`steps` defines the maximum number of points to record. The scan also terminates when it has already recorded points inside the range and then detects that an actuator has left its configured scan range.
+
+Example:
+
+```bash
+scan_runner \
+  --scan_type para \
+  --config-file ./mono.yaml \
+  --dim actuator=energy,start=400,stop=1500,steps=10000
+```
+
+Multi-actuator example:
+
+```bash
+scan_runner \
+  --scan_type para \
+  --config-file ./mono.yaml \
+  --dim actuator=energy,start=400,stop=410,steps=1000 \
+  --dim actuator=theta,start=4.5,stop=5.0.,steps=1000
+```
+
+Example statistic subscription:
+
+```yaml
+subscriptions:
+  - pv: "XXX:Beta"
+    name: beta
+    role: stat
+```
+
+As `linear` does, `para` uses the `stat` subscription role for per-point statistics. Values received during the DAQ window are summarized into output columns.
+
+Typical use cases:
+
+- observing a manually or externally driven step scan
+- recording detector values only after motion has completed
+- passive diagnostics where `kiwi-scan` must not command the actuator
+- multi-actuator step scans where every axis must be inside its allowed range before acquisition
+- collecting statistics over `integration_time` for externally generated positions
 
 ### `poll`
 

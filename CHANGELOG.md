@@ -5,6 +5,11 @@ All notable changes to `kiwi-scan` will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
+
+---
+
+## [0.3.0] - 2026-05-22
+
 ### Added
 
 - Added running online statistics utilities for multiple subscriptions (role=`stat`)
@@ -12,6 +17,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Add new `para` scan type for passive parasitical step scans.
   The engine observes externally moved actuators, waits for them to enter the configured scan range, waits for a running/ready transition cycle, and records stable points using the standard DAQ, trigger, plugin, monitor, metadata, and statistics pipeline.
 - Added ctrl+c support to scan_runner. First ctrl+c will stop all motors and exit the scan loop immediately.
+- Added documentation for SyncController
+- Added documentation for kiwi statistics
 
 ### Changed
 - Fixed timestamp handling so scan and metadata files use local timezone-aware timestamps, and plot/data loaders preserve the stored timezone instead of converting timestamps to UTC.
@@ -20,6 +27,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Improved monitor-based EPICS data acquisition using cached CA monitor reads with polling fallback with adjustable rate.
 - Linear and Parasitcal step scans now maintain scalable online sync statistics during DAQ operation (mean, standard deviation, minimum, maximum, number of collected samples)
 - Warn now when velocity cannot be restored in cm scan type.
+- Fixed manifests for missing active manifests
 ---
 
 ## [0.2.1] - 2026-05-15

@@ -84,7 +84,21 @@ scan_runner \
 kiwi-scan provides a set of built-in scan engines for common beamline and commissioning workflows, including point-by-point scans, continuous motion scans, polling-based acquisition, and nonlinear approach trajectories. In addition, users can implement and register custom scan types through the scan registry API.
 
 For detailed description check the kiwi scan type documentation
-[Kiwi Scan types](docs/scans.md)
+[Kiwi Scan types](https://github.com/hz-b/kiwi-scan/blob/master/docs/scans.md)
+
+## SyncController
+
+
+The SyncController is used by scan engines to synchronize the scan cycle with multiple synchronized EPICS monitor updates.
+For detailed description check the SyncController documentation
+[SyncController](https://github.com/hz-b/kiwi-scan/blob/master/docs/sync-controller.md)
+
+## Stats and Column Provider
+
+The kiwi-scan supports statistics for scan types based on BaseScan and provides a command line tool for live statistics from configured subscriptions.
+For detailed description check the statistics documentation
+[Stats](https://github.com/hz-b/kiwi-scan/blob/master/docs/stats.md)
+
 
 ## YAML Configuration
 
@@ -94,7 +108,7 @@ The scan dimensions are normally added by the API or command line arguments (`--
 
 Unknown fields in dataclass-based YAML blocks are generally ignored during parsing. This makes configuration files more forward-compatible across versions, but it also means that misspelled optional fields may not fail immediately.
 
-See the full [YAML reference](docs/yaml.md) for the description.
+See the full [YAML reference](https://github.com/hz-b/kiwi-scan/blob/master/docs/yaml.md) for the description.
 
 ## The Actuator Framework
 
@@ -122,7 +136,7 @@ actuator_concrete/
 
 actuator_runner.py   # command-line tool for direct actuator operation
 ```
-A more detailed description can be found [here](docs/actuator.md). 
+A more detailed description can be found [here](https://github.com/hz-b/kiwi-scan/blob/master/docs/actuator.md). 
 
 ## Public API
 
@@ -130,16 +144,16 @@ A more detailed description can be found [here](docs/actuator.md).
 
 The command-line tools use the library API: they build a `ScanConfig`, load scan/plugin implementations, and then create or execute a scan object.
 
-Check the public API documentation described [here](docs/api.md).
+Check the public API documentation described [here](https://github.com/hz-b/kiwi-scan/blob/master/docs/api.md).
 
 ## Plugin developer description and example
 
 Plugins are instantiated from `plugin_configs` and discovered from the built-in plugin package plus any files or directories listed in `KIWI_SCAN_PLUGIN_PATH`.
-New plugin classes must be derived from the interface defined in [plugin base class](src/kiwi_scan/plugin/base.py)
+New plugin classes must be derived from the interface defined in [plugin base class](https://github.com/hz-b/kiwi-scan/blob/master/src/kiwi_scan/plugin/base.py)
 
 For detailed description check the plugin user and developer documentation:
 
-[Plugins](docs/plugins.md) — plugin API, plugin discovery, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
+[Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) — plugin API, plugin discovery, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
 
 ## Command-line tools
 
@@ -148,6 +162,8 @@ After installation, the command line tools are available:
 - `scan_runner` - execute scans from YAML + CLI dimensions + other options
 - `actuator_runner` - actuator commands and run optional monitors + formatted output
 - `scanplotter_cli` - plot scan data, optionally use manifest and file index
+- `pollstats_cli` - online statistics without scan from YAML config
+- `scantrigger_cli`- execute triggers from YAML config
 - `manifestfiles` - a simple tool to list files referenced in manifests
 Examples:
 
@@ -156,6 +172,7 @@ scan_runner --help
 actuator_runner --help
 scanplotter_cli --help
 scantrigger_cli --help
+pollstats_cli --help
 manifestfiles --help
 ```
 See the [Makefile helpers](#makefile-helpers) section for information how to install the bash completion scripts.
@@ -218,7 +235,7 @@ The post-mortem plotting tools can combine scan files and metadata files for lat
 - `KIWI_SCAN_PLUGIN_PATH` — extra plugin files/directories to import
 - `KIWI_SCAN_SCAN_PATH` — extra scan-type files/directories to import
 
-See [examples/beamline_env.sh](examples/beamline_env.sh) for a setup example.
+See [https://github.com/hz-b/kiwi-scan/blob/master/examples/beamline_env.sh](examples/beamline_env.sh) for a setup example.
 
 ## Docs
 
@@ -231,6 +248,8 @@ User and developer documentation:
 - [Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) - plugin API, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
 - [Scan Types](https://github.com/hz-b/kiwi-scan/blob/master/docs/scans.md) - provided and custom kiwi scan types.
 - [vim](https://github.com/hz-b/kiwi-scan/blob/master/docs/vim.md) - simple syntax highlighting setup
+- [Stats](https://github.com/hz-b/kiwi-scan/blob/master/docs/stats.md) - kiwi statistics support
+- [SyncController](https://github.com/hz-b/kiwi-scan/blob/master/docs/sync-controller.md) - kiwi synced scan loops
 
 ## Development setup
 
