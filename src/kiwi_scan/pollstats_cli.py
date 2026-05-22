@@ -108,8 +108,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     parser.add_argument(
         "--role",
-        default="sync",
-        help="Subscription role to collect statistics from. Default: sync",
+        default="stat",
+        help="Subscription role to collect statistics from. Default: stat",
     )
     parser.add_argument(
         "--interval",
