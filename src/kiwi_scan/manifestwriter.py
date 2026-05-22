@@ -47,6 +47,7 @@ class ManifestWriter:
         self.path = Path(filename).expanduser()
         self.logger.debug("Initialized ManifestWriter with path: %s", self.path)
 
+
     @staticmethod
     def _absolute_path_value(value: Optional[str], base_dir: Optional[str] = None) -> Optional[str]:
         """Return an absolute, user-expanded path string for manifest references."""
@@ -299,6 +300,7 @@ class ManifestResolver:
     logger = logger
     def __init__(self, data_dir: Optional[str] = None):
         self.data_dir = self._resolve_data_dir(data_dir)
+        self._warned_missing_active_manifest = False
         self.logger.debug(f"Using manifest data directory: {self.data_dir}")
 
     @classmethod
@@ -356,7 +358,11 @@ class ManifestResolver:
             if active_path.is_file():
                 paths.add(active_path)
             else:
-                self.logger.warning("Configured active manifest does not exist: %s", active_path)
+                if not self._warned_missing_active_manifest:
+                    self.logger.warning("Configured active manifest does not exist: %s", active_path)
+                    self._warned_missing_active_manifest = True
+                else:
+                    self.logger.debug("Configured active manifest still missing: %s", active_path)
 
         manifests = sorted(paths, key=self._manifest_sort_key, reverse=True)
         if manifests:
