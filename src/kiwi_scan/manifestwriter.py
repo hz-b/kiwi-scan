@@ -89,12 +89,35 @@ class ManifestWriter:
         Resolution order:
           1. KIWI_SCAN_MANIFEST_FILE
           2. Path stored in the active-manifest state file
-          3. None
+          3. Recreate a new manifest in KIWI_SCAN_DATA_DIR
         """
         filename = cls.get_active_manifest()
+        data_dir = os.environ.get("KIWI_SCAN_DATA_DIR")
+        # No active manifest configured at all
         if filename is None:
             cls.logger.warning("No active manifest found")
+            try:
+                filename = cls.newmanifest(directory=data_dir)
+                cls.logger.warning("Created new manifest because no active manifest existed: %s", filename)
+                return cls(filename)
+            except Exception:
+                cls.logger.exception("Failed to create fallback manifest")
+                return None
+
             return None
+
+        path = Path(filename).expanduser()
+        if not path.is_file():
+            cls.logger.warning("Active manifest does not exist anymore: %s", path)
+            try:
+                filename = cls.newmanifest(directory=data_dir)
+                cls.logger.warning("Created replacement manifest because active manifest was missing: %s", filename)
+                return cls(filename)
+            except Exception:
+                cls.logger.exception("Failed to create replacement manifest")
+                return None
+            return None
+
         cls.logger.info("Using active manifest: %s", filename)
         return cls(filename)
 
@@ -203,13 +226,8 @@ class ManifestWriter:
 
         now = datetime.now().astimezone()
         scan_id = "scan_" + now.strftime("%Y%m%dT%H%M%S%z")
-        self.logger.info(
-            "Appending scan to manifest: id=%s type=%s file=%s mode=%s",
-            scan_id,
-            scan_type,
-            data_file,
-            mode,
-        )
+        self.logger.info("Appending scan to manifest: id=%s type=%s file=%s mode=%s",
+            scan_id, scan_type, data_file, mode)
 
         entry = {
             "id": scan_id,
@@ -337,6 +355,9 @@ class ManifestResolver:
             active_path = Path(active_manifest).expanduser()
             if active_path.is_file():
                 paths.add(active_path)
+            else:
+                self.logger.warning("Configured active manifest does not exist: %s", active_path)
+
         manifests = sorted(paths, key=self._manifest_sort_key, reverse=True)
         if manifests:
             self.logger.debug(f"Found {len(manifests)} manifest file(s) in {self.data_dir}")
