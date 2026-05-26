@@ -20,7 +20,37 @@ class RangeExitDetector:
 
         return start <= pos <= stop if start <= stop else stop <= pos <= start
 
+    def in_range(self, pos):
+        """Return True when ``pos`` is inside the configured scan range."""
+        return self._in_range(pos, self.start, self.stop)
+
+    def prime(self, pos):
+        """
+        Seed the detector with the current position before the DAQ loop.
+
+        This is useful after a backlash/overshoot preparation move where the
+        actuator may already have entered the scan range before the first call
+        to ``update()``. Returns True when the detector is now in the entered
+        state.
+        """
+        if self.in_range(pos):
+            self.entered = True
+            self.out_counter = 0
+            logging.debug("[RangeExitDetector] Primed inside range at pos=%s", pos)
+        else:
+            logging.debug("[RangeExitDetector] Prime position outside range: pos=%s", pos)
+        return self.entered
+
+    def reset(self):
+        """Clear the entered and exit-counter state for detector reuse."""
+        self.entered = False
+        self.out_counter = 0
+
     def _past_end(self, pos):
+        if pos is None:
+            logging.debug("Could not detect end crossing: pos is None")
+            return False
+
         if self.forward:
             return pos > self.stop + self.eps
         else:
@@ -32,7 +62,7 @@ class RangeExitDetector:
         """
 
         # 1. Detect entering the scan range
-        if self._in_range(pos, self.start, self.stop):
+        if self.in_range(pos):
             self.entered = True
             self.out_counter = 0
             return False
@@ -44,14 +74,12 @@ class RangeExitDetector:
         # 3. Direction-aware exit condition
         if self._past_end(pos):
             self.out_counter += 1
-            logging.debug(
-                "[RangeExitDetector] EXIT candidate pos=%s (counter=%d/%d)",
-                pos, self.out_counter, self.out_threshold
-            )
+            logging.debug( "[RangeExitDetector] EXIT candidate pos=%s (counter=%d/%d)",
+                pos, self.out_counter, self.out_threshold)
             if self.out_counter >= self.out_threshold:
                 return True
         else:
-            # still near boundary → reset (handles oscillation)
+            # still near boundary -> reset (handles oscillation)
             self.out_counter = 0
 
         return False

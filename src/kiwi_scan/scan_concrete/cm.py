@@ -35,7 +35,30 @@ class CMScan(BaseScan):
         self.register_subscription_role("stop", self._on_stop_event)
 
         self._original_velocities = {}
-    
+
+    def _restore_original_velocities(self) -> None:
+        """Restore actuator velocities saved before the continuous move."""
+        for name, orig_vel in self._original_velocities.items():
+            if orig_vel is None:
+                logging.debug("Skipping velocity restore for actuator '%s': original velocity is None", name)
+                continue
+
+            actuator = self.actuators.get(name)
+            if actuator is None:
+                logging.warning("Cannot restore velocity for unknown actuator '%s'", name)
+                continue
+
+            try:
+                actuator.set_velocity(orig_vel)
+                logging.info("Restored velocity for actuator '%s' to %s", name, orig_vel)
+            except Exception as e:
+                logging.warning("Failed to restore velocity for actuator '%s': %s", name, e)
+
+    def stop(self) -> None:
+        """Request CM scan stop and restore original actuator velocities."""
+        super().stop()
+        self._restore_original_velocities()
+
     """ ----------- sync event handler -----------------------
         Example config yaml:
             subscriptions:
@@ -122,7 +145,8 @@ class CMScan(BaseScan):
             if range_exit.update(pos):
                 logging.info("Scan termination detected at pos=%s", pos)
                 break
-
+            if not range_exit.entered:
+                continue
             if self._position_sync_subscription_set:
                 self._position = pos
             self._fire_triggers("on_point")
@@ -155,8 +179,11 @@ class CMScan(BaseScan):
             for dim in self.scan_dimensions:
                 name = dim.actuator
                 actuator = self.actuators[name]
+                bdist = -actuator.backlash if dim.stop > dim.start else actuator.backlash
+                overshoot = dim.start + bdist
+                logging.info(f"overshoot={overshoot}, bdist={bdist}, backlash={actuator.backlash}")
                 try:
-                    actuator.run_move(dim.start, sync=True )
+                    actuator.run_move(overshoot, sync=True)
                     logging.info(f"Started actuator '{name}' moving to {dim.start}")
                 except Exception as e:
                     logging.warning(f"Failed to move actuator '{name}': {e}")
@@ -190,19 +217,8 @@ class CMScan(BaseScan):
 
             # 4) DAQ loop on primary actuator
             self.run_daq(monitor)
-
-            # 5) Restore original velocities
-            for name, orig_vel in self._original_velocities.items():
-                actuator = self.actuators[name]
-                try:
-                    if orig_vel is None:
-                        logging.warning("Skipping velocity restore for actuator '%s': original velocity is None", name)
-                        continue
-                    actuator.set_velocity(orig_vel)
-                    logging.info(f"Restored velocity for actuator '{name}' to {orig_vel}")
-                except Exception as e:
-                    logging.warning(f"Failed to restore velocity for actuator '{name}': {e}")
         finally:
+            self._restore_original_velocities()
             self._stop_metadata_monitor()
             # MonoCMScan overrides BaseScan.scan(), so it must clear subscriptions itself
             try:
