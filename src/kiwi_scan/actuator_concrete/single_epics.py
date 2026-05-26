@@ -538,6 +538,7 @@ class EpicsActuator(AbstractActuator):
     def dwell(self) -> None:
         time.sleep(self.dwell_time)
 
+    # TODO: wait for startup 
     def wait_for_startup_and_done(self, stop_event: Optional[threading.Event] = None) -> None:
         logging.debug(f"[{self.pvname}] waiting for move to start")
         started = self._wait_for_condition(
