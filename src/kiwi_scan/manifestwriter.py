@@ -5,10 +5,12 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
 from importlib.metadata import version, PackageNotFoundError
 import os
 import socket
+import io
+import tarfile
 import getpass
 import yaml
 import logging
@@ -329,6 +331,151 @@ class ManifestScanRef:
     scan_type: Optional[str]
     raw: Dict[str, Any]
 
+
+@dataclass(frozen=True)
+class ManifestDeletePlan:
+    """Plan for archiving and deleting manifest-related files.
+
+    The plan is intentionally side-effect free. It can be printed by a CLI,
+    inspected by tests, or passed to :class:`ManifestArchiveDeleter` for the
+    destructive archive-and-delete step.
+    """
+
+    manifest_files: List[Path]
+    files_to_archive: List[Path]
+    missing_files: List[Path]
+    skipped_files: List[Path]
+    bundle_file: Path
+
+    @property
+    def files_to_delete(self) -> List[Path]:
+        """Existing regular files that should be removed after archiving."""
+        return list(self.files_to_archive)
+
+
+@dataclass(frozen=True)
+class ManifestDeleteResult:
+    """Result of an archive-and-delete operation."""
+
+    bundle_file: Path
+    archived_files: List[Path]
+    deleted_files: List[Path]
+    missing_files: List[Path]
+    skipped_files: List[Path]
+    failed_files: List[Path]
+    dry_run: bool = False
+
+
+class ManifestArchiveDeleter:
+    """Archive files from a :class:`ManifestDeletePlan` and delete them safely."""
+
+    logger = logger
+
+    @classmethod
+    def archive_and_delete(
+        cls,
+        plan: ManifestDeletePlan,
+        *,
+        dry_run: bool = False,
+    ) -> ManifestDeleteResult:
+        """Archive all planned files and then delete the archived files.
+
+        No file is deleted unless it was present in the plan and the archive
+        was successfully created. Missing and skipped files are reported, but
+        are not fatal.
+        """
+        cls.logger.debug(
+            "Archive/delete requested: files=%d missing=%d skipped=%d bundle=%s dry_run=%s",
+            len(plan.files_to_archive),
+            len(plan.missing_files),
+            len(plan.skipped_files),
+            plan.bundle_file,
+            dry_run,
+        )
+
+        if dry_run:
+            cls.logger.info("Dry-run archive/delete plan for %d file(s)", len(plan.files_to_archive))
+            return ManifestDeleteResult(
+                bundle_file=plan.bundle_file,
+                archived_files=[],
+                deleted_files=[],
+                missing_files=list(plan.missing_files),
+                skipped_files=list(plan.skipped_files),
+                failed_files=[],
+                dry_run=True,
+            )
+
+        if not plan.files_to_archive:
+            raise ValueError("No existing regular files to archive and delete")
+
+        bundle = plan.bundle_file.expanduser()
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+
+        archived_files: List[Path] = []
+        failed_files: List[Path] = []
+
+        cls.logger.info("Creating delete bundle: %s", bundle)
+        with tarfile.open(bundle, "w:gz") as tar:
+            restore_map = {
+                "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "bundle_file": str(bundle),
+                "files": [],
+            }
+
+            for index, path in enumerate(plan.files_to_archive):
+                full = path.expanduser().resolve(strict=False)
+                if not full.is_file():
+                    cls.logger.warning("Skipping non-file during archive: %s", full)
+                    failed_files.append(full)
+                    continue
+
+                arcname = "files/%04d_%s" % (index, full.name)
+                cls.logger.debug("Adding %s as %s", full, arcname)
+                tar.add(str(full), arcname=arcname, recursive=False)
+                archived_files.append(full)
+                restore_map["files"].append(
+                    {
+                        "archive_name": arcname,
+                        "original_path": str(full),
+                    }
+                )
+
+            manifest_bytes = yaml.safe_dump(restore_map, sort_keys=False).encode("utf-8")
+            info = tarfile.TarInfo("restore_map.yaml")
+            info.size = len(manifest_bytes)
+            info.mtime = int(datetime.now(timezone.utc).timestamp())
+            tar.addfile(info, io.BytesIO(manifest_bytes))
+
+        if not bundle.is_file() or bundle.stat().st_size <= 0:
+            raise OSError(f"Delete bundle was not created correctly: {bundle}")
+
+        deleted_files: List[Path] = []
+        for path in archived_files:
+            try:
+                cls.logger.debug("Deleting archived file: %s", path)
+                path.unlink()
+                deleted_files.append(path)
+            except OSError:
+                cls.logger.exception("Failed to delete archived file: %s", path)
+                failed_files.append(path)
+
+        cls.logger.info(
+            "Archive/delete complete: archived=%d deleted=%d failed=%d bundle=%s",
+            len(archived_files),
+            len(deleted_files),
+            len(failed_files),
+            bundle,
+        )
+        return ManifestDeleteResult(
+            bundle_file=bundle,
+            archived_files=archived_files,
+            deleted_files=deleted_files,
+            missing_files=list(plan.missing_files),
+            skipped_files=list(plan.skipped_files),
+            failed_files=failed_files,
+            dry_run=False,
+        )
+
 class ManifestResolver:
     """Read manifest files and select scan-data or metadata references."""
 
@@ -512,6 +659,108 @@ class ManifestResolver:
 
         return result
 
+    def plan_delete_bundle(
+        self,
+        manifest_files: Optional[Iterable[Union[str, Path]]] = None,
+        *,
+        include_meta: bool = False,
+        include_manifest: bool = True,
+        bundle_dir: Union[str, Path] = "/tmp",
+        bundle_prefix: str = "kiwi-scan-delete",
+    ) -> ManifestDeletePlan:
+        """Build a side-effect-free plan to archive and delete manifest files.
+
+        Args:
+            manifest_files: Explicit manifest files. If omitted, all manifests
+                discovered by this resolver are used.
+            include_meta: Include metadata sidecar files referenced by scans.
+            include_manifest: Include the manifest YAML files themselves. This
+                defaults to ``True`` because this method is intended for deletion.
+            bundle_dir: Directory where the archive bundle should be created.
+            bundle_prefix: Prefix for the generated archive filename.
+
+        Returns:
+            A :class:`ManifestDeletePlan` containing existing regular files to
+            archive/delete, missing references, skipped non-file paths, and the
+            target bundle path.
+        """
+        if manifest_files is None:
+            selected_manifests = self.list_manifests()
+        else:
+            selected_manifests = [Path(p).expanduser() for p in manifest_files]
+
+        if not selected_manifests:
+            location = self.data_dir if self.data_dir is not None else f"{self.ENV_DATA_DIR} is not set"
+            raise FileNotFoundError(f"No manifest files selected from {location}")
+
+        manifest_paths: List[Path] = []
+        for manifest in selected_manifests:
+            full = manifest.expanduser().resolve(strict=False)
+            if not full.is_file():
+                raise FileNotFoundError(f"Manifest file not found: {full}")
+            manifest_paths.append(full)
+
+        self.logger.debug(
+            "Planning archive/delete for %d manifest(s), include_meta=%s include_manifest=%s",
+            len(manifest_paths),
+            include_meta,
+            include_manifest,
+        )
+
+        seen = set()
+        files_to_archive: List[Path] = []
+        missing_files: List[Path] = []
+        skipped_files: List[Path] = []
+
+        def add_candidate(path: Optional[Path]) -> None:
+            if path is None:
+                return
+            full = path.expanduser().resolve(strict=False)
+            if full in seen:
+                self.logger.debug("Skipping duplicate delete candidate: %s", full)
+                return
+            seen.add(full)
+
+            if not full.exists():
+                self.logger.debug("Delete candidate is missing: %s", full)
+                missing_files.append(full)
+                return
+            if not full.is_file():
+                self.logger.warning("Delete candidate is not a regular file: %s", full)
+                skipped_files.append(full)
+                return
+
+            self.logger.debug("Planned delete candidate: %s", full)
+            files_to_archive.append(full)
+
+        for manifest in manifest_paths:
+            add_candidate(manifest if include_manifest else None)
+            refs = self.list_scan_refs(str(manifest))
+            for ref in refs:
+                add_candidate(ref.data_file)
+                if include_meta:
+                    add_candidate(ref.metadata_file)
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        bundle_path = Path(bundle_dir).expanduser() / f"{bundle_prefix}_{timestamp}.tar.gz"
+
+        self.logger.info(
+            "Delete plan: manifests=%d files=%d missing=%d skipped=%d bundle=%s",
+            len(manifest_paths),
+            len(files_to_archive),
+            len(missing_files),
+            len(skipped_files),
+            bundle_path,
+        )
+
+        return ManifestDeletePlan(
+            manifest_files=manifest_paths,
+            files_to_archive=files_to_archive,
+            missing_files=missing_files,
+            skipped_files=skipped_files,
+            bundle_file=bundle_path,
+        )
+
     def select_file(
         self,
         *,
@@ -581,7 +830,7 @@ class ManifestResolver:
         if path.is_absolute():
             return path
 
-        candidates = [manifest_file.parent / path, self.data_dir / path]
+        candidates = [manifest_file.parent / path]
         if self.data_dir is not None:
             candidates.append(self.data_dir / path)
 

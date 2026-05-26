@@ -1,11 +1,12 @@
 import os
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 import yaml
 
-from kiwi_scan.manifestwriter import ManifestWriter, ManifestResolver
+from kiwi_scan.manifestwriter import ManifestArchiveDeleter, ManifestWriter, ManifestResolver
 
 class TestManifestWriter(unittest.TestCase):
     def test_newmanifest_and_append(self):
@@ -237,6 +238,160 @@ class TestManifestWriter(unittest.TestCase):
                     os.environ.pop(ManifestResolver.ENV_DATA_DIR, None)
                 else:
                     os.environ[ManifestResolver.ENV_DATA_DIR] = old_data_dir
+
+
+    def test_plan_delete_bundle_includes_manifest_data_and_meta(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            manifest_path = data_dir / "manifest.yaml"
+            data_path = data_dir / "scan.txt"
+            meta_path = data_dir / "scan_meta.txt"
+            bundle_dir = data_dir / "bundles"
+            data_path.write_text("scan\n", encoding="utf-8")
+            meta_path.write_text("meta\n", encoding="utf-8")
+            manifest_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "manifest": {"created_at": "2026-05-01T10:00:00+02:00"},
+                        "scans": [
+                            {
+                                "id": "scan_1",
+                                "created_at": "2026-05-01T10:01:00+02:00",
+                                "data_file": "scan.txt",
+                                "metadata_file": "scan_meta.txt",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resolver = ManifestResolver(str(data_dir))
+            plan = resolver.plan_delete_bundle(
+                [manifest_path],
+                include_meta=True,
+                bundle_dir=bundle_dir,
+            )
+
+            self.assertEqual(plan.manifest_files, [manifest_path.resolve()])
+            self.assertEqual(
+                plan.files_to_delete,
+                [manifest_path.resolve(), data_path.resolve(), meta_path.resolve()],
+            )
+            self.assertEqual(plan.missing_files, [])
+            self.assertEqual(plan.skipped_files, [])
+            self.assertEqual(plan.bundle_file.parent, bundle_dir)
+            self.assertTrue(plan.bundle_file.name.startswith("kiwi-scan-delete_"))
+            self.assertEqual(plan.bundle_file.suffixes[-2:], [".tar", ".gz"])
+
+    def test_plan_delete_bundle_reports_missing_references(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            manifest_path = data_dir / "manifest.yaml"
+            data_path = data_dir / "scan.txt"
+            missing_meta = data_dir / "missing_meta.txt"
+            data_path.write_text("scan\n", encoding="utf-8")
+            manifest_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "manifest": {"created_at": "2026-05-01T10:00:00+02:00"},
+                        "scans": [
+                            {
+                                "id": "scan_1",
+                                "created_at": "2026-05-01T10:01:00+02:00",
+                                "data_file": "scan.txt",
+                                "metadata_file": "missing_meta.txt",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resolver = ManifestResolver(str(data_dir))
+            plan = resolver.plan_delete_bundle([manifest_path], include_meta=True, bundle_dir=data_dir)
+
+            self.assertIn(missing_meta.resolve(), plan.missing_files)
+            self.assertNotIn(missing_meta.resolve(), plan.files_to_delete)
+            self.assertIn(data_path.resolve(), plan.files_to_delete)
+
+    def test_archive_deleter_creates_bundle_and_deletes_only_archived_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            manifest_path = data_dir / "manifest.yaml"
+            data_path = data_dir / "scan.txt"
+            meta_path = data_dir / "scan_meta.txt"
+            bundle_dir = data_dir / "bundles"
+            data_path.write_text("scan\n", encoding="utf-8")
+            meta_path.write_text("meta\n", encoding="utf-8")
+            manifest_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "manifest": {"created_at": "2026-05-01T10:00:00+02:00"},
+                        "scans": [
+                            {
+                                "id": "scan_1",
+                                "created_at": "2026-05-01T10:01:00+02:00",
+                                "data_file": "scan.txt",
+                                "metadata_file": "scan_meta.txt",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resolver = ManifestResolver(str(data_dir))
+            plan = resolver.plan_delete_bundle([manifest_path], include_meta=True, bundle_dir=bundle_dir)
+            result = ManifestArchiveDeleter.archive_and_delete(plan)
+
+            self.assertTrue(result.bundle_file.is_file())
+            self.assertEqual(set(result.archived_files), set(plan.files_to_delete))
+            self.assertEqual(set(result.deleted_files), set(plan.files_to_delete))
+            self.assertFalse(manifest_path.exists())
+            self.assertFalse(data_path.exists())
+            self.assertFalse(meta_path.exists())
+            self.assertEqual(result.failed_files, [])
+
+            with tarfile.open(result.bundle_file, "r:gz") as tar:
+                names = tar.getnames()
+            self.assertIn("restore_map.yaml", names)
+            self.assertTrue(any(name.endswith("manifest.yaml") for name in names))
+            self.assertTrue(any(name.endswith("scan.txt") for name in names))
+            self.assertTrue(any(name.endswith("scan_meta.txt") for name in names))
+
+    def test_archive_deleter_dry_run_does_not_delete_or_archive(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            manifest_path = data_dir / "manifest.yaml"
+            data_path = data_dir / "scan.txt"
+            data_path.write_text("scan\n", encoding="utf-8")
+            manifest_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "manifest": {"created_at": "2026-05-01T10:00:00+02:00"},
+                        "scans": [
+                            {
+                                "id": "scan_1",
+                                "created_at": "2026-05-01T10:01:00+02:00",
+                                "data_file": "scan.txt",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resolver = ManifestResolver(str(data_dir))
+            plan = resolver.plan_delete_bundle([manifest_path], bundle_dir=data_dir)
+            result = ManifestArchiveDeleter.archive_and_delete(plan, dry_run=True)
+
+            self.assertTrue(result.dry_run)
+            self.assertTrue(manifest_path.exists())
+            self.assertTrue(data_path.exists())
+            self.assertFalse(plan.bundle_file.exists())
+            self.assertEqual(result.deleted_files, [])
+            self.assertEqual(result.archived_files, [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

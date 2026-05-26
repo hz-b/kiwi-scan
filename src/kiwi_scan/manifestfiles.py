@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from kiwi_scan.manifestwriter import ManifestResolver, ManifestWriter
+from kiwi_scan.manifestwriter import ManifestArchiveDeleter, ManifestResolver, ManifestWriter
 from kiwi_scan.scan.tools import set_valid_logging_level
 
 
@@ -52,7 +52,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             "and only scan data files are printed.\n\n"
             "Examples:\n"
             "  manifestfiles_cli --create scan1.txt scan2.txt\n"
-            "  manifestfiles_cli --create scan1.txt --manifest-file manifest_for_spec.yaml"
+            "  manifestfiles_cli --create scan1.txt --manifest-file manifest_for_spec.yaml\n"
+            "  manifestfiles_cli --delete --manifest-file manifest.yaml --include-meta --dry-run\n"
+            "  manifestfiles_cli --delete --manifest-file manifest.yaml --include-meta"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -69,13 +71,22 @@ def main(argv: Optional[List[str]] = None) -> int:
             "With --create, this is the output manifest path and may be used only once."
         ),
     )
-    parser.add_argument(
+    action_group = parser.add_mutually_exclusive_group()
+    action_group.add_argument(
         "--create",
         nargs="+",
         metavar="DATA_FILE",
         help=(
             "Create a new small manifest that references the given data files, "
             "then print the created manifest path."
+        ),
+    )
+    action_group.add_argument(
+        "--delete",
+        action="store_true",
+        help=(
+            "Interactively archive manifest-related files into a bundle and then delete them. "
+            "Use --dry-run to only print the deletion plan."
         ),
     )
     parser.add_argument(
@@ -92,6 +103,22 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--missing",
         action="store_true",
         help="Also print referenced files that do not exist on disk.",
+    )
+    parser.add_argument(
+        "--bundle-dir",
+        default="/tmp",
+        help="Directory for --delete archive bundles. Default: /tmp",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --delete, print the plan without creating an archive or deleting files.",
+    )
+    parser.add_argument(
+        "--yes",
+        "-y",
+        action="store_true",
+        help="With --delete, do not ask for interactive confirmation.",
     )
     parser.add_argument(
         "--log-level",
@@ -126,6 +153,46 @@ def main(argv: Optional[List[str]] = None) -> int:
         manifests = _manifest_paths(resolver, args.manifest_file)
         if not manifests:
             parser.exit(1, f"No manifest*.yaml or manifest*.yml files found in {resolver.data_dir}\n")
+
+        if args.delete:
+            plan = resolver.plan_delete_bundle(
+                manifests,
+                include_meta=args.include_meta,
+                include_manifest=True,
+                bundle_dir=args.bundle_dir,
+            )
+
+            print(f"Bundle: {plan.bundle_file}")
+            print("Files to archive and delete:")
+            for path in plan.files_to_delete:
+                print(path)
+
+            if plan.missing_files:
+                print("Missing references:")
+                for path in plan.missing_files:
+                    print(path)
+
+            if plan.skipped_files:
+                print("Skipped non-regular files:")
+                for path in plan.skipped_files:
+                    print(path)
+
+            if args.dry_run:
+                ManifestArchiveDeleter.archive_and_delete(plan, dry_run=True)
+                return 0
+
+            if not args.yes:
+                answer = input("Archive these files and delete originals? [y/N] ").strip().lower()
+                if answer not in {"y", "yes"}:
+                    parser.exit(1, "Aborted. No files were deleted.\n")
+
+            result = ManifestArchiveDeleter.archive_and_delete(plan)
+            print(f"Created bundle: {result.bundle_file}")
+            print(f"Deleted files: {len(result.deleted_files)}")
+            if result.failed_files:
+                print(f"Failed files: {len(result.failed_files)}")
+                return 1
+            return 0
 
         count = 0
         for path in iter_manifest_files(
