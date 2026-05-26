@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from kiwi_scan.manifestwriter import ManifestResolver
+from kiwi_scan.manifestwriter import ManifestResolver, ManifestWriter
 from kiwi_scan.scan.tools import set_valid_logging_level
 
 
@@ -47,9 +47,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="manifestfiles_cli",
         description=(
-            "List files referenced in manifest files.\n\n"
+            "List files referenced in manifest files, or create a small manifest.\n\n"
             "By default, all manifest*.yaml files in KIWI_SCAN_DATA_DIR are scanned, "
-            "and only scan data files are printed."
+            "and only scan data files are printed.\n\n"
+            "Examples:\n"
+            "  manifestfiles_cli --create scan1.txt scan2.txt\n"
+            "  manifestfiles_cli --create scan1.txt --manifest-file manifest_for_spec.yaml"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -61,7 +64,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--manifest-file",
         action="append",
         default=[],
-        help="Explicit manifest file to inspect. Repeatable. Overrides manifest discovery.",
+        help=(
+            "Explicit manifest file to inspect. Repeatable. Overrides manifest discovery. "
+            "With --create, this is the output manifest path and may be used only once."
+        ),
+    )
+    parser.add_argument(
+        "--create",
+        nargs="+",
+        metavar="DATA_FILE",
+        help=(
+            "Create a new small manifest that references the given data files, "
+            "then print the created manifest path."
+        ),
     )
     parser.add_argument(
         "--include-meta",
@@ -91,6 +106,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         set_valid_logging_level(args.log_level)
 
     try:
+        if args.create:
+            if len(args.manifest_file) > 1:
+                parser.error("--create accepts at most one --manifest-file output path")
+
+            manifest_path = ManifestWriter.create_small_manifest(
+                args.create,
+                filename=args.manifest_file[0] if args.manifest_file else None,
+                directory=args.data_dir,
+            )
+            print(manifest_path)
+            return 0
+
         if args.data_dir or not args.manifest_file:
             resolver = ManifestResolver(args.data_dir)
         else:

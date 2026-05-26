@@ -182,6 +182,37 @@ class TestManifestWriter(unittest.TestCase):
             self.assertIn(f"data_file: {os.path.join(os.getcwd(), 'scan.txt')}", data)
             self.assertIn(f"metadata_file: {os.path.join(os.getcwd(), 'scan_meta.txt')}", data)
 
+    def test_create_small_manifest_references_data_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_path = Path(tmpdir) / "scan.txt"
+            manifest_path = Path(tmpdir) / "manifest_for_spec.yaml"
+            state_path = Path(tmpdir) / "active_manifest"
+            data_path.write_text("dummy\n", encoding="utf-8")
+
+            old_state = os.environ.get(ManifestWriter.ENV_MANIFEST_STATE_FILE)
+            os.environ[ManifestWriter.ENV_MANIFEST_STATE_FILE] = str(state_path)
+            try:
+                created = ManifestWriter.create_small_manifest(
+                    [str(data_path)],
+                    filename=str(manifest_path),
+                )
+            finally:
+                if old_state is None:
+                    os.environ.pop(ManifestWriter.ENV_MANIFEST_STATE_FILE, None)
+                else:
+                    os.environ[ManifestWriter.ENV_MANIFEST_STATE_FILE] = old_state
+
+            self.assertEqual(created, str(manifest_path))
+            with manifest_path.open("r", encoding="utf-8") as f:
+                data = yaml.safe_load(f)
+
+            self.assertEqual(len(data["scans"]), 1)
+            scan = data["scans"][0]
+            self.assertEqual(scan["manifest_mode"], "small")
+            self.assertEqual(scan["data_file"], str(data_path))
+            self.assertIsNone(scan["metadata_file"])
+            self.assertNotIn("config", scan)
+
     def test_resolver_falls_back_to_active_manifest(self):
         with tempfile.TemporaryDirectory() as state_dir, tempfile.TemporaryDirectory() as manifest_dir:
             state_file = os.path.join(state_dir, "active_manifest")

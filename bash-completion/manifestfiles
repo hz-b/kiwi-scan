@@ -3,7 +3,7 @@ _manifestfiles()
     local cur prev words cword
     _init_completion || return
 
-    local opts="-h --help --data-dir --manifest-file --include-meta --include-manifest --missing"
+    local opts="-h --help --data-dir --manifest-file --include-meta --include-manifest --missing --create"
 
     case "$prev" in
         --data-dir)
@@ -11,7 +11,11 @@ _manifestfiles()
             return
             ;;
         --manifest-file)
-            _filedir '@(yaml|yml)'
+            _filedir '@(yaml)'
+            return
+            ;;
+        --create)
+            _filedir '@(txt)'
             return
             ;;
     esac

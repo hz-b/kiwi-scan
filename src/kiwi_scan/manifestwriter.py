@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 from importlib.metadata import version, PackageNotFoundError
 import os
 import socket
@@ -167,6 +167,42 @@ class ManifestWriter:
         cls._set_active_manifest(str(path))
         cls.logger.info("Set active manifest: %s", path)
         return str(path)
+
+    @classmethod
+    def create_small_manifest(
+        cls,
+        data_files: Sequence[str],
+        filename: Optional[str] = None,
+        directory: Optional[str] = None,
+        scan_type: Optional[str] = "external",
+    ) -> str:
+        """Create a new small manifest that references existing data files.
+
+        This helper is intended for imported or externally produced scan data
+        where kiwi-scan only needs a compact manifest with file references,
+        for example before converting the data to another format.
+
+        Returns:
+            The created manifest filename.
+        """
+        if not data_files:
+            raise ValueError("At least one data file is required")
+
+        manifest_file = cls.newmanifest(filename=filename, directory=directory)
+        writer = cls(manifest_file)
+
+        for data_file in data_files:
+            path = Path(str(data_file)).expanduser()
+            writer.append_scan_config(
+                config={},
+                scan_type=scan_type,
+                path=str(path.parent) if path.parent != Path("") else None,
+                data_file=str(path),
+                metadata_file=None,
+                mode=cls.MODE_SMALL,
+            )
+
+        return manifest_file
 
     @classmethod
     def _state_file(cls) -> Path:
