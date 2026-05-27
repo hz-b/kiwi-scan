@@ -4,7 +4,6 @@
 import logging
 import threading
 import epics
-import time
 from typing import Optional
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.monitor.base import BaseMonitor
@@ -115,19 +114,15 @@ class CMScan(BaseScan):
             out_threshold=2,
         )
         while True:
-            logging.info("Entered scan loop")
+            logging.debug("run_daq: Entered cm scan loop")
             if self._stop_requested.is_set():
-                logging.info("EXIT: Stop is set.")
                 break
             if self.get_stop_pv() == 1:
-                logging.info("EXIT: Stop PV condition.")
-                break
-
+                break 
             # heartbeat-driven tick plus all configured sync-role updates
             self._arm_sync_controller()
             # self._wait_for_tick_or_timeout(self.sampletime)
             if self._stop_requested.is_set():
-                logging.info("EXIT: Stop is set.")
                 break
             self._fire_triggers("after_point")
             # --------------------------------------- block scan task
@@ -138,15 +133,13 @@ class CMScan(BaseScan):
                 )
             else:
                 if self._stop_requested.wait(self.sampletime):
-                    logging.info("EXIT: Stop is set.")
                     break
             # ---------------------------------------
             if self._stop_requested.is_set():
-                logging.info("EXIT: Stop is set.")
                 break
 
             if self.first_actuator.is_ready():
-                logging.info("EXIT: First actuator is ready.")
+                logging.info("run_daq: First actuator is ready.")
                 break
             # Prefer sync-subscription position; fall back to RBV
             pos = self.first_actuator.rbv
@@ -217,13 +210,12 @@ class CMScan(BaseScan):
                 try:
                     actuator.set_velocity(dim.velocity)
                     logging.info(f"Set velocity of actuator '{name}' to {dim.velocity}")
-                    actuator.move(dim.stop)
+                    actuator.run_move(dim.stop, sync=False, wait_startup=True)
                     logging.info(f"Started actuator '{name}' moving to {dim.stop}")
                 except Exception as e:
                     logging.warning(f"Failed to configure/startup actuator '{name}': {e}")
             self._start_subscriptions()
-            # TODO: Interruptable wait for condition with timeout (startup)
-            time.sleep(0.4)
+
             # 4) DAQ loop on primary actuator
             self.run_daq(monitor)
         finally:

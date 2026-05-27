@@ -37,7 +37,8 @@ class UndulatorViaEPICS(MultiActuator):
 
     def run_move(self,
                  positions: Sequence[float],
-                 sync: bool = True) -> None:
+                 sync: bool = True,
+                 wait_startup: bool = False) -> None:
         if len(positions) != 2:
             raise ValueError("Undulator needs exactly 2 positions")
         gap, shift = positions

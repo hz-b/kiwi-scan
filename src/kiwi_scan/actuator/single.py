@@ -178,13 +178,23 @@ class AbstractActuator(ABC):
         pass
 
     @abstractmethod
-    def run_move(self, position: float, sync: bool = True) -> None:
-        """Move the actuator, optionally waiting until completion."""
+    def run_move(
+        self,
+        position: float,
+        sync: bool = True,
+        wait_startup: bool = False,
+    ) -> None:
+        """Move the actuator, optionally waiting for startup or completion."""
         pass
 
     @abstractmethod
-    def run_rel_move(self, delta: float, sync: bool = True) -> None:
-        """Relative move, optionally waiting until completion."""
+    def run_rel_move(
+        self,
+        delta: float,
+        sync: bool = True,
+        wait_startup: bool = False,
+    ) -> None:
+        """Relative move, optionally waiting for startup or completion."""
         pass
 
     @abstractmethod
@@ -203,6 +213,14 @@ class AbstractActuator(ABC):
     @abstractmethod
     def is_in_position(self, target: float, in_position_band: float) -> bool:
         """Check if readback is within band of target."""
+        pass
+
+    @abstractmethod
+    def wait_for_startup(
+        self,
+        stop_event: Optional[threading.Event] = None,
+    ) -> bool:
+        """Block until actuator motion startup is observed."""
         pass
 
     @abstractmethod

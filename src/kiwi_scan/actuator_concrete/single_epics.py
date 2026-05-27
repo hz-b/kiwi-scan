@@ -358,12 +358,24 @@ class EpicsActuator(AbstractActuator):
         logging.info(f"[{self.pvname}] rel-move fallback: rbv={cur} delta={delta} -> target={target}")
         self._issue_move(target)
 
-    def run_move(self, position: float, sync: bool = True) -> None:
+    def run_move(
+        self,
+        position: float,
+        sync: bool = True,
+        wait_startup: bool = False,
+    ) -> None:
         self.move(position)
         if sync:
             self.wait_until_done(position)
+        elif wait_startup:
+            self.wait_for_startup()
 
-    def run_rel_move(self, delta: float, sync: bool = True) -> None:
+    def run_rel_move(
+        self,
+        delta: float,
+        sync: bool = True,
+        wait_startup: bool = False,
+    ) -> None:
         """Relative move; if we fall back to absolute moves, we wait on the computed target."""
         if self.rel_pv is not None:
             cur = self.rbv
@@ -378,6 +390,8 @@ class EpicsActuator(AbstractActuator):
                 except Exception:
                     self.wait_for_startup_and_done()
                     self.dwell()
+            elif wait_startup:
+                self.wait_for_startup()
             return
 
         cur = self.rbv
@@ -388,6 +402,8 @@ class EpicsActuator(AbstractActuator):
         self._issue_move(target)
         if sync:
             self.wait_until_done(target)
+        elif wait_startup:
+            self.wait_for_startup()
 
     def rel_move(self, delta: float) -> None:
         self._issue_rel_move(delta)
@@ -538,8 +554,24 @@ class EpicsActuator(AbstractActuator):
     def dwell(self) -> None:
         time.sleep(self.dwell_time)
 
-    # TODO: wait for startup 
-    def wait_for_startup_and_done(self, stop_event: Optional[threading.Event] = None) -> None:
+    def wait_for_startup(
+        self,
+        stop_event: Optional[threading.Event] = None,
+    ) -> bool:
+        """Wait until actuator motion has started.
+
+        Returns True if startup was observed. Returns False on timeout or when
+        stop_event is set. If no status PV is configured, startup cannot be
+        observed and the method returns True after logging a debug message.
+        """
+        if self._stop_requested(stop_event):
+            logging.info(f"[{self.pvname}] startup wait aborted before start")
+            return False
+
+        if not self.status_pv:
+            logging.debug(f"[{self.pvname}] no status PV configured; cannot observe startup")
+            return True
+
         logging.debug(f"[{self.pvname}] waiting for move to start")
         started = self._wait_for_condition(
             self.is_moving,
@@ -550,13 +582,23 @@ class EpicsActuator(AbstractActuator):
             ),
             stop_event=stop_event,
         )
-        if stop_event is not None and stop_event.is_set():
-            return
+
+        if self._stop_requested(stop_event):
+            logging.info(f"[{self.pvname}] startup wait aborted")
+            return False
+
         if not started:
             logging.warning(
                 f"[{self.pvname}] move start was not observed; "
                 "this may be a fast move, status delay, or short disconnect"
             )
+
+        return bool(started)
+
+    def wait_for_startup_and_done(self, stop_event: Optional[threading.Event] = None) -> None:
+        self.wait_for_startup(stop_event=stop_event)
+        if stop_event is not None and stop_event.is_set():
+            return
 
         logging.debug(f"[{self.pvname}] waiting for ready state")
         # TODO: Add configurable timeout

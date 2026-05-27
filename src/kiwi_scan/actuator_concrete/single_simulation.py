@@ -313,17 +313,31 @@ class SimulatedActuator(AbstractActuator):
         target = float(self.rbv or 0.0) + float(delta)
         self.move(target)
 
-    def run_move(self, position: float, sync: bool = True) -> None:
-        """Move and optionally wait until done."""
+    def run_move(
+        self,
+        position: float,
+        sync: bool = True,
+        wait_startup: bool = False,
+    ) -> None:
+        """Move and optionally wait for startup or completion."""
         self.move(position)
         if sync:
             self.wait_until_done(position)
+        elif wait_startup:
+            self.wait_for_startup()
 
-    def run_rel_move(self, delta: float, sync: bool = True) -> None:
+    def run_rel_move(
+        self,
+        delta: float,
+        sync: bool = True,
+        wait_startup: bool = False,
+    ) -> None:
         target = float(self.rbv or 0.0) + float(delta)
         self.move(target)
         if sync:
             self.wait_until_done(target)
+        elif wait_startup:
+            self.wait_for_startup()
 
     def jog(self, velocity: float, sync: bool = True) -> None:
         """Simulate a jog by a single step equal to velocity."""
@@ -342,6 +356,17 @@ class SimulatedActuator(AbstractActuator):
 
     def is_in_position(self, target: float, in_position_band: float) -> bool:
         return abs(self._rbv - target) <= in_position_band
+
+    def wait_for_startup(self, stop_event: Optional[threading.Event] = None) -> bool:
+        """Wait until simulated motion has started."""
+        start = time.monotonic()
+        while not self._moving:
+            if stop_event is not None and stop_event.is_set():
+                return False
+            if time.monotonic() - start > self.startup_timeout:
+                return False
+            time.sleep(0.01)
+        return True
 
     def wait_until_done(self, position: float) -> None:
         """Wait until the simulated move completes."""

@@ -7,6 +7,7 @@ from kiwi_scan.actuator.single import AbstractActuator
 from kiwi_scan.datamodels import ActuatorConfig
 
 import logging
+import threading
 import time
 from typing import Sequence, Optional, Any
 
@@ -67,7 +68,12 @@ class MultiActuator(AbstractActuator):
         """Non-blocking multi-axis relative move."""
         self.run_rel_move(deltas, sync=False)
 
-    def run_move(self, positions: Sequence[float], sync: bool = True) -> None:
+    def run_move(
+        self,
+        positions: Sequence[float],
+        sync: bool = True,
+        wait_startup: bool = False,
+    ) -> None:
         if len(positions) != len(self._axes):
             raise ValueError(f"Expected {len(self._axes)} positions, got {len(positions)}")
         # issue each child move without blocking
@@ -77,8 +83,15 @@ class MultiActuator(AbstractActuator):
             # wait until all axes are ready
             while not self.is_ready():
                 time.sleep(0.01)
+        elif wait_startup:
+            self.wait_for_startup()
 
-    def run_rel_move(self, deltas: Sequence[float], sync: bool = True) -> None:
+    def run_rel_move(
+        self,
+        deltas: Sequence[float],
+        sync: bool = True,
+        wait_startup: bool = False,
+    ) -> None:
         if len(deltas) != len(self._axes):
             raise ValueError(f"Expected {len(self._axes)} deltas, got {len(deltas)}")
         # issue each child relative move without blocking
@@ -87,6 +100,8 @@ class MultiActuator(AbstractActuator):
         if sync:
             while not self.is_ready():
                 time.sleep(0.01)
+        elif wait_startup:
+            self.wait_for_startup()
 
     def jog(self, velocities: Sequence[float], sync: bool = True) -> None:
         if len(velocities) != len(self._axes):
@@ -108,6 +123,17 @@ class MultiActuator(AbstractActuator):
     def is_in_position(self, targets: Sequence[float], in_position_band: Optional[float] = None) -> bool:
         band = in_position_band if in_position_band is not None else self.in_position_band
         return all(ax.is_in_position(t, band) for ax, t in zip(self._axes, targets))
+
+    def wait_for_startup(self, stop_event: Optional[threading.Event] = None) -> bool:
+        """Wait until every child actuator reports observed startup."""
+        ok = True
+        for ax in self._axes:
+            if stop_event is not None and stop_event.is_set():
+                return False
+            wait = getattr(ax, "wait_for_startup", None)
+            if callable(wait):
+                ok = bool(wait(stop_event=stop_event)) and ok
+        return ok
 
     def wait_until_done(self, positions: Optional[Sequence[float]] = None) -> None:
         # wait until all axes have stopped, single actuators provide in position band etc.
