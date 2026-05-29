@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any, Callable, Dict, Optional, Sequence
 
 from kiwi_scan.datamodels import ScanDimension
@@ -18,6 +19,23 @@ from .controller import ScanIOCController
 from .datamodels import DataPVSpec, ScanIOCStatus
 
 logger = logging.getLogger(__name__)
+
+_EPICS_STRING_VALUE_MAX_BYTES = 39
+
+
+def _fit_epics_string(value: Any, *, max_bytes: int = _EPICS_STRING_VALUE_MAX_BYTES) -> str:
+    """Return a string that fits into string records."""
+    text = "" if value is None else str(value)
+    raw = text.encode("utf-8")
+    if len(raw) <= max_bytes:
+        return text
+    return raw[:max_bytes].decode("utf-8", "ignore")
+
+def _output_file_record_value(path: str) -> str:
+    """Return the short value of outputfile."""
+    if not path:
+        return ""
+    return _fit_epics_string(os.path.basename(str(path)))
 
 def _load_builder_module() -> Any:
     try:
@@ -28,7 +46,6 @@ def _load_builder_module() -> Any:
             "Install kiwi-scan[ioc]."
         ) from exc
     return builder
-
 
 def _load_dispatcher() -> Any:
     try:
@@ -378,8 +395,8 @@ class GenericScanIOC():
         self._publish_counter += 1
         status = int(self.controller.status)
         busy = self.controller.get_busy()
-        message = str(self.controller.message or "")
-        output_file = self.controller.get_output_file()
+        message = _fit_epics_string(self.controller.message or "")
+        output_file = _output_file_record_value(self.controller.get_output_file())
         data_writing = bool(self.controller.get_data_writing_enabled())
         pos = self.controller.get_position(default=float("nan"))
 
@@ -399,7 +416,7 @@ class GenericScanIOC():
             self._safe_set(record, spec.cast(raw))
 
         if self._publish_counter == 1 or self._publish_counter % 30 == 0 or busy:
-            logger.debug(
+            logger.info(
                 "Published IOC state #%d status=%s busy=%s pos=%s data_writing=%s output_file=%s message=%s",
                 self._publish_counter,
                 ScanIOCStatus(status).name if status in [s.value for s in ScanIOCStatus] else status,

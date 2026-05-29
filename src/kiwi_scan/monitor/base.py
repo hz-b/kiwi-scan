@@ -5,7 +5,7 @@ from abc import ABC, abstractmethod
 
 class BaseMonitor(ABC):
     @abstractmethod
-    def start(self, signal_names):
+    def start(self, signal_names, headers=None):
         """Handle a new data point."""
         pass
     

@@ -110,7 +110,7 @@ class CMScan(BaseScan):
         range_exit = RangeExitDetector(
             self._start,
             self._stop,
-            eps=0.001,   # TODO: could be taken from actuator backlash?
+            eps=0.001,   # TODO: parameter to overwrite default 
             out_threshold=2,
         )
         while True:
@@ -158,11 +158,11 @@ class CMScan(BaseScan):
                 plugin_data += plugin.on_scan_point(idx, pos)
             vals = vals + plugin_data
 
-            self.save_to_file(pos, vals, self.include_timestamps)
+            monitor_values = self.save_to_file(pos, vals, self.include_timestamps)
             # >>> Notify monitor/plotter
             if monitor is not None:
-                logging.debug(f"{vals}")
-                monitor.update(vals)
+                logging.debug(f"{monitor_values}")
+                monitor.update(monitor_values)
             idx += 1
 
     # ---------------- cm scan logic --------------------

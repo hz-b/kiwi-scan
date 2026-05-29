@@ -67,11 +67,13 @@ def _describe_dimensions(dimensions: Sequence[ScanDimension]) -> str:
 
 
 class ScanIOCController:
-    """Pure-Python controller for a generic scan IOC.
+    """
+    The controller manages scan execution based on a template :class:`ScanConfig`.
+    For each scan run, it creates a copy of the base configuration, updates it with 
+    scan dimensions provided by the IOC, and delegates execution to the public scan API.
 
-    The controller loads one base :class:`ScanConfig`, creates a fresh deep copy
-    for each run, injects IOC-provided scan dimensions, and delegates execution
-    to the public scan API. It deliberately knows nothing about EPICS records.
+    This controller is used by the EPICS interface defined in
+    ``generic_scan_ioc.py``.
     """
 
     def __init__(
@@ -148,7 +150,7 @@ class ScanIOCController:
             ) from exc
 
     def reload_config(self) -> None:
-        """Reload the base configuration for future scans."""
+        """TODO: Reload the base configuration."""
         with self._lock:
             if self.get_busy():
                 raise RuntimeError("cannot reload config while a scan is running")
@@ -226,10 +228,9 @@ class ScanIOCController:
         return scan
 
     def start(self, dimensions: Sequence[ScanDimension]) -> Any:
-        """Create the scan object for a new run.
-
-        Execution is intentionally separate so the IOC adapter can run the
-        blocking ``scan.execute()`` call in an executor thread.
+        """
+        Create the scan object for a new run.
+        The scan is executed in a worker thread to avoid blocking the IOC main task.
         """
         with self._lock:
             if self.scan is not None and bool(getattr(self.scan, "busy", False)):
@@ -306,8 +307,7 @@ class ScanIOCController:
             raise
 
     # ------------------------------------------------------------------
-    # Public scan API wrappers
-    # ------------------------------------------------------------------
+    # Safe public scan API wrappers
 
     def get_busy(self) -> bool:
         with self._lock:
@@ -343,9 +343,9 @@ class ScanIOCController:
         with self._lock:
             scan = self.scan
         if scan is None:
-            return ""
+            return "None"
         try:
-            return scan.get_output_file() or ""
+            return scan.get_output_file() or "unknown"
         except Exception:
             logger.debug("Failed to read output file", exc_info=True)
             return ""

@@ -3,18 +3,15 @@
 
 from __future__ import annotations
 
-import csv
-import json
 import logging
-import sys
-from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
 from kiwi_scan.monitor.base import BaseMonitor
+from kiwi_scan.monitor.row_format import MonitorRowFormatter, MonitorValueFormatter
 
 
 class PrintMonitor(BaseMonitor):
-    """stdout monitor for daetector values.
+    """stdout monitor for detector, subscription and plugin values.
 
     Writes a clean machine-readable data stream.
 
@@ -25,162 +22,70 @@ class PrintMonitor(BaseMonitor):
       float_format: str
     """
 
-    SUPPORTED_FORMATS = {"tsv", "csv", "json"}
-    DEFAULT_FORMAT = "tsv"
-    DEFAULT_FLOAT_FORMAT = ".12e"
+    SUPPORTED_FORMATS = MonitorRowFormatter.SUPPORTED_FORMATS
+    DEFAULT_FORMAT = MonitorRowFormatter.DEFAULT_FORMAT
+    DEFAULT_FLOAT_FORMAT = MonitorValueFormatter.DEFAULT_FLOAT_FORMAT
 
     def __init__(self, parameters: Optional[Dict[str, Any]] = None):
         self.parameters = parameters or {}
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        # self.logger.info(f"{self.parameters}")
 
-        self.format = str(self.parameters.get("format", self.DEFAULT_FORMAT)).lower()
-        self.include_timestamps = bool(self.parameters.get("include_timestamps", False))
-        self.include_header = bool(self.parameters.get("include_header", True))
-        self.float_format = str(self.parameters.get("float_format", self.DEFAULT_FLOAT_FORMAT))
-
+        print_cfg = self._print_config(self.parameters)
+        self._print_enabled = bool(print_cfg.pop("enabled", True))
+        self._formatter_parameters = dict(print_cfg)
+        self._formatter = MonitorRowFormatter(self._formatter_parameters, logger=self.logger)
         self.signal_names: List[str] = []
-        self._writer: Optional[csv.writer] = None
-        self._out = sys.stdout
-        self._rows_written = 0
+        self.headers: List[str] = []
 
-        self.logger.info( "Initialized PrintMonitor format=%s include_timestamps=%s include_header=%s float_format=%s",
-            self.format, self.include_timestamps, self.include_header, self.float_format)
+        self.logger.info(
+            "Initialized PrintMonitor enabled=%s format=%s include_timestamps=%s include_header=%s float_format=%s",
+            self._print_enabled,
+            self._formatter.format,
+            self._formatter.include_timestamps,
+            self._formatter.include_header,
+            self._formatter.value_formatter.float_format,
+        )
 
-    def start(self, signal_names: Iterable[str]) -> None:
+    @staticmethod
+    def _print_config(parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Return the nested monitor.print configuration block."""
+        raw = parameters.get("print", {})
+        if raw is False:
+            return {"enabled": False}
+        if raw is None:
+            return {}
+        if not isinstance(raw, dict):
+            raise ValueError("monitor.print must be a mapping or false")
+        return dict(raw)
+
+    def start(self, signal_names: Iterable[str], headers: Optional[Iterable[str]] = None) -> None:
         self.signal_names = list(signal_names)
-        self._rows_written = 0
+        self.headers = list(headers) if headers is not None else list(self.signal_names)
+        self.logger.debug(
+            "Starting PrintMonitor for signals=%r headers=%r enabled=%s",
+            self.signal_names,
+            self.headers,
+            self._print_enabled,
+        )
 
-        self.logger.debug("Starting PrintMonitor for signals=%r", self.signal_names)
+        formatter_parameters = dict(self._formatter_parameters)
+        if headers is not None:
+            formatter_parameters["include_timestamps"] = False
+            self._formatter = MonitorRowFormatter(formatter_parameters, logger=self.logger)
 
-        if self.format not in self.SUPPORTED_FORMATS:
-            self.logger.warning(
-                "Unsupported PrintMonitor format requested: %r. Falling back to default format %r. Supported formats are: %s",
-                self.format, self.DEFAULT_FORMAT, ", ".join(sorted(self.SUPPORTED_FORMATS)))
-            self.format = self.DEFAULT_FORMAT
-
-        if self.format in ("tsv", "csv"):
-            delimiter = "\t" if self.format == "tsv" else ","
-            self._writer = csv.writer(self._out, delimiter=delimiter, lineterminator="\n")
-            self.logger.debug("Configured delimited PrintMonitor writer delimiter=%r", delimiter)
-
-            if self.include_header:
-                headers = self._headers()
-                self.logger.debug("Writing PrintMonitor header: %r", headers)
-                self._writer.writerow(headers)
-                self._out.flush()
-        else:
-            # no separate header
-            self.logger.debug("Configured PrintMonitor for JSON Lines output")
+        if self._print_enabled:
+            self._formatter.start(self.headers)
 
     def update(self, vals: List[Any]) -> None:
-        self.logger.debug( "PrintMonitor update received %d values for %d signals",
-            len(vals), len(self.signal_names))
-
-        if len(vals) != len(self.signal_names):
-            self.logger.debug(
-                "Value/header count mismatch: values=%d signals=%d. " "Using available order and fallback names for extra values.",
-                len(vals), len(self.signal_names))
-
-        if self.format in ("tsv", "csv"):
-            if self._writer is None:
-                self.logger.error("PrintMonitor writer was not initialized before update")
-                return
-
-            row = self._row(vals)
-            self.logger.debug("Writing PrintMonitor row %d: %r", self._rows_written + 1, row)
-            self._writer.writerow(row)
-            self._out.flush()
-            self._rows_written += 1
+        self.logger.debug( "PrintMonitor update received %d values for %d signals", len(vals), len(self.signal_names))
+        if not self._print_enabled:
             return
-
-        if self.format == "json":
-            obj = self._json_obj(vals)
-            self.logger.debug(
-                "Writing PrintMonitor JSON object %d with keys=%r",
-                self._rows_written + 1,
-                list(obj.keys()),
-            )
-            print(json.dumps(obj, ensure_ascii=False, default=str), file=self._out, flush=True)
-            self._rows_written += 1
-            return
-
-        self.logger.error("Unsupported PrintMonitor format at update time: %s", self.format)
+        self._formatter.write(vals)
 
     def loop(self) -> None:
-        self.logger.debug("PrintMonitor loop() called; no background loop required")
+        self.logger.debug("PrintMonitor loop(): no background loop required")
         return
 
     def close(self) -> None:
-        # Do not print a final Python list representation: stdout is the data stream.
-        self.logger.debug("Closing PrintMonitor after writing %d rows", self._rows_written)
-        try:
-            self._out.flush()
-        except Exception:
-            self.logger.info("Failed to flush PrintMonitor output stream", exc_info=True)
-
-    def _headers(self) -> List[str]:
-        headers: List[str] = []
-        for name in self.signal_names:
-            headers.append(name)
-            if self.include_timestamps:
-                headers.append(f"TS-ISO8601-{name}")
-        return headers
-
-    def _row(self, vals: List[Any]) -> List[str]:
-        row: List[str] = []
-        for item in vals:
-            row.append(self._format_value(self._extract_value(item)))
-            if self.include_timestamps:
-                row.append(self._format_timestamp(self._extract_timestamp(item)))
-        return row
-
-    def _json_obj(self, vals: List[Any]) -> Dict[str, Any]:
-        obj: Dict[str, Any] = {}
-        for idx, item in enumerate(vals):
-            name = self.signal_names[idx] if idx < len(self.signal_names) else f"col{idx}"
-            obj[name] = self._extract_value(item)
-            if self.include_timestamps:
-                obj[f"TS-ISO8601-{name}"] = self._format_timestamp(
-                    self._extract_timestamp(item)
-                )
-        return obj
-
-    def _extract_value(self, item: Any) -> Any:
-        if item is None:
-            self.logger.debug("Encountered None monitor item; writing empty value")
-            return None
-
-        if isinstance(item, dict):
-            if "value" not in item:
-                self.logger.debug( "Monitor item dict has no 'value' key; item keys=%r", list(item.keys()))
-            return item.get("value")
-
-        self.logger.debug("Monitor item is not a dict; using raw item value: %r", item)
-        return item
-
-    def _extract_timestamp(self, item: Any) -> Any:
-        if not isinstance(item, dict):
-            return None
-        return item.get("timestamp")
-
-    def _format_value(self, value: Any) -> str:
-        if value is None:
-            return ""
-
-        try:
-            return format(float(value), self.float_format)
-        except (TypeError, ValueError):
-            self.logger.debug("Value is not float-convertible; writing as string: %r", value)
-            return str(value)
-
-    def _format_timestamp(self, ts: Any) -> str:
-        if ts is None:
-            return ""
-
-        try:
-            return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
-        except (TypeError, ValueError, OSError, OverflowError):
-            self.logger.debug( "Timestamp is not POSIX-float-convertible; writing as string: %r", ts)
-            return str(ts)
-
+        self.logger.debug( "Closing PrintMonitor after writing %d rows", self._formatter.rows_written)
+        self._formatter.close()

@@ -11,12 +11,14 @@ Results are written to timestamped text files. Optional metadata sidecars can re
 ## Overview of Features
 
 - **YAML configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots and plugin parameters.
-- **Pluggable scan engines** such as `linear`, `approach`, `poll`, and `cm`, plus externally registered scan types.
+- **Pluggable scan engines** such as `linear`, `approach`, `poll`, `para`, and `cm`, plus externally registered scan types.
 - **Pluggable runtime extensions** Plugins hook into scan logic and events that can add computed columns or act to monitor events.
 - **EPICS integration** via pyepics wrapper for or a **simulated actuator backend** for tests and development.
 - **Structured outputs** including the main scan file, optional metadata sidecar logging and waveform support, and post-mortem plotting tools.
 - **Event handling** Subscriptions route monitored events into defined roles.
 - **Trigger** Triggers allow actions e.g. before, or after scan points or on monitor events.
+- **IOC** pythonSiftIOC based generic scan IOC
+- **Monitors** flexible machine readable formatted text output and live plotting tool
 
 ## Installation
 
@@ -138,6 +140,10 @@ actuator_runner.py   # command-line tool for direct actuator operation
 ```
 A more detailed description can be found [here](https://github.com/hz-b/kiwi-scan/blob/master/docs/actuator.md). 
 
+## Monitors
+
+For details on the print and live queue plotter monitors, including output formats, YAML configuration, and multi-panel plotting, see [monitor.md](https://github.com/hz-b/kiwi-scan/blob/master/docs/monitor.md).
+
 ## Public API
 
 `kiwi-scan` can be embedded directly as a Python library, for example inside a Python IOC or another beamline control application.
@@ -155,6 +161,10 @@ For detailed description check the plugin user and developer documentation:
 
 [Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) — plugin API, plugin discovery, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
 
+## IOC
+
+For running kiwi-scan as a generic EPICS soft IOC  [ioc.md]((https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md).
+
 ## Command-line tools
 
 After installation, the command line tools are available:
@@ -165,6 +175,8 @@ After installation, the command line tools are available:
 - `pollstats_cli` - online statistics without scan from YAML config
 - `scantrigger_cli`- execute triggers from YAML config
 - `manifestfiles` - a simple tool to list files referenced in manifests
+- `softioc`- run generic scan IOC based on pythonSoftIOC
+
 Examples:
 
 ```bash
@@ -174,6 +186,7 @@ scanplotter_cli --help
 scantrigger_cli --help
 pollstats_cli --help
 manifestfiles --help
+scanioc --help
 ```
 See the [Makefile helpers](#makefile-helpers) section for information how to install the bash completion scripts.
 

@@ -552,6 +552,102 @@ class BaseScan(ScanABC):
                 logging.exception("Failed to read data column provider values from %s", provider)
         return values
 
+    def _build_detector_headers(self, include_timestamps: bool) -> List[str]:
+        """Return detector column headers in file order."""
+        if include_timestamps:
+            return [
+                item
+                for pv in self.detector_pvs
+                for item in (pv.pvname, f"TS-ISO8601-{pv.pvname}")
+            ]
+        return [pv.pvname for pv in self.detector_pvs]
+
+    def _build_plugin_headers(self, include_timestamps: bool) -> List[str]:
+        """Return plugin column headers in file order."""
+        plugin_headers: List[str] = []
+        for plugin in self.plugins:
+            plugin_headers += plugin.get_headers(include_timestamps)
+        return plugin_headers
+
+    def build_monitor_signal_names(self) -> List[str]:
+        """Return the logical value columns consumed by monitor.update()."""
+        signal_names: List[str] = [pv.pvname for pv in self.detector_pvs]
+        for plugin in self.plugins:
+            signal_names += plugin.get_headers(False)
+        logging.debug("Built monitor signal names: %s", signal_names)
+        return signal_names
+
+    def build_output_headers(self, include_timestamps: Optional[bool] = None) -> List[str]:
+        """Build the full scan-file header list in one place.
+
+        The returned list matches the order written by
+        :meth:`write_header_to_output_file`.
+        """
+        if include_timestamps is None:
+            include_timestamps = self.include_timestamps
+
+        headers: List[str] = ["Position"]
+
+        provider_headers = self._get_data_column_headers(include_timestamps)
+        if provider_headers:
+            headers += provider_headers
+
+        headers += ["TS-ISO8601"]
+        headers += self._build_detector_headers(include_timestamps)
+        headers += self._build_plugin_headers(include_timestamps)
+
+        logging.debug("Built output headers: %s", headers)
+        return headers
+
+    def _timestamp_to_iso(self, timestamp: Any) -> str:
+        """Return a scan-output ISO timestamp string for a POSIX timestamp."""
+        if timestamp is None:
+            return ""
+        try:
+            return datetime.fromtimestamp(float(timestamp)).astimezone().isoformat()
+        except (TypeError, ValueError, OSError, OverflowError):
+            return str(timestamp)
+
+    def build_output_row_values(
+        self,
+        position: Any,
+        detector_values: List[Any],
+        include_timestamps: Optional[bool] = None,
+        *,
+        line_ts_iso: Optional[str] = None,
+        provider_values: Optional[List[Any]] = None,
+    ) -> List[Any]:
+        """Build one concrete scan row in the same order as build_output_headers().
+
+        The returned row is intentionally unformatted. The scan-file writer
+        applies its normal text formatting, while monitors can use the same
+        values with their own formatter.
+        """
+        if include_timestamps is None:
+            include_timestamps = self.include_timestamps
+        if line_ts_iso is None:
+            line_ts_iso = datetime.now().astimezone().isoformat()
+        if provider_values is None:
+            provider_values = self._get_data_column_values()
+
+        row: List[Any] = [position]
+        row += list(provider_values or [])
+        row.append(line_ts_iso)
+
+        for item in detector_values or []:
+            if isinstance(item, dict):
+                value = item.get("value")
+                timestamp = item.get("timestamp")
+            else:
+                value = item
+                timestamp = None
+
+            row.append(value)
+            if include_timestamps:
+                row.append(self._timestamp_to_iso(timestamp))
+
+        return row
+
     def _update_data_column_provider_cache(
         self,
         last: Dict[str, Any],
@@ -585,19 +681,21 @@ class BaseScan(ScanABC):
 
     def save_to_file(self, position, detector_values, include_timestamps=True):
         """
-        Writes one line:
-          position  [provider columns]  line_timestamp_utc  det_value [det_timestamp_utc] ...
-        Args:
-            position (float): The current position of the actuator.
-            detector_values (list): The list of dictionaries containing detector readings and metadata.
-            include_timestamps (bool): Whether to include timestamps in the output. Defaults to True.
+        Write one scan row and return the same concrete row values.
         """
         logging.debug(f"Detector values to be written: {detector_values}")
 
         # Independent per-line timestamp time zone aware (ISO 8601)
         line_ts_iso = datetime.now().astimezone().isoformat()
-
         provider_values = self._get_data_column_values()
+        row_values = self.build_output_row_values(
+            position,
+            detector_values,
+            include_timestamps,
+            line_ts_iso=line_ts_iso,
+            provider_values=provider_values,
+        )
+
         # Update in-memory last-point cache (used by get_value)
         try:
             self._update_last_point_cache(
@@ -611,36 +709,19 @@ class BaseScan(ScanABC):
 
         if not self.get_data_writing_enabled():
             logging.debug("Skipping data write because data writing is disabled")
-            return
+            return row_values
 
         if not self._data_header_written:
             self.write_header_to_output_file()
 
         # TODO: output format from cfg (as in print monitor)
         with open(self.output_file, "a", encoding="utf-8") as file:
-            parts = []
-
-            # Position + provider columns + row timestamp
-            parts.append(self._format_scan_value(position))
-            for value in provider_values:
-                parts.append(self._format_scan_value(value))
-            parts.append(line_ts_iso)
-
-            # Detector values (+ optional detector timestamps)
-            for det in detector_values:
-                value = det.get("value")
-                parts.append(self._format_scan_value(value))
-
-                if include_timestamps:
-                    ts = det.get("timestamp")
-                    if ts is None:
-                        parts.append("")
-                    else:
-                        parts.append(datetime.fromtimestamp(ts).astimezone().isoformat())
-
-            line = "\t".join(parts) + "\n"
+            line = "\t".join(self._format_scan_value(value) for value in row_values) + "\n"
             logging.debug(f"Save line to file:{line}")
             file.write(line)
+
+        return row_values
+
 
     def _update_last_point_cache(
         self,
@@ -773,37 +854,7 @@ class BaseScan(ScanABC):
         if output_file is None:
             return None
 
-        detector_headers = [pv.pvname for pv in self.detector_pvs]
-
-        # Base columns always present
-        base_headers = ["Position"]
-
-        provider_headers = self._get_data_column_headers(self.include_timestamps)
-        if provider_headers:
-            base_headers += provider_headers
-        
-        # Scan-point timestamp (one per row)
-        base_headers += ["TS-ISO8601"]  # scan_point_timestamp in ISO8601
-
-        # Detector columns
-        if self.include_timestamps:
-            det_cols = [
-                item
-                for pv in self.detector_pvs
-                for item in (pv.pvname, "TS-ISO8601-" + pv.pvname)
-            ]
-            headers = base_headers + det_cols
-        else:
-            headers = base_headers + detector_headers
-
-        logging.debug(f"headers {headers}")
-
-        # Plugin headers
-        plugin_headers = []
-        for plugin in self.plugins:
-            plugin_headers += plugin.get_headers(self.include_timestamps)
-
-        headers += plugin_headers
+        headers = self.build_output_headers(self.include_timestamps)
 
         with open(output_file, "w", encoding="utf-8") as file:
             file.write("\t".join(headers) + "\n")
@@ -923,13 +974,13 @@ class BaseScan(ScanABC):
                         plugin_data = plugin_data + data
                 vals = vals + plugin_data
                 with self._time_block("write:data", idx=idx):
-                    self.save_to_file(pos_snapshot, vals, self.include_timestamps)
+                    monitor_values = self.save_to_file(pos_snapshot, vals, self.include_timestamps)
                 self._position = pos_snapshot 
                 # >>> Notify monitor/plotter
                 with self._time_block("monitor:update", idx=idx):
                     if monitor is not None:
-                        logging.debug(f"{vals}")
-                        monitor.update(vals)
+                        logging.debug(f"{monitor_values}")
+                        monitor.update(monitor_values)
 
                 # 5) abort if needed
                 if self.get_stop_pv() == 1:
@@ -961,13 +1012,10 @@ class BaseScan(ScanABC):
             logging.debug("Data writer disabled, not added to manifest")
         
         monitor = create_monitor(self.cfg)
-        # Monitor columns: detector PVs + plugin headers
-        plugin_headers = []
-        for plugin in self.plugins:
-            plugin_headers += plugin.get_headers(self.include_timestamps)
+        monitor_headers = self.build_output_headers(self.include_timestamps)
         if monitor is not None:
             logging.debug("Starting monitor")
-            monitor.start(self.cfg.detector_pvs + plugin_headers)
+            monitor.start(monitor_headers, headers=monitor_headers)
 
         def _run_scan():
             try:

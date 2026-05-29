@@ -6,6 +6,44 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## Added
+
+- Added a generic **pythonSoftIOC-based scan IOC** with unit tests.
+    - New `scanioc` command-line tool for exposing kiwi-scan scans as EPICS records.
+    - IOC controller API separated from the softIOC
+    - Supports publishing scan state, position, output file, and arbitrary scan values as EPICS PVs.
+    - Unit tests.
+- Added **actuator startup wait support** for continuous scans.
+    - New actuator startup detection.
+    - Improves synchronization of data acquisition with continuously moving devices.
+- Added **manifest archive/delete planning API**.
+    - `ManifestResolver` can now plan deletion bundles including referenced scan and metadata files.
+    - Archive-before-delete workflows.
+    - CLI support.
+- Added `manifestfiles_cli --create`.
+    - Generates compact ("small") manifest files referencing existing scan data files.
+    - Useful for external data import workflows and format conversion tools such as SPEC export (unpublished yet).
+
+## Changed
+
+- Refactored monitor infrastructure with a shared formatting layer.
+    - Introduced `MonitorRowFormatter` and `MonitorValueFormatter` shared by print and plotting monitors.
+    - Identical formatting and output behavior across monitor implementations.
+- Enhanced **QueuePlotterMonitor**.
+    - Supports multiple independent live plot panels from YAML configuration.
+    - Supports plotting multiple Y channels in a single panel.
+    - Can optionally emit the same machine-readable output stream as the PrintMonitor.
+- Monitor configuration format.
+    - Print and plot monitor settings are now grouped under the common `monitor:` configuration block.
+
+## Fixed
+
+- Fixed CM scan handling of actuator backlash and continuous-motion startup behavior.
+    - Improved scan range entry/exit detection when backlash compensation is used.
+    - Added startup ramp before DAQ processing begins.
+- Fixed cleanup of original actuator velocities in CM scans.
+    - Original velocities are now restored reliably when a scan finishes or is stopped via `scan.stop()` / Ctrl+C.
+
 ---
 
 ## [0.3.0] - 2026-05-22

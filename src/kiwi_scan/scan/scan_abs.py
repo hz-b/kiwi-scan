@@ -84,6 +84,7 @@ class ScanABC(ABC):
           - 'Position' or other base headers
           - detector PV name (e.g. 'BL:DET:SIG')
           - plugin header (e.g. 'ControllerSetpoint')
+          - column from column provider
           - timestamp columns (e.g. 'TS-ISO8601', 'TS-ISO8601-<PV>', 'TS-<PluginHeader>')
         If with_metadata=True, return the full stored structure if available.
         """
