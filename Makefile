@@ -11,7 +11,8 @@ SCRIPTS = \
     scanplotter_cli \
     scantrigger_cli \
     pollstats_cli \
-    manifestfiles
+    manifestfiles \
+    scanioc
 
 SCRIPT_PATHS = $(foreach script,$(SCRIPTS),$(BASH_COMPLETION_DIR)/$(script))
 

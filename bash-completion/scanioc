@@ -1,0 +1,91 @@
+_scanioc_config_names()
+{
+    local config_dir="${KIWI_SCAN_CONFIG_DIR:-}"
+
+    if [[ -n "$config_dir" && -d "$config_dir" ]]; then
+        compgen -W "$(find "$config_dir" -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -printf '%f\n' 2>/dev/null | sed -E 's/\.ya?ml$//' | sort)" -- "$1"
+        return
+    fi
+
+    # Fallback list from the observed scanioc --help output.
+    compgen -W "cm mono monocm sim" -- "$1"
+}
+
+_scanioc()
+{
+    local cur prev words cword
+    _init_completion || return
+
+    local opts="
+        -h --help
+        --prefix
+        --scan-type --scan_type
+        --config
+        --config-file
+        --config-dir
+        --data-dir
+        --replace
+        --data-pv
+        --publish-period
+        --log-level
+    "
+
+    local scan_types="approach cm linear para poll"
+    local log_levels="0 1 2 3 4 5"
+    local data_types="float int str bool"
+
+    case "$prev" in
+        --scan-type|--scan_type)
+            COMPREPLY=( $(compgen -W "$scan_types" -- "$cur") )
+            return
+            ;;
+        --config)
+            COMPREPLY=( $(_scanioc_config_names "$cur") )
+            return
+            ;;
+        --config-file)
+            _filedir '@(yaml|yml)'
+            return
+            ;;
+        --config-dir|--data-dir)
+            _filedir -d
+            return
+            ;;
+        --log-level)
+            COMPREPLY=( $(compgen -W "$log_levels" -- "$cur") )
+            return
+            ;;
+        --publish-period)
+            COMPREPLY=()
+            return
+            ;;
+        --prefix)
+            COMPREPLY=()
+            return
+            ;;
+        --replace)
+            COMPREPLY=()
+            return
+            ;;
+        --data-pv)
+            # Complete only the final :TYPE suffix when the user already entered LOCAL=KEY:
+            if [[ "$cur" == *=*:* ]]; then
+                local head="${cur%:*}:"
+                local tail="${cur##*:}"
+                COMPREPLY=( $(compgen -P "$head" -W "$data_types" -- "$tail") )
+            else
+                COMPREPLY=()
+            fi
+            return
+            ;;
+    esac
+
+    if [[ "$cur" == --* ]]; then
+        COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+        return
+    fi
+
+    COMPREPLY=()
+}
+
+complete -F _scanioc scanioc

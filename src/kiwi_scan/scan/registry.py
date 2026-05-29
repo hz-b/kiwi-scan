@@ -7,7 +7,7 @@ import importlib.util
 import logging
 import os
 from pathlib import Path
-from typing import Callable, Dict, Optional, Set
+from typing import Callable, Dict, Optional, Set, List
 
 logger = logging.getLogger(__name__)
 
@@ -131,3 +131,7 @@ def load_all_scan_types(raise_on_error: bool = False) -> None:
             if pyfile.name.startswith("_"):
                 continue
             _import_external_scan_file(pyfile, raise_on_error=raise_on_error)
+
+def get_available_scan_types() -> List[str]:
+    load_all_scan_types()
+    return sorted(SCAN_REGISTRY.keys())

@@ -57,6 +57,7 @@ dependencies = [
 
 [project.optional-dependencies] 
 dev = [ "pytest", "caproto[complete]", "jinja2", "pylint" ]
+ioc = [ "softioc" ]
 
 [project.urls]
 Homepage = "https://github.com/hz-b/kiwi-scan"
@@ -70,6 +71,7 @@ scanplotter_cli = "kiwi_scan.scanplotter_cli:main"
 scantrigger_cli = "kiwi_scan.scantrigger_cli:main"
 pollstats_cli = "kiwi_scan.pollstats_cli:main"
 manifestfiles = "kiwi_scan.manifestfiles:main"
+scanioc = "kiwi_scan.ioc.scanioc:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

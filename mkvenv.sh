@@ -35,7 +35,7 @@ if [ -d ".venv" ]; then
         echo "Virtual environment is currently activated: $VIRTUAL_ENV"
         echo "Updating kiwi-scan package"
         pip uninstall kiwi-scan -y
-	pip install -e .[dev]
+	pip install -e .[dev,ioc]
     else
         # VIRTUAL_ENV is empty
         echo "No virtual environment is activated."
@@ -49,7 +49,7 @@ else
     source .venv/bin/activate
     pip install --upgrade pip
     pip install build wheel
-    pip install -e .[dev]
+    pip install -e .[dev,ioc]
 fi
 
 cd "$_kiwi_old_pwd"
