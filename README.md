@@ -33,10 +33,16 @@ Upgrade:
 pip install --upgrade kiwi-scan
 ```
 
+Install IOC support
+
+```bash
+pip install "kiwi-scan[ioc]"
+```
+
 For development, clone the repository and install it in editable mode:
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,ioc]"
 ```
 
 ## Dependencies
