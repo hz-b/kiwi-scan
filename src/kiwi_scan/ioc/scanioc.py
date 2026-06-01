@@ -16,7 +16,7 @@ from .controller import default_config_dir
 from .datamodels import parse_data_pv_specs
 from .factory import GenericScanIOCOptions, run_ioc
 from kiwi_scan.scan.tools import load_scan_configs
-from kiwi_scan.scan.registry import get_available_scan_types
+from kiwi_scan.scan.registry import get_available_scan_types, load_all_scan_types
 from kiwi_scan.scan.tools import set_valid_logging_level
 import kiwi_scan
 
@@ -34,6 +34,9 @@ def _safe_config_names(config_dir: Optional[str]) -> List[str]:
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
+    load_all_scan_types()
+    kiwi_scan.load_all_plugins()
+
     default_dir = default_config_dir()
     available_scan_types = get_available_scan_types()
 
@@ -131,8 +134,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
     )
     set_valid_logging_level(args.log_level)
-    
-    kiwi_scan.load_all_plugins()
 
     try:
         options = options_from_args(args)

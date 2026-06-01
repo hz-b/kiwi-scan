@@ -73,7 +73,7 @@ class GenericScanIOC():
     def __init__(
         self,
         *,
-        prefix: str = "KIWI:SCAN:",
+        prefix: str = "KIWI:SCAN",
         controller: ScanIOCController,
         data_pvs: Optional[Sequence[DataPVSpec]] = None,
         publish_period: float = 1.0,
@@ -114,10 +114,11 @@ class GenericScanIOC():
 
     @staticmethod
     def _normalize_prefix(prefix: str) -> str:
-        prefix = str(prefix or "")
-        if prefix and not prefix.endswith(":"):
-            return prefix + ":"
-        return prefix
+        """Return prefix without trailing colon.
+
+        pythonSoftIOC builder.PushPrefix() handles the separator.
+        """
+        return str(prefix or "").rstrip(":")
 
     def _loop(self) -> asyncio.AbstractEventLoop:
         loop = getattr(getattr(self, "_disp", None), "loop", None)
