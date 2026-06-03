@@ -114,13 +114,7 @@ class ScanIOCController:
         self._data_writing_enabled_default = bool(
             getattr(self.base_config, "data_writing_enabled", True)
         )
-        logger.info(
-            "Loaded IOC base config: actuators=%d detector_pvs=%d scan_dimensions=%d data_writing_enabled=%s",
-            len(getattr(self.base_config, "actuators", {}) or {}),
-            len(getattr(self.base_config, "detector_pvs", []) or []),
-            len(getattr(self.base_config, "scan_dimensions", []) or []),
-            self._data_writing_enabled_default,
-        )
+        self._log_loaded_config("Loaded IOC base config")
 
     # --------------------------------------------------------
     # Configuration
@@ -149,18 +143,45 @@ class ScanIOCController:
                 % (self.config_name, self.config_dir, available)
             ) from exc
 
+    def _log_loaded_config(self, message: str) -> None:
+        logger.info(
+            "%s: actuators=%d detector_pvs=%d scan_dimensions=%d data_writing_enabled=%s",
+            message,
+            len(getattr(self.base_config, "actuators", {}) or {}),
+            len(getattr(self.base_config, "detector_pvs", []) or []),
+            len(getattr(self.base_config, "scan_dimensions", []) or []),
+            self._data_writing_enabled_default,
+        )
+
+    def _reload_base_config_unlocked(
+        self,
+        *,
+        preserve_data_writing_default: bool,
+    ) -> None:
+        """Reload the YAML-backed scan template.
+        The caller must hold ``self._lock``.
+        Preserves the current IOC DataWritingEnabled setting when preserve_data_writing_default == False
+        for PV is a runtime control.
+        """
+        current_data_writing_default = bool(self._data_writing_enabled_default)
+        self.base_config = self._load_base_config()
+
+        if preserve_data_writing_default:
+            self._data_writing_enabled_default = current_data_writing_default
+        else:
+            self._data_writing_enabled_default = bool(
+                getattr(self.base_config, "data_writing_enabled", True)
+            )
+
     def reload_config(self) -> None:
-        """TODO: Reload the base configuration."""
+        """Reload the base configuration while no scan is running."""
         with self._lock:
             if self.get_busy():
                 raise RuntimeError("cannot reload config while a scan is running")
             logger.info("Reloading IOC base config")
-            self.base_config = self._load_base_config()
-            self._data_writing_enabled_default = bool(
-                getattr(self.base_config, "data_writing_enabled", True)
-            )
+            self._reload_base_config_unlocked(preserve_data_writing_default=False)
             self.message = "config reloaded"
-            logger.info("IOC base config reloaded")
+            self._log_loaded_config("IOC base config reloaded")
 
     def dimension_defaults(self) -> Tuple[str, float, float, int, float]:
         """Return default actuator/start/stop/steps/velocity values for IOC PVs."""
@@ -217,6 +238,10 @@ class ScanIOCController:
             raise ValueError("at least one ScanDimension is required")
 
         logger.info("Creating scan object type=%s dimensions=%s", self.scan_type, _describe_dimensions(dimensions))
+        logger.info("Reloading IOC scan config before run")
+        self._reload_base_config_unlocked(preserve_data_writing_default=True)
+        self._log_loaded_config("Reloaded IOC scan config for run")
+
         cfg = copy.deepcopy(self.base_config)
         cfg.scan_dimensions = list(dimensions)
         cfg.data_writing_enabled = bool(self._data_writing_enabled_default)
