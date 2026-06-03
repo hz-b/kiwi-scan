@@ -135,6 +135,7 @@ class BaseScan(ScanABC):
         self._meta_mon_started = False
         self._position: Any = None
         self._last_point: Dict[str, Any] = {}
+        self._current_row_cache: Dict[str, Any] = {}
         self._data_column_providers: List[DataColumnProvider] = []
         self._daq_is_on = False   # safe to take data for stats
         self.integration_time = config.integration_time
@@ -648,6 +649,97 @@ class BaseScan(ScanABC):
 
         return row
 
+    @staticmethod
+    def _plain_scan_value(item: Any) -> Any:
+        """Return the scalar value stored in one scan value object.
+
+        Detector and plugin values are normally mappings with a ``value`` key,
+        while tests and simple integrations may pass raw scalars.  The current
+        row cache stores scalar values so expression plugins can use them
+        directly.
+        """
+        if isinstance(item, dict):
+            return item.get("value")
+        return item
+
+    def update_current_row_cache(
+        self,
+        *,
+        idx: int,
+        pos: Any,
+        values: List[Any],
+        headers: Optional[List[str]] = None,
+        provider_values: Optional[List[Any]] = None,
+        line_ts_iso: Optional[str] = None,
+        clear: bool = True,
+    ) -> Dict[str, Any]:
+        """Update the current scan-line cache from detector values.
+
+        This method is intended to be the one-liner used directly after
+        ``read_detectors()`` and before plugin execution::
+
+            vals = self.read_detectors()
+            self.update_current_row_cache(idx=idx, pos=pos, values=vals)
+
+        The cache is deliberately scalar-oriented: detector dictionaries and
+        plugin dictionaries are reduced to their ``value`` field.  The full
+        metadata-bearing values are still kept by the normal writer path.
+        """
+        row: Dict[str, Any] = {} if clear else dict(getattr(self, "_current_row_cache", {}) or {})
+
+        row["idx"] = idx
+        row["pos"] = pos
+        row["Position"] = float(pos) if pos is not None else pos
+
+        if line_ts_iso is not None:
+            row["TS-ISO8601"] = line_ts_iso
+
+        if provider_values is None:
+            provider_values = self._get_data_column_values()
+        provider_headers = self._get_data_column_headers(False)
+        for name, item in zip(provider_headers, provider_values or []):
+            row[str(name)] = self._plain_scan_value(item)
+
+        if headers is None:
+            headers = [pv.pvname for pv in getattr(self, "detector_pvs", [])]
+        for name, item in zip(headers, values or []):
+            row[str(name)] = self._plain_scan_value(item)
+            if isinstance(item, dict):
+                ts = item.get("timestamp")
+                if ts is not None:
+                    row["TS-ISO8601-" + str(name)] = self._timestamp_to_iso(ts)
+
+        self._current_row_cache = row
+        return dict(row)
+
+    def extend_current_row_cache(
+        self,
+        headers: List[str],
+        values: List[Any],
+    ) -> Dict[str, Any]:
+        """Add additional scalar columns to the current scan-line cache.
+
+        This is useful after each plugin has produced values, so later plugins
+        can use columns produced by earlier plugins in the same scan line.
+        """
+        row: Dict[str, Any] = dict(getattr(self, "_current_row_cache", {}) or {})
+        for name, item in zip(headers or [], values or []):
+            row[str(name)] = self._plain_scan_value(item)
+            if isinstance(item, dict):
+                ts = item.get("timestamp")
+                if ts is not None:
+                    row["TS-" + str(name)] = self._timestamp_to_iso(ts)
+        self._current_row_cache = row
+        return dict(row)
+
+    def get_current_row_cache(self) -> Dict[str, Any]:
+        """Return a copy of the current scan-line cache."""
+        return dict(getattr(self, "_current_row_cache", {}) or {})
+
+    def get_current_row_value(self, key: str, default: Any = None) -> Any:
+        """Return one scalar value from the current scan-line cache."""
+        return (getattr(self, "_current_row_cache", {}) or {}).get(key, default)
+
     def _update_data_column_provider_cache(
         self,
         last: Dict[str, Any],
@@ -966,12 +1058,14 @@ class BaseScan(ScanABC):
                 pos_snapshot = new_positions[first_actuator][idx]
                 with self._time_block("read_detectors", idx=idx):
                     vals = self.read_detectors()
+                self.update_current_row_cache(idx=idx, pos=pos_snapshot, values=vals)
                 # Collect plugin data and append to detector values
                 plugin_data = []
                 with self._time_block("plugins", idx=idx):
                     for plugin in self.plugins:
                         data = plugin.on_scan_point(idx, pos_snapshot)
                         plugin_data = plugin_data + data
+                        self.extend_current_row_cache(plugin.get_headers(False), data)
                 vals = vals + plugin_data
                 with self._time_block("write:data", idx=idx):
                     monitor_values = self.save_to_file(pos_snapshot, vals, self.include_timestamps)

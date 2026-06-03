@@ -90,6 +90,14 @@ class ScanABC(ABC):
         """
 
     @abstractmethod
+    def get_current_row_cache(self) -> Dict[str, Any]:
+        """Return the current in-progress scan row before it is written."""
+
+    @abstractmethod
+    def get_current_row_value(self, key: str, default: Any = None) -> Any:
+        """Return one value from the current in-progress scan row."""
+
+    @abstractmethod
     def get_actuator(self, name: str) -> AbstractActuator:
         """Return the actuator object by name (for sharing)."""
 

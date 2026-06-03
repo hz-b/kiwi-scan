@@ -152,10 +152,13 @@ class CMScan(BaseScan):
                 self._position = pos
             self._fire_triggers("on_point")
             vals = self.read_detectors()
+            self.update_current_row_cache(idx=idx, pos=pos, values=vals)
 
             plugin_data = []
             for plugin in self.plugins:
-                plugin_data += plugin.on_scan_point(idx, pos)
+                data = plugin.on_scan_point(idx, pos)
+                plugin_data += data
+                self.extend_current_row_cache(plugin.get_headers(False), data)
             vals = vals + plugin_data
 
             monitor_values = self.save_to_file(pos, vals, self.include_timestamps)
