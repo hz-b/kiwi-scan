@@ -44,6 +44,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Fixed cleanup of original actuator velocities in CM scans.
     - Original velocities are now restored reliably when a scan finishes or is stopped via `scan.stop()` / Ctrl+C.
 
+## Internal
+
+- Added current-row cache for plugin calculations
 ---
 
 ## [0.3.0] - 2026-05-22

@@ -5,6 +5,8 @@ VERSION ?= 0.4.0
 BASH_COMPLETION_DIR ?= ~/.bash_completion.d
 WITH_VENV = if [ -z "$$VIRTUAL_ENV" ]; then source "$(CURDIR)/mkvenv.sh"; fi
 
+COMMIT ?= HEAD
+
 SCRIPTS = \
     scan_runner \
     actuator_runner \
@@ -51,20 +53,21 @@ cscope: ## Build cscope and ctags indexes for the repository
 	cscope -b -i cscope.files
 	ctags -R --languages=Python .
 
-tag: ## Create a version+timestamp git tag from HEAD
+tag: ## Create a version+timestamp git tag from COMMIT
 	@base="$(VERSION)"; \
+	commit="$(COMMIT)"; \
 	if git rev-parse "$$base" >/dev/null 2>&1; then \
 		echo "ERROR: release tag $$base already exists"; \
 		exit 1; \
 	fi; \
-	ts=$$(git show -s --format=%cd --date=format:%Y%m%d%H%M%S HEAD); \
+	ts=$$(git show -s --format=%cd --date=format:%Y%m%d%H%M%S "$$commit"); \
 	tag="$$base+$$ts"; \
 	if git rev-parse "$$tag" >/dev/null 2>&1; then \
 		echo "ERROR: tag $$tag already exists"; \
 		exit 1; \
 	fi; \
 	echo "Creating tag $$tag"; \
-	git tag -a "$$tag" -m "Release $$tag"
+	git tag -a "$$tag" "$$commit" -m "Release $$tag"
 
 lint: ## Run pylint on src/kiwi_scan (uses mkvenv.sh when needed)
 	@echo 'For pylint install extra packages: pip install -e ".[dev]"'
