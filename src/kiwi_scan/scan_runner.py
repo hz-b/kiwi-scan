@@ -115,9 +115,9 @@ def _validate_dim_args(dim_args: List[str]) -> None:
 def _validate_scan_dimensions(scan_dimensions: List[ScanDimension]) -> None:
     """Validate parsed scan dimensions before executing a scan."""
     for dim in scan_dimensions:
-        if dim.steps < 1:
+        if dim.steps < 0:
             raise ValueError(
-                f"Invalid --dim for actuator {dim.actuator!r}: steps must be >= 1, got {dim.steps}"
+                f"Invalid --dim for actuator {dim.actuator!r}: steps must be >= 0, got {dim.steps}"
             )
 
         velocity = getattr(dim, "velocity", None)

@@ -26,6 +26,7 @@ class CMScan(BaseScan):
             raise ArithmeticError(f"Start equals stop == {dim.start!r}")
         self._start = dim.start
         self._stop = dim.stop
+        self._maxindex = dim.steps
         self.set_samplerate()
         self.first_actuator = self.actuators[self.scan_dimensions[0].actuator]
 
@@ -35,6 +36,7 @@ class CMScan(BaseScan):
         self.register_subscription_role("stop", self._on_stop_event)
 
         self._original_velocities = {}
+        
 
     def _restore_original_velocities(self) -> None:
         """Restore actuator velocities saved before the continuous move."""
@@ -99,7 +101,7 @@ class CMScan(BaseScan):
         Position is taken from sync subscription when available; otherwise RBV is polled.
         """
         self.write_header_to_output_file()
-        idx = 0
+        index = 0
 
         # initial snapshot; may quickly be overwritten by sync subscription indicated by flag
         self._position_sync_subscription_set = False
@@ -152,11 +154,11 @@ class CMScan(BaseScan):
                 self._position = pos
             self._fire_triggers("on_point")
             vals = self.read_detectors()
-            self.update_current_row_cache(idx=idx, pos=pos, values=vals)
+            self.update_current_row_cache(idx=index, pos=pos, values=vals)
 
             plugin_data = []
             for plugin in self.plugins:
-                data = plugin.on_scan_point(idx, pos)
+                data = plugin.on_scan_point(index, pos)
                 plugin_data += data
                 self.extend_current_row_cache(plugin.get_headers(False), data)
             vals = vals + plugin_data
@@ -166,7 +168,9 @@ class CMScan(BaseScan):
             if monitor is not None:
                 logging.debug(f"{monitor_values}")
                 monitor.update(monitor_values)
-            idx += 1
+            index += 1
+            if self._maxindex > 0 and index >= self._maxindex:
+                break
 
     # ---------------- cm scan logic --------------------
     def scan(self, positions, monitor: BaseMonitor = None):
