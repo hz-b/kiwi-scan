@@ -19,15 +19,17 @@ class EpicsActuator(AbstractActuator):
     def __init__(self, config: ActuatorConfig):
         super().__init__(config)
 
-        # Wrap PVs
         self.pv = EpicsPV(config.pv) if config.pv else None
+        self.ca_timeout = config.ca_timeout if config.ca_timeout else 1.0
+        self.auto_monitor = config.auto_monitor 
+        logging.debug(f"Actuator CA settings:  ca_timeout: {self.ca_timeout}, auto_monitor: {self.auto_monitor}")
         self.rel_pv = EpicsPV(config.rel_pv) if config.rel_pv else None
-        self.rb_pv = EpicsPV(config.rb_pv) if config.rb_pv else None
+        self.rb_pv = EpicsPV(config.rb_pv, auto_monitor=self.auto_monitor, queueing_delay=0.0) if config.rb_pv else None
         self.cmd_pv = EpicsPV(config.cmd_pv) if config.cmd_pv else None
         self.cmdvel_pv = EpicsPV(config.cmdvel_pv) if config.cmdvel_pv else None
         self.start_pv = EpicsPV(config.start_pv) if config.start_pv else None
         self.stop_pv = EpicsPV(config.stop_pv) if config.stop_pv else None
-        self.status_pv = EpicsPV(config.status_pv) if config.status_pv else None
+        self.status_pv = EpicsPV(config.status_pv, auto_monitor=self.auto_monitor, queueing_delay=0.0) if config.status_pv else None
         self.velocity_pv = EpicsPV(config.velocity_pv) if config.velocity_pv else None
         self.get_velocity_pv = EpicsPV(config.get_velocity_pv) if config.get_velocity_pv else None
         # pvname -> list of callback indices (pyepics returns an int id per add_callback)
@@ -48,8 +50,6 @@ class EpicsActuator(AbstractActuator):
         self.backlash = config.backlash
         self.velocity = config.velocity
         self.start_command = config.start_command
-        self.ca_timeout = config.ca_timeout if config.ca_timeout else 1.0
-        logging.debug(f"ActuatorConfig ca_timeout: {self.ca_timeout}")
 
         # Validate PV connections
         self._check_pvs()

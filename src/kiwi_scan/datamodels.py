@@ -36,6 +36,7 @@ class ActuatorConfig:
     status_pv: Optional[str] = None
     queueing_delay: float = 0.01
     ca_timeout: float = 1.0
+    auto_monitor: bool = True
     startup_timeout: float = 1.0
     in_position_band: float = -1.0
     dwell_time: float = 1.0
