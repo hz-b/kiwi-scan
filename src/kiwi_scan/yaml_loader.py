@@ -16,12 +16,15 @@ def yaml_loader(path: str, replacements: Dict[str,str] = None) -> Dict[str,Any]:
         raise FileNotFoundError(path)
     with open(path) as f:
         text = f.read()
-    if replacements: 
-        expanded = _expand_tokens(text, replacements)
-        data = yaml.safe_load(expanded)
-    else:
-        data = yaml.safe_load(text)
-    return data
+    try:
+        if replacements: 
+            expanded = _expand_tokens(text, replacements)
+            data = yaml.safe_load(expanded)
+        else:
+            data = yaml.safe_load(text)
+        return data
+    except yaml.YAMLError as exc:
+        raise ValueError(f"Invalid YAML in {path}: {exc}") from exc
 
 def parse_replacements(replacements_list: List[str]) -> Dict[str, str]:
     """
