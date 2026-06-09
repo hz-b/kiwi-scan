@@ -45,16 +45,16 @@ def iter_manifest_files(
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="manifestfiles_cli",
+        prog="manifestfiles",
         description=(
             "List files referenced in manifest files, or create a small manifest.\n\n"
             "By default, all manifest*.yaml files in KIWI_SCAN_DATA_DIR are scanned, "
             "and only scan data files are printed.\n\n"
             "Examples:\n"
-            "  manifestfiles_cli --create scan1.txt scan2.txt\n"
-            "  manifestfiles_cli --create scan1.txt --manifest-file manifest_for_spec.yaml\n"
-            "  manifestfiles_cli --delete --manifest-file manifest.yaml --include-meta --dry-run\n"
-            "  manifestfiles_cli --delete --manifest-file manifest.yaml --include-meta"
+            "  manifestfiles --create scan1.txt scan2.txt\n"
+            "  manifestfiles --create scan1.txt --manifest-file manifest_for_spec.yaml\n"
+            "  manifestfiles --delete --manifest-file manifest.yaml --include-meta --dry-run\n"
+            "  manifestfiles --delete --manifest-file manifest.yaml --include-meta"
         ),
         formatter_class=argparse.RawTextHelpFormatter,
     )
@@ -209,7 +209,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             parser.exit(1, "No matching file references found. Use --include-meta or --missing if needed.\n")
         return 0
     except (FileNotFoundError, ValueError, IndexError) as exc:
-        parser.exit(2, f"manifestfiles_cli: error: {exc}\n")
+        parser.exit(2, f"manifestfiles: error: {exc}\n")
 
 if __name__ == "__main__":
     main()
