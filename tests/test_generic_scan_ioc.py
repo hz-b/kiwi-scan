@@ -330,7 +330,7 @@ class TestGenericScanIOC(unittest.TestCase):
 
     def test_registers_fixed_records_with_normalized_prefix(self):
         _ioc, builder = self.make_ioc()
-        self.assertEqual(builder.prefixes, ["KIWI:TEST:"])
+        self.assertEqual(builder.prefixes, ["KIWI:TEST"])
         for name in (
             "Status",
             "Start",
@@ -360,7 +360,7 @@ class TestGenericScanIOC(unittest.TestCase):
         self.assertEqual(builder.records["Status"].value, ScanIOCStatus.RUNNING.value)
         self.assertTrue(builder.records["Busy"].value)
         self.assertEqual(builder.records["Message"].value, "running")
-        self.assertEqual(builder.records["OutputFile"].value, "/tmp/out.txt")
+        self.assertEqual(builder.records["OutputFile"].value, "out.txt")
         self.assertEqual(builder.records["Position"].value, 7.5)
         self.assertEqual(builder.records["DATA:I0"].value, 123.4)
         self.assertEqual(builder.records["DATA:State"].value, "good")

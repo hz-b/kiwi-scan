@@ -368,9 +368,9 @@ class ScanIOCController:
         with self._lock:
             scan = self.scan
         if scan is None:
-            return "None"
+            return ""
         try:
-            return scan.get_output_file() or "unknown"
+            return scan.get_output_file() or ""
         except Exception:
             logger.debug("Failed to read output file", exc_info=True)
             return ""

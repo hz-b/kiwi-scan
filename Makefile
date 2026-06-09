@@ -78,7 +78,7 @@ test: ## Run the current test scripts (uses mkvenv.sh when needed)
 	@if [ -z "$$KIWI_SCAN_DATA_DIR" ]; then mkdir -p scandata; fi
 	@$(WITH_VENV); \
 	python3 tests/test_actuator.py; \
-	python3 test_generic_scan_ioc.py; \
+	python3 tests/test_generic_scan_ioc.py; \
 	EPICS_WRITETEST=1 python3 tests/test_epics_wrapper_integration.py; \
 	python3 tests/test_stats.py; \
 	python3 tests/test_registry_trigger_and_callbacks.py; \
