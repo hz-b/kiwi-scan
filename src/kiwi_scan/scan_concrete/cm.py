@@ -120,6 +120,7 @@ class CMScan(BaseScan):
             if self._stop_requested.is_set():
                 break
             if self.get_stop_pv() == 1:
+                super().stop()
                 break 
             # heartbeat-driven tick plus all configured sync-role updates
             self._arm_sync_controller()
@@ -170,6 +171,7 @@ class CMScan(BaseScan):
                 monitor.update(monitor_values)
             index += 1
             if self._maxindex > 0 and index >= self._maxindex:
+                super().stop()
                 break
 
     # ---------------- cm scan logic --------------------

@@ -172,6 +172,7 @@ class PollScan(BaseScan):
                     self._position = current_position
                 
                 if self._maxindex > 0 and index >= self._maxindex:
+                    super().stop()
                     break
 
                 
