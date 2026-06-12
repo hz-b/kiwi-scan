@@ -39,6 +39,12 @@ Install IOC support
 pip install "kiwi-scan[ioc]"
 ```
 
+Install a specific version
+
+```bash
+pip install "kiwi-scan[ioc]==0.4.0"
+```
+
 For development, clone the repository and install it in editable mode:
 
 ```bash
@@ -323,6 +329,19 @@ Public releases use clean semantic versions (X.Y.Z) on PyPI, each mapped to a ti
 - Tests should be added in `tests/`
 - Use `logging` for diagnostics.
 - For debugging use the --log-level switch. Include log output and config for reporting bugs.
+
+## Citation
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20662095.svg)](https://doi.org/10.5281/zenodo.20662095)
+
+Cite the Zenodo concept DOI:
+
+[DOI 10.5281/zenodo.20662095](https://doi.org/10.5281/zenodo.20662095)
+
+
+The `v0.4.0` release has its own version DOI on Zenodo.
+
+[DOI 10.5281/zenodo.20662096](https://doi.org/10.5281/zenodo.20662096)
+
 
 ## References
 
