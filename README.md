@@ -1,4 +1,5 @@
 [![PyPI version](https://img.shields.io/pypi/v/kiwi-scan.svg)](https://pypi.org/project/kiwi-scan/)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20662095.svg)](https://doi.org/10.5281/zenodo.20662095)
 
 # kiwi-scan
 
@@ -331,7 +332,6 @@ Public releases use clean semantic versions (X.Y.Z) on PyPI, each mapped to a ti
 - For debugging use the --log-level switch. Include log output and config for reporting bugs.
 
 ## Citation
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20662095.svg)](https://doi.org/10.5281/zenodo.20662095)
 
 Cite the Zenodo concept DOI:
 
