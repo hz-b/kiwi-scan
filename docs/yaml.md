@@ -81,6 +81,7 @@ For `tsv` and `csv`, one header row is written followed by one row per scan poin
 | `ready_bitmask` | int | Bitmask for status-based ready logic. |
 | `queueing_delay` | float | Delay after EPICS writes. |
 | `ca_timeout` | float | EPICS  CA timeout. |
+| `auto_monitor` | bool | Use EPICS CA cache. |
 | `startup_timeout` | float | Timeout waiting for motion to start. |
 | `in_position_band` | float | Allowed tolerance. |
 | `dwell_time` | float | Delay after motion completes. |

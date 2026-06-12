@@ -139,7 +139,7 @@ class QueuePlotterMonitor(BaseMonitor):
         self.queue.put(point)
 
     def set_signals(self, x: str, y: str) -> None:
-        """Backward-compatible single-panel override used by older callers/tests."""
+        """Backward-compatible single-panel override might be used for interactive features later."""
         self.plot_specs = [PlotSpec(x=x, y=[y], title=y)]
         if self.x_signal is not None:
             self.x_signal.set(x)
@@ -251,8 +251,8 @@ class QueuePlotterMonitor(BaseMonitor):
             label = f"{spec.title}: {spec.x} -> {', '.join(spec.y)}"
             ttk.Label(self.root, text=label).grid(row=row, column=0, sticky="w", padx=4)
 
-        # Compatibility vars for old set_signals() users. They are no longer
-        # connected to comboboxes because YAML is now the plot source of truth.
+        # Compatibility vars for old set_signals(). They are no longer connected to comboboxes at the moment
+        # YAML is now the plot config source.
         first = self.plot_specs[0]
         self.x_signal = tk.StringVar(self.root, value=first.x)
         self.y_signal = tk.StringVar(self.root, value=first.y[0])
@@ -354,7 +354,7 @@ class QueuePlotterMonitor(BaseMonitor):
         fig.canvas.draw_idle()
 
     def close(self) -> None:
-        # close() may be called by the scan worker thread. Keep it free of Tk
-        # calls; it only tells loop() to finish and perform GUI cleanup itself.
+        # close() may be called by the scan worker thread. Keep it free of Tk calls
+        # ---- > it tells loop() to finish and perform GUI cleanup.
         self.running = False
         self._row_formatter.close()

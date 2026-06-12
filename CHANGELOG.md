@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+---
+
+## [0.4.0] - 2026-06-12
+
 ## Added
 
 - Added a generic **pythonSoftIOC-based scan IOC** with unit tests.
@@ -47,7 +51,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ## Internal
 
 - Added current-row cache for plugin calculations
----
 
 ## [0.3.0] - 2026-05-22
 
