@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -53,8 +55,9 @@ class QueuePlotterMonitor(BaseMonitor):
         self.parameters = parameters or {}
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
         self.queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
-        self.root: Optional[Any] = None  # Will be set in start().
+        self.root: Optional[Any] = None  # Will be set in start() when GUI is available.
         self.running = False
+        self._headless = False
         self._closed_by_user = False
         self._start_time: Optional[float] = None
         self.signal_names: List[str] = []
@@ -82,6 +85,13 @@ class QueuePlotterMonitor(BaseMonitor):
         return dict(raw)
 
     @staticmethod
+    def _display_is_available() -> bool:
+        """Figure out and return False when plotter cannot create displays in this environment."""
+        if os.name != "posix" or sys.platform == "darwin":
+            return True
+        return bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+    @staticmethod
     def _import_tk():
         import tkinter as tk
         from tkinter import ttk
@@ -107,19 +117,63 @@ class QueuePlotterMonitor(BaseMonitor):
         self.data = {name: [] for name in self.signal_names}
         self.plot_specs = self._parse_plot_specs(self.parameters, self.signal_names)
 
+        self._headless = not self._display_is_available()
+        if self._headless and not self._print_enabled:
+            self.logger.warning(
+                "QueuePlotterMonitor detected a headless environment and monitor.print is disabled; "
+                "enabling print fallback automatically"
+            )
+            self._print_enabled = True
+            self._print_parameters = {}
+
         if self._print_enabled:
             # Print the exact same concrete stream as PrintMonitor
             print_parameters = dict(self._print_parameters)
             if headers is not None:
                 print_parameters["include_timestamps"] = False
-                self._row_formatter = MonitorRowFormatter(print_parameters, logger=self.logger)
-                self._value_formatter = self._row_formatter.value_formatter
+            self._row_formatter = MonitorRowFormatter(print_parameters, logger=self.logger)
+            self._value_formatter = self._row_formatter.value_formatter
             self._row_formatter.start(raw_signal_names)
 
-        tk, ttk = self._import_tk()
-        self._tk = tk
-        self._ttk = ttk
-        self.root = tk.Tk()
+        if self._headless:
+            self.logger.warning(
+                "QueuePlotterMonitor detected no graphical display; "
+                "live plotting is disabled and print output is used instead"
+            )
+            self.running = False
+            self.logger.debug(
+                "QueuePlotterMonitor headless fallback signals=%r plots=%r",
+                self.signal_names,
+                self.plot_specs,
+            )
+            return
+
+        try:
+            tk, ttk = self._import_tk()
+            self._tk = tk
+            self._ttk = ttk
+            self.root = tk.Tk()
+        except Exception as exc:
+            self._headless = True
+            self.running = False
+            self.root = None
+            if not self._print_enabled:
+                self.logger.warning(
+                    "QueuePlotterMonitor could not start Tk GUI and monitor.print is disabled; "
+                    "enabling print fallback automatically"
+                )
+                self._print_enabled = True
+                self._print_parameters = {}
+                self._row_formatter = MonitorRowFormatter({}, logger=self.logger)
+                self._value_formatter = self._row_formatter.value_formatter
+                self._row_formatter.start(raw_signal_names)
+            self.logger.warning(
+                "QueuePlotterMonitor could not start Tk GUI (%s); "
+                "live plotting is disabled and print output is used instead",
+                exc,
+            )
+            return
+
         self.running = True
         self._start_gui()
         self.logger.debug("QueuePlotterMonitor signals=%r plots=%r", self.signal_names, self.plot_specs)
@@ -130,6 +184,9 @@ class QueuePlotterMonitor(BaseMonitor):
 
         if self._start_time is None:
             self.logger.error("QueuePlotterMonitor.update() called before start()")
+            return
+
+        if self._headless:
             return
 
         values_only = [self._plot_value(item) for item in vals]
@@ -251,13 +308,17 @@ class QueuePlotterMonitor(BaseMonitor):
             label = f"{spec.title}: {spec.x} -> {', '.join(spec.y)}"
             ttk.Label(self.root, text=label).grid(row=row, column=0, sticky="w", padx=4)
 
-        # Compatibility vars for old set_signals(). They are no longer connected to comboboxes at the moment
-        # YAML is now the plot config source.
+        # Compatibility vars for old set_signals() users. They are no longer
+        # connected to comboboxes because YAML is now the plot source of truth.
         first = self.plot_specs[0]
         self.x_signal = tk.StringVar(self.root, value=first.x)
         self.y_signal = tk.StringVar(self.root, value=first.y[0])
 
     def loop(self) -> None:
+        if self._headless:
+            self.logger.info("QueuePlotterMonitor loop skipped because no graphical display is available")
+            return
+
         logging.info(
             "[%s] In monitor.loop(), driving Tkinter from this thread",
             threading.current_thread().name,
