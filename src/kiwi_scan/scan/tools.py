@@ -56,7 +56,7 @@ def get_scan_config_dir():
     kiwi_scan_config_dir = get_kiwi_config_dir_from_environ()
     if kiwi_scan_config_dir is not None:
         # If the environment variable is set, override the default
-        return os.path.normpath(os.path.join(kiwi_scan_config_dir, 'scan_config'))
+        return os.path.normpath(kiwi_scan_config_dir)
     # fallback
     pkg_dir = Path(kiwi_scan.__file__).resolve().parent
     return str(pkg_dir.parent / ".." / "config" / "scan_config")

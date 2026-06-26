@@ -976,6 +976,41 @@ class BaseScan(ScanABC):
                     )
         return value
 
+    def _start_plugins(self) -> None:
+        """Run plugin start hooks.
+
+        Existing plugins are backward compatible because ``ScanPlugin.on_start``
+        is a no-op by default. Async plugins can use this hook for debug output
+        or delayed initialization.
+        """
+        for plugin in getattr(self, "plugins", []) or []:
+            try:
+                logging.debug("Starting plugin %s", getattr(plugin, "name", plugin))
+                plugin.on_start()
+            except Exception:
+                logging.exception("Failed to start plugin %s", getattr(plugin, "name", plugin))
+
+    def _end_plugins(self) -> None:
+        """Run plugin end hooks."""
+        for plugin in getattr(self, "plugins", []) or []:
+            try:
+                logging.debug("Ending plugin %s", getattr(plugin, "name", plugin))
+                plugin.on_end()
+            except Exception:
+                logging.exception("Failed to end plugin %s", getattr(plugin, "name", plugin))
+
+    def _close_plugins(self) -> None:
+        """Close plugin-owned resources without requiring old plugins to change."""
+        for plugin in getattr(self, "plugins", []) or []:
+            close = getattr(plugin, "close", None)
+            if not callable(close):
+                continue
+            try:
+                logging.debug("Closing plugin %s", getattr(plugin, "name", plugin))
+                close()
+            except Exception:
+                logging.exception("Failed to close plugin %s", getattr(plugin, "name", plugin))
+
     def scan(self, positions, monitor: BaseMonitor = None):
         """
         Parallel multi-actuator scan:
@@ -991,6 +1026,7 @@ class BaseScan(ScanABC):
         self._stop_requested.clear()
         self.write_header_to_output_file()
         try:
+            self._start_plugins()
             self._start_subscriptions()
             logging.debug(f"Actuators: {list(self.actuators)}")
             logging.debug(f"Requested positions: {positions}")
@@ -1086,6 +1122,10 @@ class BaseScan(ScanABC):
         
         finally:
             self._daq_is_on = False
+            try:
+                self._end_plugins()
+            finally:
+                self._close_plugins()
             self._stop_metadata_monitor()
 
             if monitor is not None:

@@ -14,12 +14,12 @@ from kiwi_scan.actuator.single import PvEvent
 
 def wrap_values(values: List[Any]) -> List[Dict[str, Any]]:
     """
-    Normalize plugin output values into the record format expected by the scan writer.
+    Normalize plugin output values into the EPICS PV data structure expected by the scan writer.
 
-    This method should take the raw values produced by the plugin, align them
+    This method takes the raw values produced by the concrete plugin, align them
     with the expanded headers, and return a serializable list that can be
-    written directly into the scan row. If `timestamps` is enabled, include the
-    corresponding timestamp values in the correct positions.
+    written directly into the scan row. If `timestamps` is enabled in yaml config, 
+    include the corresponding timestamp values in the correct positions.
     """
     result = []
     now = time.time()  # current time in seconds as float
@@ -65,8 +65,9 @@ class ScanPlugin(ABC):
         )
         self.logger.setLevel(level)
 
-        # BUGFIX: cannot access local variable 'filepath' where it is not associated with a value: 
-        # Always compute filepath
+        # This BUGFIXed the following: 
+        # cannot access local variable 'filepath' where it is not associated with a value, 
+        # -> Always compute filepath
         filepath = os.path.join(
             self.log_dir,
             self.parameters.get("log_file", self.DEFAULT_LOG_FILE),
@@ -87,7 +88,7 @@ class ScanPlugin(ABC):
     
     def expand_headers(self, hdrs: List[str], timestamps: bool = False) -> List[str]:
         """
-        Expand this plugin’s logical output fields into the concrete scan-file column headers.
+        Produce scan-file column headers.
         This should return the headers in the exact order they will appear in the output row.
         When `timestamps` is true, append any matching timestamp columns using the same ordering convention as the rest of the scan output.
         """
@@ -127,6 +128,16 @@ class ScanPlugin(ABC):
         return wrap_values(self.get_values(idx, pos))
 
     def on_end(self) -> None:
+        pass
+
+    def close(self) -> None:
+        """Release plugin resources.
+
+        The default implementation is intentionally a no-op to keep existing
+        synchronous plugins fully backward compatible. Plugins that own worker
+        threads, executors, files, sockets, or other resources can override this
+        hook.
+        """
         pass
 
     def on_monitor(self, ev: PvEvent) -> None:

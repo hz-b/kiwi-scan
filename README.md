@@ -14,6 +14,7 @@ Results are written to timestamped text files. Optional metadata sidecars can re
 - **YAML configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots and plugin parameters.
 - **Pluggable scan engines** such as `linear`, `approach`, `poll`, `para`, and `cm`, plus externally registered scan types.
 - **Pluggable runtime extensions** Plugins hook into scan logic and events that can add computed columns or act to monitor events.
+Base classes are provided for synchonous and asynchronous plugin processing.
 - **EPICS integration** via pyepics wrapper for or a **simulated actuator backend** for tests and development.
 - **Structured outputs** including the main scan file, optional metadata sidecar logging and waveform support, and post-mortem plotting tools.
 - **Event handling** Subscriptions route monitored events into defined roles.
@@ -168,11 +169,13 @@ Check the public API documentation described [here](https://github.com/hz-b/kiwi
 ## Plugin developer description and example
 
 Plugins are instantiated from `plugin_configs` and discovered from the built-in plugin package plus any files or directories listed in `KIWI_SCAN_PLUGIN_PATH`.
-New plugin classes must be derived from the interface defined in [plugin base class](https://github.com/hz-b/kiwi-scan/blob/master/src/kiwi_scan/plugin/base.py)
+New plugin classes must be derived from the interface defined in [plugin base class](https://github.com/hz-b/kiwi-scan/blob/master/src/kiwi_scan/plugin/base.py) or from the [async plugin base class](https://github.com/hz-b/kiwi-scan/blob/master/src/kiwi_scan/plugin/async_base.py)
 
 For detailed description check the plugin user and developer documentation:
 
-[Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) — plugin API, plugin discovery, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
+[Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) - plugin API, plugin discovery, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
+
+[Async Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) - async plugin extension for parallel background processing.
 
 ## IOC
 

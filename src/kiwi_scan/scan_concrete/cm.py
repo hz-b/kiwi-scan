@@ -36,7 +36,6 @@ class CMScan(BaseScan):
         self.register_subscription_role("stop", self._on_stop_event)
 
         self._original_velocities = {}
-        
 
     def _restore_original_velocities(self) -> None:
         """Restore actuator velocities saved before the continuous move."""
@@ -185,6 +184,7 @@ class CMScan(BaseScan):
         """
         self.busyflag = True
         try:
+            self._start_plugins()
             # 1) Move each actuator to start position
             for dim in self.scan_dimensions:
                 name = dim.actuator
@@ -229,6 +229,10 @@ class CMScan(BaseScan):
             self.run_daq(monitor)
         finally:
             self._restore_original_velocities()
+            try:
+                self._end_plugins()
+            finally:
+                self._close_plugins()
             self._stop_metadata_monitor()
             # MonoCMScan overrides BaseScan.scan(), so it must clear subscriptions itself
             try:
