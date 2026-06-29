@@ -175,7 +175,7 @@ For detailed description check the plugin user and developer documentation:
 
 [Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) - plugin API, plugin discovery, YAML configuration, and built-in plugins such as `LoggingPlugin` and `JogPidPlugin`.
 
-[Async Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/plugins.md) - async plugin extension for parallel background processing.
+[Async Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/async_plugins.md) - async plugin extension for parallel background processing.
 
 ## IOC
 
