@@ -60,10 +60,9 @@ class ScanPlugin(ABC):
     def _init_logging(self) -> None:
         """Configure plugin-specific file logging."""
         cfg = getattr(self.scan, "cfg", None)
-        level = self.parameters.get(
-            "log_level", getattr(cfg, "logging_level", logging.INFO)
-        )
+        level = self.parameters.get("log_level", logging.WARNING)
         self.logger.setLevel(level)
+        #self.logger.info(f"Set logging level to {level}, {self.parameters}")
 
         # This BUGFIXed the following: 
         # cannot access local variable 'filepath' where it is not associated with a value, 
