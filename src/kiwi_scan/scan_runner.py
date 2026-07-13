@@ -304,14 +304,21 @@ def main():
 
     # Override YAML scan_dimensions with CLI scan dimensions (existing behavior)
     config.scan_dimensions = scan_dimensions
-    kiwi_scan.load_all_plugins()
 
-    scan = create_scan_with_config(
-        scantype=args.scan_type,
-        config=config,
-        data_dir=data_dir,
-    )
+    try:
+        kiwi_scan.load_all_plugins()
+        scan = create_scan_with_config(
+            scantype=args.scan_type,
+            config=config,
+            data_dir=data_dir,
+        )
+    except Exception as exc:
+        logging.error("Failed to initialize scan: %s", exc)
+        logging.debug("Scan initialization traceback", exc_info=True)
+        return 1
+
     if scan is None:
+        logging.error("Failed to initialize scan: scan factory returned None")
         return 1
 
     sigint_count = 0
@@ -343,6 +350,14 @@ def main():
     signal.signal(signal.SIGINT, _sigint)
     try:
         scan.execute()
+    except Exception as exc:
+        logging.error("Scan failed: %s", exc)
+        logging.debug("Scan failure traceback", exc_info=True)
+        try:
+            scan.stop()
+        except Exception:
+            logging.exception("Failed to stop scan after error")
+        return 1
     finally:
         signal.signal(signal.SIGINT, previous_sigint_handler)
 
@@ -350,4 +365,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

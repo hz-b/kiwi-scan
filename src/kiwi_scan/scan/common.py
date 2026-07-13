@@ -1151,12 +1151,18 @@ class BaseScan(ScanABC):
             logging.debug("Starting monitor")
             monitor.start(monitor_headers, headers=monitor_headers)
 
+        scan_error: List[Exception] = []
+
         def _run_scan():
             try:
-                epics.ca.use_initial_context()
-            except Exception:
-                pass
-            self.scan(positions, monitor)
+                try:
+                    epics.ca.use_initial_context()
+                except Exception:
+                    pass
+                self.scan(positions, monitor)
+            except Exception as exc:
+                scan_error.append(exc)
+                logging.exception("%s scan thread failed", self.__class__.__name__)
 
         scan_thread = threading.Thread(target=_run_scan)
         logging.info(f"Starting {self.__class__.__name__}.")
@@ -1164,6 +1170,10 @@ class BaseScan(ScanABC):
         if monitor is not None:
             monitor.loop()
         scan_thread.join()
+
+        if scan_error:
+            raise scan_error[0]
+
         logging.info(f"{self.__class__.__name__} scan complete.")
 
     def _prepare_positions(self, positions):
