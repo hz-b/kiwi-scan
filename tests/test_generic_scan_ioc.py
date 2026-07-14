@@ -8,6 +8,7 @@ import math
 import os
 import sys
 import unittest
+from unittest.mock import patch
 from typing import Any, Dict, List, Optional
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -162,29 +163,46 @@ class TestDataPVSpec(unittest.TestCase):
 
 
 class TestScanIOCController(unittest.TestCase):
-    def make_base_config(self) -> ScanConfig:
+    def make_base_config(
+        self,
+        *,
+        actuator: str = "motor",
+        start: float = 0.0,
+        stop: float = 1.0,
+        steps: int = 2,
+        velocity: float = 0.0,
+        data_writing_enabled: bool = True,
+    ) -> ScanConfig:
         return ScanConfig(
             actuators={
-                "motor": ActuatorConfig(
-                    pv="SIM:MOTOR",
-                    rb_pv="SIM:MOTOR:RBV",
+                actuator: ActuatorConfig(
+                    pv="SIM:%s" % actuator.upper(),
+                    rb_pv="SIM:%s:RBV" % actuator.upper(),
                     type="simulation",
                     dwell_time=0.0,
                 )
             },
             detector_pvs=[],
-            scan_dimensions=[ScanDimension("motor", 0.0, 1.0, 2, 0.0)],
+            scan_dimensions=[
+                ScanDimension(actuator, start, stop, steps, velocity)
+            ],
             data_dir=".",
             output_file="scan_results.txt",
-            data_writing_enabled=True,
+            data_writing_enabled=data_writing_enabled,
         )
 
-    def make_controller(self, created: Optional[List[Any]] = None, base_config: Optional[ScanConfig] = None):
+    def make_controller(
+        self,
+        created: Optional[List[Any]] = None,
+        base_config: Optional[ScanConfig] = None,
+        configs: Optional[Dict[str, ScanConfig]] = None,
+    ):
         base_config = base_config or self.make_base_config()
+        configs = dict(configs or {"unit": base_config})
         created = created if created is not None else []
 
         def config_loader(config_dir, replacements):
-            return {"unit": base_config}
+            return configs
 
         def scan_factory(scan_type, cfg, data_dir):
             scan = FakeScan(data_writing_enabled=cfg.data_writing_enabled)
@@ -205,6 +223,69 @@ class TestScanIOCController(unittest.TestCase):
     def test_dimension_defaults_from_base_config(self):
         controller = self.make_controller()
         self.assertEqual(controller.dimension_defaults(), ("motor", 0.0, 1.0, 2, 0.0))
+
+    def test_selection_getters_return_current_named_config_and_scan_type(self):
+        controller = self.make_controller()
+        self.assertEqual(controller.get_config_name(), "unit")
+        self.assertEqual(controller.get_scan_type(), "linear")
+
+    def test_set_config_name_loads_named_config_and_preserves_runtime_write_flag(self):
+        unit = self.make_base_config()
+        alternate = self.make_base_config(
+            actuator="theta",
+            start=10.0,
+            stop=20.0,
+            steps=6,
+            velocity=0.5,
+            data_writing_enabled=True,
+        )
+        controller = self.make_controller(
+            base_config=unit,
+            configs={"unit": unit, "alternate": alternate},
+        )
+        controller.set_data_writing_enabled(False)
+
+        controller.set_config_name("alternate")
+
+        self.assertEqual(controller.get_config_name(), "alternate")
+        self.assertEqual(
+            controller.dimension_defaults(),
+            ("theta", 10.0, 20.0, 6, 0.5),
+        )
+        self.assertFalse(controller.get_data_writing_enabled())
+
+    def test_invalid_config_name_does_not_replace_current_selection(self):
+        controller = self.make_controller()
+        original_config = controller.base_config
+
+        with self.assertRaises(KeyError):
+            controller.set_config_name("missing")
+
+        self.assertEqual(controller.get_config_name(), "unit")
+        self.assertIs(controller.base_config, original_config)
+
+    def test_config_and_scan_type_changes_are_rejected_while_active(self):
+        controller = self.make_controller()
+        controller.start([ScanDimension("motor", 0.0, 1.0, 2, 0.0)])
+
+        with self.assertRaises(RuntimeError):
+            controller.set_config_name("unit")
+        with self.assertRaises(RuntimeError):
+            controller.set_scan_type("linear")
+
+    def test_set_scan_type_is_used_for_the_next_scan(self):
+        created: List[Any] = []
+        controller = self.make_controller(created=created)
+
+        with patch(
+            "kiwi_scan.ioc.controller.get_available_scan_types",
+            return_value=["linear", "cm"],
+        ):
+            controller.set_scan_type("cm")
+
+        controller.start([ScanDimension("motor", 0.0, 1.0, 2, 0.0)])
+        self.assertEqual(controller.get_scan_type(), "cm")
+        self.assertEqual(created[0][0], "cm")
 
     def test_start_deep_copies_base_config_and_execute_clears_scan(self):
         created: List[Any] = []
@@ -272,12 +353,37 @@ class DummyController:
         self.status = ScanIOCStatus.RUNNING
         self.message = "running"
         self.data_writing_enabled = True
+        self.config_name = "unit"
+        self.scan_type = "linear"
+        self._dimension_defaults = ("motor", 1.0, 2.0, 5, 0.25)
         self.started_dims: List[ScanDimension] = []
         self.stopped = False
         self.values = {"DET:I0": 123.4, "StatusText": "good", "Flag": 1}
 
     def dimension_defaults(self):
-        return ("motor", 1.0, 2.0, 5, 0.25)
+        return self._dimension_defaults
+
+    def get_config_name(self):
+        return self.config_name
+
+    def set_config_name(self, config_name):
+        config_name = str(config_name).strip()
+        if config_name == "missing":
+            raise KeyError("unknown config: missing")
+        self.config_name = config_name
+        if config_name == "alternate":
+            self._dimension_defaults = ("theta", 3.0, 9.0, 7, 0.5)
+        self.message = "config selected: %s" % config_name
+
+    def get_scan_type(self):
+        return self.scan_type
+
+    def set_scan_type(self, scan_type):
+        scan_type = str(scan_type).strip()
+        if scan_type == "missing":
+            raise ValueError("unknown scan type: missing")
+        self.scan_type = scan_type
+        self.message = "scan type selected: %s" % scan_type
 
     def get_busy(self):
         return True
@@ -340,6 +446,8 @@ class TestGenericScanIOC(unittest.TestCase):
             "OutputFile",
             "DataWritingEnabled",
             "Position",
+            "Config",
+            "ScanType",
             "Actuator",
             "StartPos",
             "StopPos",
@@ -376,6 +484,51 @@ class TestGenericScanIOC(unittest.TestCase):
 
         dim = ioc._read_dimension_from_pvs()
         self.assertEqual(dim, ScanDimension("motor", 10.0, 11.0, 4, 0.75))
+
+    def test_config_callback_updates_selection_and_dimension_defaults(self):
+        controller = DummyController()
+        ioc, builder = self.make_ioc(controller=controller)
+
+        self.loop.run_until_complete(ioc._on_config_update("alternate"))
+
+        self.assertEqual(controller.config_name, "alternate")
+        self.assertEqual(builder.records["Config"].value, "alternate")
+        self.assertEqual(builder.records["Actuator"].value, "theta")
+        self.assertEqual(builder.records["StartPos"].value, 3.0)
+        self.assertEqual(builder.records["StopPos"].value, 9.0)
+        self.assertEqual(builder.records["Steps"].value, 7)
+        self.assertEqual(builder.records["Velocity"].value, 0.5)
+
+    def test_invalid_config_callback_restores_accepted_record_value(self):
+        controller = DummyController()
+        ioc, builder = self.make_ioc(controller=controller)
+        builder.records["Config"].set("missing")
+
+        self.loop.run_until_complete(ioc._on_config_update("missing"))
+
+        self.assertEqual(controller.config_name, "unit")
+        self.assertEqual(builder.records["Config"].value, "unit")
+        self.assertIn("unknown config", controller.message)
+
+    def test_scan_type_callback_updates_selection(self):
+        controller = DummyController()
+        ioc, builder = self.make_ioc(controller=controller)
+
+        self.loop.run_until_complete(ioc._on_scan_type_update("cm"))
+
+        self.assertEqual(controller.scan_type, "cm")
+        self.assertEqual(builder.records["ScanType"].value, "cm")
+
+    def test_invalid_scan_type_callback_restores_accepted_record_value(self):
+        controller = DummyController()
+        ioc, builder = self.make_ioc(controller=controller)
+        builder.records["ScanType"].set("missing")
+
+        self.loop.run_until_complete(ioc._on_scan_type_update("missing"))
+
+        self.assertEqual(controller.scan_type, "linear")
+        self.assertEqual(builder.records["ScanType"].value, "linear")
+        self.assertIn("unknown scan type", controller.message)
 
     def test_stop_callback_forwards_to_controller_and_resets_record(self):
         controller = DummyController()

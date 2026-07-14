@@ -24,7 +24,7 @@ _EPICS_STRING_VALUE_MAX_BYTES = 39
 
 
 def _fit_epics_string(value: Any, *, max_bytes: int = _EPICS_STRING_VALUE_MAX_BYTES) -> str:
-    """Return a string that fits into string records."""
+    """ Return a string that fits into string records (EPICS v3) 39 characters + new line. """
     text = "" if value is None else str(value)
     raw = text.encode("utf-8")
     if len(raw) <= max_bytes:
@@ -32,10 +32,12 @@ def _fit_epics_string(value: Any, *, max_bytes: int = _EPICS_STRING_VALUE_MAX_BY
     return raw[:max_bytes].decode("utf-8", "ignore")
 
 def _output_file_record_value(path: str) -> str:
-    """Return the short value of outputfile."""
+    """ Return the file basename, cut path and extension. """
     if not path:
         return ""
     return _fit_epics_string(os.path.basename(str(path)))
+
+# ------------------ lazy imports
 
 def _load_builder_module() -> Any:
     try:
@@ -68,6 +70,7 @@ def _load_softioc_module() -> Any:
         ) from exc
     return softioc
 
+# ------------------ GenericScanIOC
 
 class GenericScanIOC():
     def __init__(
@@ -114,13 +117,15 @@ class GenericScanIOC():
 
     @staticmethod
     def _normalize_prefix(prefix: str) -> str:
-        """Return prefix without trailing colon.
-
+        """ 
+        Return prefix without trailing colon.
         pythonSoftIOC builder.PushPrefix() handles the separator.
         """
         return str(prefix or "").rstrip(":")
 
     def _loop(self) -> asyncio.AbstractEventLoop:
+        """ Check whether dispatcher loop self._disp.loop exists or sets it up from default """
+
         loop = getattr(getattr(self, "_disp", None), "loop", None)
         if loop is not None:
             return loop
@@ -129,8 +134,7 @@ class GenericScanIOC():
         except RuntimeError:
             return asyncio.get_event_loop()
 
-    # -------------------------
-    # Record creation
+    # ------------------------- Record creation  ----------------------------------
 
     def _register_records(self) -> None:
         actuator, start, stop, steps, velocity = self.controller.dimension_defaults()
@@ -162,6 +166,16 @@ class GenericScanIOC():
             self._on_data_writing_update,
         )
         self._pvs["Position"] = self._float_in("Position", float("nan"), PREC=6, MDEL=-1)
+        self._pvs["Config"] = self._string_out(
+            "Config",
+            self.controller.get_config_name(),
+            self._on_config_update,
+        )
+        self._pvs["ScanType"] = self._string_out(
+            "ScanType",
+            self.controller.get_scan_type(),
+            self._on_scan_type_update,
+        )
         self._pvs["Actuator"] = self._string_out("Actuator", actuator)
         self._pvs["StartPos"] = self._float_out("StartPos", start)
         self._pvs["StopPos"] = self._float_out("StopPos", stop)
@@ -190,6 +204,7 @@ class GenericScanIOC():
 
     @staticmethod
     def _data_record_name(local_name: str) -> str:
+        """ optional record name prefix """
         return local_name if ":" in local_name else "DATA:" + local_name
 
     def _mk_record(self, fn_name: str, name: str, initial_value: Any, **kwargs: Any) -> Any:
@@ -240,6 +255,7 @@ class GenericScanIOC():
         return fn(name, initial_value=initial_value, on_update=on_update, DESC=name, **kwargs)
 
     def _float_in(self, name: str, initial: Any, **kwargs: Any) -> Any:
+        """ create ai record,  disable monitor deadband """
         opts = {"PREC": 6, "MDEL": -1}
         opts.update(kwargs)
         return self._mk_record("aIn", name, initial, **opts)
@@ -258,8 +274,20 @@ class GenericScanIOC():
     def _string_in(self, name: str, initial: Any, **kwargs: Any) -> Any:
         return self._mk_record("stringIn", name, str(initial), **kwargs)
 
-    def _string_out(self, name: str, initial: Any, **kwargs: Any) -> Any:
-        return self._mk_out_record("stringOut", name, str(initial), **kwargs)
+    def _string_out(
+        self,
+        name: str,
+        initial: Any,
+        on_update: Optional[Callable[[Any], Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._mk_out_record(
+            "stringOut",
+            name,
+            str(initial),
+            on_update=on_update,
+            **kwargs,
+        )
 
     def _bool_in(self, name: str, initial: Any, **kwargs: Any) -> Any:
         opts = {"ZNAM": "False", "ONAM": "True"}
@@ -281,7 +309,7 @@ class GenericScanIOC():
         return self._mk_record("mbbIn", name, int(initial), **kwargs)
 
     def runIOC(self) -> None:
-        """Load the softIOC database, initialize Channel Access, and run asyncio."""
+        """ Load the softIOC database, initialize Channel Access, and run asyncio. """
         softioc = _load_softioc_module()
 
         if not self._database_loaded:
@@ -304,8 +332,7 @@ class GenericScanIOC():
         except KeyboardInterrupt:
             logger.info("GenericScanIOC interrupted")
 
-    # -----------------------------------------------
-    # Record update handler
+    # ----------------------------------------------- Record update handler
 
     def _read_dimension_from_pvs(self) -> ScanDimension:
         dim = self.controller.make_dimension(
@@ -353,6 +380,44 @@ class GenericScanIOC():
             logger.exception("Stop request failed")
         finally:
             self._pvs["Stop"].set(False)
+            self.publish_once()
+
+    def _publish_dimension_defaults(self) -> None:
+        """ Publish dimension defaults from the currently selected config. """
+        actuator, start, stop, steps, velocity = (
+            self.controller.dimension_defaults()
+        )
+        self._safe_set(self._pvs["Actuator"], actuator)
+        self._safe_set(self._pvs["StartPos"], start)
+        self._safe_set(self._pvs["StopPos"], stop)
+        self._safe_set(self._pvs["Steps"], steps)
+        self._safe_set(self._pvs["Velocity"], velocity)
+
+    async def _on_config_update(self, value: Any) -> None:
+        requested = str(value).strip()
+        logger.info("Config record update value=%r", requested)
+        try:
+            self.controller.set_config_name(requested)
+            self._publish_dimension_defaults()
+        except Exception as exc:
+            logger.warning("Rejected IOC config selection %r: %s", requested, exc)
+            self.controller.message = str(exc)
+        finally:
+            # Restore the last accepted value after an invalid or busy write.
+            self._safe_set(self._pvs["Config"], self.controller.get_config_name())
+            self.publish_once()
+
+    async def _on_scan_type_update(self, value: Any) -> None:
+        requested = str(value).strip()
+        logger.info("ScanType record update value=%r", requested)
+        try:
+            self.controller.set_scan_type(requested)
+        except Exception as exc:
+            logger.warning("Rejected IOC scan type %r: %s", requested, exc)
+            self.controller.message = str(exc)
+        finally:
+            # Restore the last accepted value after an invalid or busy write.
+            self._safe_set(self._pvs["ScanType"], self.controller.get_scan_type())
             self.publish_once()
 
     async def _on_data_writing_update(self, value: Any) -> None:
@@ -407,6 +472,14 @@ class GenericScanIOC():
         self._safe_set(self._pvs["OutputFile"], output_file)
         self._safe_set(self._pvs["DataWritingEnabled"], data_writing)
         self._safe_set(self._pvs["Position"], pos)
+        self._safe_set(
+            self._pvs["Config"],
+            self.controller.get_config_name(),
+        )
+        self._safe_set(
+            self._pvs["ScanType"],
+            self.controller.get_scan_type(),
+        )
 
         for spec in self.data_pvs:
             record = self._data_records.get(spec.local_name)

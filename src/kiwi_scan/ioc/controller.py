@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin fuer Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-"""Pure-Python controller for the generic kiwi-scan IOC API."""
+""" Pure-Python controller for the generic kiwi-scan IOC API. No deps to softioc"""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from kiwi_scan.datamodels import ScanConfig, ScanDimension
 from kiwi_scan.yaml_loader import yaml_loader
 from kiwi_scan.scan.tools import create_scan_with_config
 from kiwi_scan.scan.tools import load_scan_configs, get_scan_config_dir
+from kiwi_scan.scan.registry import get_available_scan_types
 
 from .datamodels import ScanIOCStatus
 
@@ -74,6 +75,7 @@ class ScanIOCController:
 
     This controller is used by the EPICS interface defined in
     ``generic_scan_ioc.py``.
+    TODO: data interface using kiwi manifests and data loaders for pv_accass
     """
 
     def __init__(
@@ -116,10 +118,33 @@ class ScanIOCController:
         )
         self._log_loaded_config("Loaded IOC base config")
 
-    # --------------------------------------------------------
-    # Configuration
+    # -------------------------------------------------------- Configuration
+
+    def _load_named_config(self, config_name: str) -> ScanConfig:
+        """ Load one named config from ``config_dir``."""
+        if not self.config_dir:
+            raise FileNotFoundError(
+                "no config_dir configured and KIWI_SCAN_CONFIG_DIR is not set"
+            )
+
+        logger.info(
+            "Loading IOC scan config %r from directory: %s",
+            config_name,
+            self.config_dir,
+        )
+        configs = self._config_loader(self.config_dir, self.replacements)
+        logger.debug("Available IOC scan configs: %s", sorted(configs.keys()))
+        try:
+            return configs[str(config_name)]
+        except KeyError as exc:
+            available = ", ".join(sorted(configs)) or "<none>"
+            raise KeyError(
+                "Scan config %r not found in %r. Available configs: %s"
+                % (config_name, self.config_dir, available)
+            ) from exc
 
     def _load_base_config(self) -> ScanConfig:
+        """ Load config from given file """
         if self.config_file:
             path = os.path.abspath(os.path.expanduser(self.config_file))
             logger.info("Loading IOC scan config from file: %s", path)
@@ -129,19 +154,7 @@ class ScanIOCController:
             logger.debug("Loaded config file %s", path)
             return config
 
-        if not self.config_dir:
-            raise FileNotFoundError("no config_dir configured and KIWI_SCAN_CONFIG_DIR is not set")
-        logger.info("Loading IOC scan config %r from directory: %s", self.config_name, self.config_dir)
-        configs = self._config_loader(self.config_dir, self.replacements)
-        logger.debug("Available IOC scan configs: %s", sorted(configs.keys()))
-        try:
-            return configs[str(self.config_name)]
-        except KeyError as exc:
-            available = ", ".join(sorted(configs)) or "<none>"
-            raise KeyError(
-                "Scan config %r not found in %r. Available configs: %s"
-                % (self.config_name, self.config_dir, available)
-            ) from exc
+        return self._load_named_config(str(self.config_name))
 
     def _log_loaded_config(self, message: str) -> None:
         logger.info(
@@ -158,7 +171,8 @@ class ScanIOCController:
         *,
         preserve_data_writing_default: bool,
     ) -> None:
-        """Reload the YAML-backed scan template.
+        """
+        Reload the YAML-backed scan template.
         The caller must hold ``self._lock``.
         Preserves the current IOC DataWritingEnabled setting when preserve_data_writing_default == False
         for PV is a runtime control.
@@ -173,18 +187,84 @@ class ScanIOCController:
                 getattr(self.base_config, "data_writing_enabled", True)
             )
 
+    def _require_idle_unlocked(self) -> None:
+        """ Reject runtime configuration changes while a scan is active. """
+        if self.scan is not None or self.status in (
+            ScanIOCStatus.INITIALIZING,
+            ScanIOCStatus.RUNNING,
+        ):
+            raise RuntimeError(
+                "cannot change scan configuration while a scan is active"
+            )
+
     def reload_config(self) -> None:
-        """Reload the base configuration while no scan is running."""
+        """ Reload the base configuration while no scan is active. """
         with self._lock:
-            if self.get_busy():
-                raise RuntimeError("cannot reload config while a scan is running")
+            self._require_idle_unlocked()
             logger.info("Reloading IOC base config")
             self._reload_base_config_unlocked(preserve_data_writing_default=False)
             self.message = "config reloaded"
             self._log_loaded_config("IOC base config reloaded")
 
+    def get_config_name(self) -> str:
+        """ Return the selected named config, or an empty string in file mode. """
+        with self._lock:
+            return str(self.config_name or "")
+
+    def set_config_name(self, config_name: str) -> None:
+        """ 
+        Select a named config for subsequent scans.
+
+        Runtime switching is limited to configs discoverable in
+        ``config_dir``. An IOC started with ``config_file`` remains in fixed file mode.
+        TODO: search in config_file path as well for switching back/forth from config-file
+        """
+        config_name = str(config_name).strip()
+        if not config_name:
+            raise ValueError("config name must not be empty")
+
+        with self._lock:
+            self._require_idle_unlocked()
+            if self.config_file is not None:
+                raise RuntimeError(
+                    "runtime config switching is unavailable when the IOC "
+                    "was started with config_file"
+                )
+
+            scan_config_loaded = self._load_named_config(config_name)
+
+            # Commit only after loading and validation succeeded. This must not fail. 
+            # Keep the runtime DataWritingEnabled setting unchanged.
+            self.config_name = config_name
+            self.base_config = scan_config_loaded
+            self.message = "config selected: %s" % config_name
+            self._log_loaded_config("Selected IOC base config")
+
+    def get_scan_type(self) -> str:
+        """ Return the scan type selected for subsequent scans. """
+        with self._lock:
+            return str(self.scan_type or "")
+
+    def set_scan_type(self, scan_type: str) -> None:
+        """ Select a registered scan type for subsequent scans. """
+        scan_type = str(scan_type).strip()
+        if not scan_type:
+            raise ValueError("scan type must not be empty")
+
+        available = set(get_available_scan_types())
+        if available and scan_type not in available:
+            raise ValueError(
+                "unknown scan type %r; available types: %s"
+                % (scan_type, ", ".join(sorted(available)))
+            )
+
+        with self._lock:
+            self._require_idle_unlocked()
+            self.scan_type = scan_type
+            self.message = "scan type selected: %s" % scan_type
+
     def dimension_defaults(self) -> Tuple[str, float, float, int, float]:
-        """Return default actuator/start/stop/steps/velocity values for IOC PVs."""
+        """ Return default actuator/start/stop/steps/velocity values for IOC PVs. """
         dims = getattr(self.base_config, "scan_dimensions", None) or []
         if dims:
             dim = dims[0]
@@ -230,8 +310,7 @@ class ScanIOCController:
             velocity=parsed_velocity,
         )
 
-    # ---------------------------------------------------------------
-    # Scan 
+    # --------------------------------------------------------------- Scan 
 
     def create_scan(self, dimensions: Sequence[ScanDimension]) -> Any:
         if not dimensions:
@@ -242,7 +321,7 @@ class ScanIOCController:
         self._reload_base_config_unlocked(preserve_data_writing_default=True)
         self._log_loaded_config("Reloaded IOC scan config for run")
 
-        cfg = copy.deepcopy(self.base_config)
+        cfg = copy.deepcopy(self.base_config) # can be changed
         cfg.scan_dimensions = list(dimensions)
         cfg.data_writing_enabled = bool(self._data_writing_enabled_default)
 
@@ -278,6 +357,7 @@ class ScanIOCController:
                 self.message = str(exc)
                 self.scan = None
                 logger.exception("Failed to prepare IOC scan")
+                # re raise here
                 raise
             logger.info("IOC scan prepared")
             return self.scan
@@ -309,7 +389,7 @@ class ScanIOCController:
             logger.info("IOC scan execution completed")
 
     def run_scan(self, dimensions: Sequence[ScanDimension]) -> None:
-        """Convenience method: create and execute one scan synchronously."""
+        """ Execute scan. This should be executed in its own task (loop.create_task). Obsolete helper function """
         self.start(dimensions)
         self.execute_current_scan()
 
@@ -331,8 +411,7 @@ class ScanIOCController:
                 self.message = str(exc)
             raise
 
-    # ------------------------------------------------------------------
-    # Safe public scan API wrappers
+    # --------------------------------------------------------- Safe public scan API wrappers
 
     def get_busy(self) -> bool:
         with self._lock:
