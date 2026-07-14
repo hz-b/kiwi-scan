@@ -119,6 +119,8 @@ The IOC creates the following control and status records:
 | `KIWI:SCAN:OutputFile` | read | Basename of the active output file limited to 39 characters. |
 | `KIWI:SCAN:DataWritingEnabled` | read/write | Enable or disable scan data writing for future and active scans. |
 | `KIWI:SCAN:Position` | read | Current scan position as reported by the active scan. |
+| `KIWI:SCAN:ScanType` | write | Scan type for subsequent scans. |
+| `KIWI:SCAN:Config` | write | ScanConfig for subsequent scans. |
 
 The IOC also creates one configurable scan dimension:
 

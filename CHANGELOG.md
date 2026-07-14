@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - Added AsyncScanPlugin base class for non-blocking background plugin processing.
+- Added support to the generic scan IOC for runtime selection of the scan configuration and scan type through EPICS records (`Config` and `ScanType`).
+  - Configurations can be changed while the IOC is idle.
+  - Selecting a new configuration automatically updates the default scan dimension parameter records.
+- Added unit tests covering the new runtime IOC configuration.
+
 
 ### Changed
 
