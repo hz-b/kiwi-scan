@@ -86,5 +86,6 @@ test: ## Run the current test scripts (uses mkvenv.sh when needed)
 	python3 tests/test_manifest_writer.py; \
 	python3 tests/test_data_column_provider_writer.py; \
 	python3 tests/test_stats_collector.py; \
-	python3 tests/test_scanlib.py
+	python3 tests/test_scanlib.py; \
+	python3 tests/test_metadata_loader.py
 

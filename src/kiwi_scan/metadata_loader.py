@@ -51,13 +51,21 @@ def _split_header_and_body(path: str) -> Tuple[List[str], List[str]]:
 
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
-            if in_header:
-                header_lines.append(line)
-                # Detect the separator line
-                if line.strip().startswith("# --- metadata above; monitor data below ---"):
-                    in_header = False
-            else:
+            if not in_header:
                 body_lines.append(line)
+                continue
+
+            stripped = line.strip()
+            if stripped.startswith("# --- metadata above; monitor data below ---"):
+                header_lines.append(line)
+                in_header = False
+            elif stripped and not stripped.startswith("#"):
+                # Metadata files without constants start directly with the
+                # tabular column header, so this first non-comment line is body.
+                body_lines.append(line)
+                in_header = False
+            else:
+                header_lines.append(line)
 
     return header_lines, body_lines
 
@@ -123,10 +131,10 @@ def parse_metadata_file(path: str) -> Optional[MetadataFile]:
             dtype={"PV": str, "VALUE": str},
         )
 
-        # Preserve timezone from ISO8601 strings for plotting
+        # Ensure timestamps are UTC-aware datetime
         for col in ("TS-ISO8601", "PV-TS-ISO8601"):
             if col in df_raw.columns:
-                df_raw[col] = pd.to_datetime(df_raw[col], errors="coerce")
+                df_raw[col] = pd.to_datetime(df_raw[col], utc=True, errors="coerce")
 
         # Parse VALUE column
         if "VALUE" in df_raw.columns:
