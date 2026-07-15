@@ -157,6 +157,7 @@ class GenericScanIOC():
         )
         self._pvs["Start"] = self._bool_out("Start", False, self._on_start_update)
         self._pvs["Stop"] = self._bool_out("Stop", False, self._on_stop_update)
+        self._pvs["kill"] = self._int_out("kill", 0, on_update=self._on_kill_update)
         self._pvs["Busy"] = self._bool_in("Busy", False)
         self._pvs["Message"] = self._string_in("Message", "idle")
         self._pvs["OutputFile"] = self._string_in("OutputFile", "")
@@ -382,6 +383,21 @@ class GenericScanIOC():
             self._pvs["Stop"].set(False)
             self.publish_once()
 
+    async def _on_kill_update(self, value: Any) -> None:
+        """Terminate the complete IOC process when a nonzero value is written."""
+        logger.debug("Kill record update value=%r", value)
+        try:
+            command = int(value)
+        except (TypeError, ValueError):
+            logger.warning("Ignoring invalid kill command value=%r", value)
+            return
+
+        if command == 0:
+            return
+
+        logger.critical("Kill PV triggered: terminating GenericScanIOC process")
+        logging.shutdown()
+        os._exit(0)
     def _publish_dimension_defaults(self) -> None:
         """ Publish dimension defaults from the currently selected config. """
         actuator, start, stop, steps, velocity = (
