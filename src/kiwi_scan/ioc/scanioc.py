@@ -92,7 +92,12 @@ def build_arg_parser() -> argparse.ArgumentParser:
         type=int,
         choices=range(0, 6),
         metavar="0-5",
-        help="MBBO-style logging level, mapped through kiwi-scan set_valid_logging_level",
+        default=3,
+        help=(
+            "Initial MBBO-style logging level: 0=NOTSET, 1=DEBUG, 2=INFO, "
+            "3=WARNING, 4=ERROR, 5=CRITICAL. The running IOC can be changed "
+            "through PREFIX:LogLevel."
+        ),
     )
     return parser
 
@@ -133,7 +138,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         level=logging.WARNING,
         format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
     )
-    set_valid_logging_level(args.log_level)
+    if args.log_level == 0:
+        # set_valid_logging_level currently accepts the named levels 1..5.
+        # Keep the documented mbbo value 0 available for NOTSET as well.
+        logging.getLogger().setLevel(logging.NOTSET)
+    else:
+        set_valid_logging_level(args.log_level)
 
     try:
         options = options_from_args(args)

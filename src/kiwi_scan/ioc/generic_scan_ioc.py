@@ -21,6 +21,14 @@ from .datamodels import DataPVSpec, ScanIOCStatus
 logger = logging.getLogger(__name__)
 
 _EPICS_STRING_VALUE_MAX_BYTES = 39
+_LOG_LEVELS = {
+    0: logging.NOTSET,
+    1: logging.DEBUG,
+    2: logging.INFO,
+    3: logging.WARNING,
+    4: logging.ERROR,
+    5: logging.CRITICAL,
+}
 
 
 def _fit_epics_string(value: Any, *, max_bytes: int = _EPICS_STRING_VALUE_MAX_BYTES) -> str:
@@ -36,6 +44,50 @@ def _output_file_record_value(path: str) -> str:
     if not path:
         return ""
     return _fit_epics_string(os.path.basename(str(path)))
+
+
+def _log_level_record_value(level: Any = None) -> int:
+    """Map a Python logging level to the IOC mbbo value 0..5."""
+    if level is None:
+        level = logging.getLogger().level
+
+    try:
+        level = int(level)
+    except (TypeError, ValueError):
+        return 3
+
+    if level <= logging.NOTSET:
+        return 0
+    if level <= logging.DEBUG:
+        return 1
+    if level <= logging.INFO:
+        return 2
+    if level <= logging.WARNING:
+        return 3
+    if level <= logging.ERROR:
+        return 4
+    return 5
+
+
+def _set_log_level_from_record(value: Any) -> int:
+    """Set the root logger from an IOC mbbo value and return that value."""
+    try:
+        record_value = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("log level must be an integer from 0 to 5") from exc
+
+    try:
+        python_level = _LOG_LEVELS[record_value]
+    except KeyError as exc:
+        raise ValueError("log level must be in the range 0..5") from exc
+
+    logging.getLogger().setLevel(python_level)
+    logger.info(
+        "IOC log level changed to %s (%d)",
+        logging.getLevelName(python_level),
+        record_value,
+    )
+    return record_value
 
 # ------------------ lazy imports
 
@@ -165,6 +217,17 @@ class GenericScanIOC():
             "DataWritingEnabled",
             self.controller.get_data_writing_enabled(),
             self._on_data_writing_update,
+        )
+        self._pvs["LogLevel"] = self._mbb_out(
+            "LogLevel",
+            _log_level_record_value(),
+            self._on_log_level_update,
+            ZRST="notset",
+            ONST="debug",
+            TWST="info",
+            THST="warning",
+            FRST="error",
+            FVST="critical",
         )
         self._pvs["Position"] = self._float_in("Position", float("nan"), PREC=6, MDEL=-1)
         self._pvs["Config"] = self._string_out(
@@ -309,6 +372,21 @@ class GenericScanIOC():
     def _mbb_in(self, name: str, initial: Any, **kwargs: Any) -> Any:
         return self._mk_record("mbbIn", name, int(initial), **kwargs)
 
+    def _mbb_out(
+        self,
+        name: str,
+        initial: Any,
+        on_update: Optional[Callable[[Any], Any]] = None,
+        **kwargs: Any,
+    ) -> Any:
+        return self._mk_out_record(
+            "mbbOut",
+            name,
+            int(initial),
+            on_update=on_update,
+            **kwargs,
+        )
+
     def runIOC(self) -> None:
         """ Load the softIOC database, initialize Channel Access, and run asyncio. """
         softioc = _load_softioc_module()
@@ -441,6 +519,18 @@ class GenericScanIOC():
         self.controller.set_data_writing_enabled(bool(value))
         self.publish_once()
 
+    async def _on_log_level_update(self, value: Any) -> None:
+        """Apply a runtime log-level change from the LogLevel mbbo record."""
+        try:
+            _set_log_level_from_record(value)
+        except ValueError as exc:
+            logger.warning("Rejected IOC log level %r: %s", value, exc)
+        finally:
+            self._safe_set(
+                self._pvs["LogLevel"],
+                _log_level_record_value(),
+            )
+
     async def _run_scan_task(self) -> None:
         loop = self._loop()
         logger.info("Running IOC scan in executor")
@@ -480,6 +570,7 @@ class GenericScanIOC():
         message = _fit_epics_string(self.controller.message or "")
         output_file = _output_file_record_value(self.controller.get_output_file())
         data_writing = bool(self.controller.get_data_writing_enabled())
+        log_level = _log_level_record_value()
         pos = self.controller.get_position(default=float("nan"))
 
         self._safe_set(self._pvs["Status"], status)
@@ -487,6 +578,7 @@ class GenericScanIOC():
         self._safe_set(self._pvs["Message"], message)
         self._safe_set(self._pvs["OutputFile"], output_file)
         self._safe_set(self._pvs["DataWritingEnabled"], data_writing)
+        self._safe_set(self._pvs["LogLevel"], log_level)
         self._safe_set(self._pvs["Position"], pos)
         self._safe_set(
             self._pvs["Config"],
