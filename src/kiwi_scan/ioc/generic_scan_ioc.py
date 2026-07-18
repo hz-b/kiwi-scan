@@ -206,6 +206,7 @@ class GenericScanIOC():
             ONST="running",
             TWST="initializing",
             THST="error",
+            THSV="MAJOR",
         )
         self._pvs["Start"] = self._bool_out("Start", False, self._on_start_update)
         self._pvs["Stop"] = self._bool_out("Stop", False, self._on_stop_update)
@@ -444,8 +445,14 @@ class GenericScanIOC():
             logger.info("Submitted IOC scan task")
         except Exception as exc:
             logger.exception("Failed to start scan")
-            self.controller.status = ScanIOCStatus.ERROR
-            self.controller.message = str(exc)
+            if self.controller.status in (
+                ScanIOCStatus.RUNNING,
+                ScanIOCStatus.INITIALIZING,
+            ):
+                # A rejected duplicate Start is not a failure of the active scan.
+                self.controller.set_message(exc)
+            else:
+                self.controller.set_error(exc)
             self._pvs["Start"].set(False)
             self.publish_once()
 

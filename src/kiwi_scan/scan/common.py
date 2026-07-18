@@ -1024,8 +1024,8 @@ class BaseScan(ScanABC):
             pass
         self.busyflag = True
         self._stop_requested.clear()
-        self.write_header_to_output_file()
         try:
+            self.write_header_to_output_file()
             self._start_plugins()
             self._start_subscriptions()
             logging.debug(f"Actuators: {list(self.actuators)}")
@@ -1144,16 +1144,16 @@ class BaseScan(ScanABC):
                 self.append_to_manifest()
         else:
             logging.debug("Data writer disabled, not added to manifest")
-        
+
         monitor = create_monitor(self.cfg)
         monitor_headers = self.build_output_headers(self.include_timestamps)
         if monitor is not None:
             logging.debug("Starting monitor")
             monitor.start(monitor_headers, headers=monitor_headers)
 
-        scan_error: List[Exception] = []
+        scan_errors: List[Exception] = []
 
-        def _run_scan():
+        def _run_scan() -> None:
             try:
                 try:
                     epics.ca.use_initial_context()
@@ -1161,19 +1161,18 @@ class BaseScan(ScanABC):
                     pass
                 self.scan(positions, monitor)
             except Exception as exc:
-                scan_error.append(exc)
+                scan_errors.append(exc)
                 logging.exception("%s scan thread failed", self.__class__.__name__)
-
-        scan_thread = threading.Thread(target=_run_scan)
+        scan_thread = threading.Thread(target=_run_scan, name=f"{self.__class__.__name__}-worker")
         logging.info(f"Starting {self.__class__.__name__}.")
         scan_thread.start()
         if monitor is not None:
             monitor.loop()
         scan_thread.join()
 
-        if scan_error:
-            raise scan_error[0]
-
+        if scan_errors:
+            # Pass failures to upper layer. 
+            raise scan_errors[0]
         logging.info(f"{self.__class__.__name__} scan complete.")
 
     def _prepare_positions(self, positions):

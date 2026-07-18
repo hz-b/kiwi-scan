@@ -118,6 +118,24 @@ class ScanIOCController:
         )
         self._log_loaded_config("Loaded IOC base config")
 
+    @staticmethod
+    def _error_message(exc: BaseException) -> str:
+        """ Returns single-line message for string record. """
+        message = str(exc).replace("\n", " ").replace("\r", " ").strip()
+        return message or type(exc).__name__
+
+    def set_message(self, message: Any) -> None:
+        """ Update  message """
+        text = str(message).replace("\n", " ").replace("\r", " ").strip()
+        with self._lock:
+            self.message = text
+
+    def set_error(self, exc: BaseException) -> None:
+        """ Set IOC error state until the next start. """
+        with self._lock:
+            self.status = ScanIOCStatus.ERROR
+            self.message = self._error_message(exc)
+
     # -------------------------------------------------------- Configuration
 
     def _load_named_config(self, config_name: str) -> ScanConfig:
@@ -354,7 +372,7 @@ class ScanIOCController:
                 self.scan = self.create_scan(dimensions)
             except Exception as exc:
                 self.status = ScanIOCStatus.ERROR
-                self.message = str(exc)
+                self.message = self._error_message(exc)
                 self.scan = None
                 logger.exception("Failed to prepare IOC scan")
                 # re raise here
@@ -377,7 +395,7 @@ class ScanIOCController:
         except Exception as exc:
             with self._lock:
                 self.status = ScanIOCStatus.ERROR
-                self.message = str(exc)
+                self.message = self._error_message(exc)
                 self.scan = None
             logger.exception("IOC scan execution failed")
             raise
@@ -408,7 +426,7 @@ class ScanIOCController:
             logger.exception("Failed to stop scan")
             with self._lock:
                 self.status = ScanIOCStatus.ERROR
-                self.message = str(exc)
+                self.message = self._error_message(exc)
             raise
 
     # --------------------------------------------------------- Safe public scan API wrappers
