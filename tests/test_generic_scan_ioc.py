@@ -126,6 +126,9 @@ class FakeBuilder:
     def mbbIn(self, name: str, initial_value: Any = None, **kwargs: Any):
         return self._record("mbbIn", name, initial_value, **kwargs)
 
+    def mbbOut(self, name: str, initial_value: Any = None, on_update: Any = None, **kwargs: Any):
+        return self._record("mbbOut", name, initial_value, on_update, **kwargs)
+
 
 class FakeDispatcher:
     def __init__(self, loop: Optional[asyncio.AbstractEventLoop] = None):
@@ -445,6 +448,8 @@ class TestGenericScanIOC(unittest.TestCase):
             "Message",
             "OutputFile",
             "DataWritingEnabled",
+            "LogLevel",
+            "kill",
             "Position",
             "Config",
             "ScanType",
