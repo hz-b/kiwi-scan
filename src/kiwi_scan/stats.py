@@ -1,21 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-"""Lightweight running statistics
+"""
+Running statistics
 
-This module provides a tiny subset of the interface compatible to ``river.stats``
-so kiwi-scan can keep online mean/variance calculations without depending on
-River anymore.
-
+This module provides a tiny subset of the interface compatible to ``river.stats``.
 Implemented statistics:
   * Mean: running arithmetic mean
   * Var: running variance
-
-Both classes expose the methods used in the scan engine:
-  * update(x, w=1.0) -> self
-  * get() -> float
-
-They also support ``revert`` and ``update_many``.
 """
 
 from __future__ import annotations
@@ -26,10 +18,8 @@ from typing import Iterable
 
 @dataclass
 class Mean:
-    """Running mean with optional weights.
-
-    The ``n`` attribute mirrors River's meaning: it stores the cumulative
-    weight, which is equal to the sample count when all weights are 1.
+    """
+    Running mean with optional weights.
     """
 
     n: float = 0.0
@@ -78,18 +68,15 @@ class Mean:
 
 
 class Var:
-    """Running variance using a numerically stable online update.
+    """
+    Running variance, Compute variance online using the updated mean, 
+    avoiding storage of all observations.
 
     Parameters
     ----------
     ddof:
         Delta degrees of freedom. The returned variance is ``M2 / (n - ddof)``
         when enough weighted samples have been observed, else ``0.0``.
-
-    Notes
-    -----
-    This follows the same default as ``river.stats.Var(ddof=1)`` and uses a
-    Welford/West-style update for good numerical stability.
     """
 
     def __init__(self, ddof: int = 1):
@@ -116,7 +103,6 @@ class Var:
         delta2 = x - self.mean.get()
         self._m2 += w * delta * delta2
 
-        # Guard against tiny negative round-off after many updates/reverts.
         if self._m2 < 0.0 and abs(self._m2) < 1e-15:
             self._m2 = 0.0
 

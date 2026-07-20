@@ -64,14 +64,14 @@ Homepage = "https://github.com/hz-b/kiwi-scan"
 Repository = "https://github.com/hz-b/kiwi-scan"
 Issues = "https://github.com/hz-b/kiwi-scan/issues"
 
-[project.scripts]
-scan_runner = "kiwi_scan.scan_runner:main"
-actuator_runner = "kiwi_scan.actuator_runner:main"
-scanplotter_cli = "kiwi_scan.scanplotter_cli:main"
-scantrigger_cli = "kiwi_scan.scantrigger_cli:main"
-pollstats_cli = "kiwi_scan.pollstats_cli:main"
-manifestfiles = "kiwi_scan.manifestfiles:main"
-scanioc = "kiwi_scan.ioc.scanioc:main"
+[project.scripts] # TODO: standardize the executable names kiwi-* etc.
+scan_runner = "kiwi_scan.cli.scan_runner:main"
+actuator_runner = "kiwi_scan.cli.actuator_runner:main"
+scanplotter_cli = "kiwi_scan.cli.scanplotter_cli:main"
+scantrigger_cli = "kiwi_scan.cli.scantrigger_cli:main"
+pollstats_cli = "kiwi_scan.cli.pollstats_cli:main"
+manifestfiles = "kiwi_scan.cli.manifestfiles:main"
+scanioc = "kiwi_scan.cli.scanioc:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}

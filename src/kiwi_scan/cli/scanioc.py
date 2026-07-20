@@ -1,8 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin fuer Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-"""Command-line entry point for the generic kiwi-scan IOC."""
-
 from __future__ import annotations
 
 import argparse
@@ -10,15 +8,14 @@ import logging
 import os
 from typing import Any, List, Optional, Sequence
 
+import kiwi_scan
 from kiwi_scan.yaml_loader import get_env_replacements, parse_replacements
-
-from .controller import default_config_dir
-from .datamodels import parse_data_pv_specs
-from .factory import GenericScanIOCOptions, run_ioc
 from kiwi_scan.scan.tools import load_scan_configs
 from kiwi_scan.scan.registry import get_available_scan_types, load_all_scan_types
 from kiwi_scan.scan.tools import set_valid_logging_level
-import kiwi_scan
+from kiwi_scan.ioc.controller import default_config_dir
+from kiwi_scan.ioc.datamodels import parse_data_pv_specs
+from kiwi_scan.ioc.factory import GenericScanIOCOptions, run_ioc
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +28,6 @@ def _safe_config_names(config_dir: Optional[str]) -> List[str]:
     except Exception:
         logger.debug("Could not load config names for CLI help", exc_info=True)
         return []
-
 
 def build_arg_parser() -> argparse.ArgumentParser:
     load_all_scan_types()
