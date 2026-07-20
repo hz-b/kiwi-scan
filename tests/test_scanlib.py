@@ -65,7 +65,7 @@ output_file: scan_results.txt
 
             cmd = [
                 sys.executable,
-                "-m", "kiwi_scan.scan_runner",
+                "-m", "kiwi_scan.cli.scan_runner",
                 "--scan_type", "linear",
                 "--config-file", str(config_file),
                 "--dim", "actuator=x,start=0,stop=1,steps=2"

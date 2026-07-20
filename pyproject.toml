@@ -72,6 +72,8 @@ scantrigger_cli = "kiwi_scan.cli.scantrigger_cli:main"
 pollstats_cli = "kiwi_scan.cli.pollstats_cli:main"
 manifestfiles = "kiwi_scan.cli.manifestfiles:main"
 scanioc = "kiwi_scan.cli.scanioc:main"
+kiwi-convert = "kiwi_scan.cli.convert:main"
+kiwi2spec = "kiwi_scan.cli.kiwi2spec:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
