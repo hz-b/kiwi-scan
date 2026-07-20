@@ -112,23 +112,14 @@ class EpicsPV:
     # ----------------- public API -----------------
 
     def get(self, *, use_monitor: bool = False, timeout: Optional[float] = None) -> Any:
-        """Safe get. If use_monitor=True but cache isn’t ready, falls back to direct get."""
+        """ Get PV and floor timeout """
         pv = self._require_pv()
+        # TODO: change to simply self.timeout if timeout is None?
         t = min(self.timeout, 1.0) if timeout is None else float(timeout)
-
-        def _do_get() -> Any:
-            """ Thread safe usage: self._ca(_do_get) """
-            # First attempt (requested mode)
-            val = pv.get(timeout=t, use_monitor=use_monitor)
-            # Fallback: monitor cache may not be primed yet
-            if val is None and use_monitor:
-                val = pv.get(timeout=t, use_monitor=False)
-            return val
-        
-        return _do_get()
+        return pv.get(timeout=t, use_monitor=use_monitor)
 
     def get_with_metadata(self, *, use_monitor: bool = False, timeout: Optional[float] = None, full: Optional[bool] = False) -> Optional[Dict[str, Any]]:
-        """Return dict with value + timestamp-ish metadata."""
+        """ Return dict with value + timestamp-ish metadata. TODO: how about full meta data? """
         pv = self._require_pv()
         t = min(self.timeout, 0.2) if timeout is None else float(timeout)
 
