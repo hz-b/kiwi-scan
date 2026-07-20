@@ -9,15 +9,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 ### Added
 
 - Added AsyncScanPlugin base class for non-blocking background plugin processing.
-- Added support to the generic scan IOC for runtime selection of the scan configuration and scan type through EPICS records (`Config` and `ScanType`).
-  - Configurations can be changed while the IOC is idle.
-  - Selecting a new configuration automatically updates the default scan dimension parameter records.
-- Added unit tests covering the new runtime IOC configuration.
-
+  - Supports synchronous and asynchronous output columns.
+  - Provides pending/error fallback handling
+  - Drops new snapshots while a worker is busy.
+- Expanded the generic scan IOC API.
+  - Added `Config` and `ScanType` records for changing the scan configuration.
+  - Added a `LogLevel` record for changing the Python logging level at runtime (`notset`, `debug`, `info`, `warning`, `error`, or `critical`).
+  - Added a `kill` record for shutting down the IOC.
+- Added scan-data export framework: `kiwi_scan.io`.
+  - Added loaders for a scan file, an explicit manifest, or the latest manifest.
+  - Added relocation handling for manifest references with invalid absolute paths.
+  - Added SPEC export support and cli (kiwi2spec).
 
 ### Changed
 
-- Made queue plotter monitor headless-safe
+- Made `QueuePlotterMonitor` check for headless systems.
+- Improved standard scan execution and `scan_runner` error handling.
+- Improved generic scan IOC error reporting.
+- Metadata timestamps are now consitently parsed as UTC values.
+- Simplified `EpicsPV.get()` and removed retry to avoid execution time spikes.
+- Moved command-line code to `kiwi_scan.cli`.
+- Changed the default plugin-specific logging level to `WARNING`.
+
+### Fixed
+
+- Fixed loading metadata sidecar files that contain monitor rows but no `metadata_constants` section.
+- Fixed IOC error-state feedback and record alarms for failed scans.
+- Fixed QueuePlotterMonitor startup on systems without a graphical display.
+- Hardened command line tools for exceptions.
 
 ---
 
