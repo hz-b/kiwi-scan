@@ -14,7 +14,8 @@ SCRIPTS = \
     scantrigger_cli \
     pollstats_cli \
     manifestfiles \
-    scanioc
+    scanioc \
+    kiwi2spec
 
 SCRIPT_PATHS = $(foreach script,$(SCRIPTS),$(BASH_COMPLETION_DIR)/$(script))
 

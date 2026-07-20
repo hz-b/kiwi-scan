@@ -1,0 +1,207 @@
+_kiwi2spec_has_option()
+{
+    local wanted=$1
+    local word
+
+    for word in "${COMP_WORDS[@]:1}"; do
+        if [[ $word == "$wanted" || $word == "$wanted="* ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+_kiwi2spec_complete_paths()
+{
+    local value=$1
+    local kind=${2:-file}
+    local cur=$value
+    local candidate
+    local -a matches=()
+
+    if declare -F _filedir >/dev/null 2>&1; then
+        case $kind in
+            dir)
+                _filedir -d
+                ;;
+            manifest)
+                _filedir '@(yaml|yml)'
+                ;;
+            *)
+                _filedir
+                ;;
+        esac
+        return
+    fi
+
+    while IFS= read -r candidate; do
+        case $kind in
+            dir)
+                [[ -d $candidate ]] && matches+=("$candidate")
+                ;;
+            manifest)
+                if [[ -d $candidate || $candidate == *.yaml || $candidate == *.yml ]]; then
+                    matches+=("$candidate")
+                fi
+                ;;
+            *)
+                matches+=("$candidate")
+                ;;
+        esac
+    done < <(compgen -f -- "$value")
+
+    COMPREPLY=("${matches[@]}")
+    compopt -o filenames 2>/dev/null || true
+}
+
+_kiwi2spec_complete_attached_path()
+{
+    local option=$1
+    local value=$2
+    local kind=${3:-file}
+    local item
+    local -a prefixed=()
+
+    _kiwi2spec_complete_paths "$value" "$kind"
+    for item in "${COMPREPLY[@]}"; do
+        prefixed+=("${option}=${item}")
+    done
+    COMPREPLY=("${prefixed[@]}")
+}
+
+_kiwi2spec()
+{
+    local cur=${COMP_WORDS[COMP_CWORD]}
+    local prev=''
+    local source=''
+    local option
+    local -a options=()
+    local -a available=()
+
+    if (( COMP_CWORD > 0 )); then
+        prev=${COMP_WORDS[COMP_CWORD-1]}
+    fi
+
+    # Support --option=value as well as --option value.
+    case $cur in
+        --manifest-file=*)
+            _kiwi2spec_complete_attached_path \
+                --manifest-file "${cur#--manifest-file=}" manifest
+            return
+            ;;
+        --data-file=*)
+            _kiwi2spec_complete_attached_path \
+                --data-file "${cur#--data-file=}" file
+            return
+            ;;
+        --metadata-file=*)
+            _kiwi2spec_complete_attached_path \
+                --metadata-file "${cur#--metadata-file=}" file
+            return
+            ;;
+        --data-dir=*)
+            _kiwi2spec_complete_attached_path \
+                --data-dir "${cur#--data-dir=}" dir
+            return
+            ;;
+        --out=*)
+            _kiwi2spec_complete_attached_path \
+                --out "${cur#--out=}" file
+            return
+            ;;
+        --manifest-index=*)
+            COMPREPLY=( $(compgen -W '0 1 2 3 4 5 6 7 8 9' -- "${cur#--manifest-index=}") )
+            COMPREPLY=( "${COMPREPLY[@]/#/--manifest-index=}" )
+            return
+            ;;
+        --log-level=*)
+            COMPREPLY=( $(compgen -W '0 1 2 3 4 5' -- "${cur#--log-level=}") )
+            COMPREPLY=( "${COMPREPLY[@]/#/--log-level=}" )
+            return
+            ;;
+    esac
+
+    case $prev in
+        --manifest-file)
+            _kiwi2spec_complete_paths "$cur" manifest
+            return
+            ;;
+        --data-file|--metadata-file|--out)
+            _kiwi2spec_complete_paths "$cur" file
+            return
+            ;;
+        --data-dir)
+            _kiwi2spec_complete_paths "$cur" dir
+            return
+            ;;
+        --manifest-index)
+            COMPREPLY=( $(compgen -W '0 1 2 3 4 5 6 7 8 9' -- "$cur") )
+            return
+            ;;
+        --log-level)
+            COMPREPLY=( $(compgen -W '0 1 2 3 4 5' -- "$cur") )
+            return
+            ;;
+        --scan-id|--scan-type)
+            # These are free-form strings.
+            COMPREPLY=()
+            return
+            ;;
+    esac
+
+    if _kiwi2spec_has_option --manifest-file; then
+        source=manifest
+    elif _kiwi2spec_has_option --data-file; then
+        source=data
+    elif _kiwi2spec_has_option --latest-manifest; then
+        source=latest
+    fi
+
+    options=(
+        -h
+        --help
+        --out
+        --no-metadata
+        --include-non-numeric
+        --include-metadata-monitor
+        --log-level
+    )
+
+    case $source in
+        manifest)
+            options+=(--skip-missing-data)
+            ;;
+        data)
+            options+=(--metadata-file --scan-id --scan-type)
+            ;;
+        latest)
+            options+=(--data-dir --manifest-index --skip-missing-data)
+            ;;
+        *)
+            options+=(--manifest-file --data-file --latest-manifest)
+            ;;
+    esac
+
+    # Do not repeatedly offer non-repeatable options already present.
+    for option in "${options[@]}"; do
+        case $option in
+            -h|--help)
+                available+=("$option")
+                ;;
+            *)
+                if ! _kiwi2spec_has_option "$option"; then
+                    available+=("$option")
+                fi
+                ;;
+        esac
+    done
+
+    if [[ $cur == -* ]]; then
+        COMPREPLY=( $(compgen -W "${available[*]}" -- "$cur") )
+    else
+        # kiwi2spec has no positional arguments.
+        COMPREPLY=()
+    fi
+}
+
+complete -F _kiwi2spec kiwi2spec
