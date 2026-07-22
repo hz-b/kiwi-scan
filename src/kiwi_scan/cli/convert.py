@@ -10,7 +10,7 @@ import logging
 from pathlib import Path
 from typing import List, Optional
 
-from kiwi_scan.io import (
+from kiwi_scan.export import (
     available_writers,
     get_writer,
     load_export_bundle_from_latest_manifest,
