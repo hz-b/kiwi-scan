@@ -46,6 +46,13 @@ def _output_file_record_value(path: str) -> str:
     return _fit_epics_string(os.path.basename(str(path)))
 
 
+def _manifest_filename(path: str) -> str:
+    """ Get active manifest filename. """
+    if not path:
+        return ""
+    return _fit_epics_string(os.path.basename(str(path)))
+
+
 def _log_level_record_value(level: Any = None) -> int:
     """Map a Python logging level to the IOC mbbo value 0..5."""
     if level is None:
@@ -210,10 +217,21 @@ class GenericScanIOC():
         )
         self._pvs["Start"] = self._bool_out("Start", False, self._on_start_update)
         self._pvs["Stop"] = self._bool_out("Stop", False, self._on_stop_update)
+        self._pvs["NewManifest"] = self._bool_out(
+            "NewManifest",
+            False,
+            self._on_new_manifest_update,
+            ZNAM="Idle",
+            ONAM="Create",
+        )
         self._pvs["kill"] = self._int_out("kill", 0, on_update=self._on_kill_update)
         self._pvs["Busy"] = self._bool_in("Busy", False)
         self._pvs["Message"] = self._string_in("Message", "idle")
         self._pvs["OutputFile"] = self._string_in("OutputFile", "")
+        self._pvs["ManifestFile"] = self._string_in(
+            "ManifestFile",
+            _manifest_filename(self.controller.get_manifest_file()),
+        )
         self._pvs["DataWritingEnabled"] = self._bool_out(
             "DataWritingEnabled",
             self.controller.get_data_writing_enabled(),
@@ -468,6 +486,22 @@ class GenericScanIOC():
             self._pvs["Stop"].set(False)
             self.publish_once()
 
+    async def _on_new_manifest_update(self, value: Any) -> None:
+        """ Create a new active manifest. """
+        logger.debug("NewManifest record update value=%r", value)
+        if not bool(value):
+            return
+
+        try:
+            path = self.controller.create_new_manifest()
+            logger.info("New manifest selected through IOC: %s", path)
+        except Exception as exc:
+            logger.warning("New manifest request rejected: %s", exc)
+            self.controller.set_message(exc)
+        finally:
+            self._safe_set(self._pvs["NewManifest"], False)
+            self.publish_once()
+
     async def _on_kill_update(self, value: Any) -> None:
         """Terminate the complete IOC process when a nonzero value is written."""
         logger.debug("Kill record update value=%r", value)
@@ -576,6 +610,7 @@ class GenericScanIOC():
         busy = self.controller.get_busy()
         message = _fit_epics_string(self.controller.message or "")
         output_file = _output_file_record_value(self.controller.get_output_file())
+        manifest_file = _manifest_filename(self.controller.get_manifest_file())
         data_writing = bool(self.controller.get_data_writing_enabled())
         log_level = _log_level_record_value()
         pos = self.controller.get_position(default=float("nan"))
@@ -584,6 +619,7 @@ class GenericScanIOC():
         self._safe_set(self._pvs["Busy"], busy)
         self._safe_set(self._pvs["Message"], message)
         self._safe_set(self._pvs["OutputFile"], output_file)
+        self._safe_set(self._pvs["ManifestFile"], manifest_file)
         self._safe_set(self._pvs["DataWritingEnabled"], data_writing)
         self._safe_set(self._pvs["LogLevel"], log_level)
         self._safe_set(self._pvs["Position"], pos)

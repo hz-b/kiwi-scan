@@ -16,6 +16,7 @@ from kiwi_scan.yaml_loader import yaml_loader
 from kiwi_scan.scan.tools import create_scan_with_config
 from kiwi_scan.scan.tools import load_scan_configs, get_scan_config_dir
 from kiwi_scan.scan.registry import get_available_scan_types
+from kiwi_scan.manifestwriter import ManifestWriter
 
 from .datamodels import ScanIOCStatus
 
@@ -137,6 +138,23 @@ class ScanIOCController:
             self.message = self._error_message(exc)
 
     # -------------------------------------------------------- Configuration
+    
+    def create_new_manifest(self) -> str:
+        """ Create and select a new active manifest for subsequent scans when IOC is idle """
+
+        with self._lock:
+            self._require_idle_unlocked()
+            directory = self.data_dir or os.environ.get("KIWI_SCAN_DATA_DIR")
+            path = ManifestWriter.newmanifest(directory=directory)
+            self.message = "new manifest: %s" % os.path.basename(path)
+
+        logger.info("Created and selected new active manifest: %s", path)
+        return path
+
+    def get_manifest_file(self) -> str:
+        """ Return manifest path if available. """
+        with self._lock:
+            return ManifestWriter.get_active_manifest() or ""
 
     def _load_named_config(self, config_name: str) -> ScanConfig:
         """ Load one named config from ``config_dir``."""
