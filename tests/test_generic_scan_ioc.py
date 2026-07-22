@@ -388,6 +388,9 @@ class DummyController:
         self.scan_type = scan_type
         self.message = "scan type selected: %s" % scan_type
 
+    def get_manifest_file(self):
+        return "/path/to/data/manifest_20260722_200610.yaml"
+
     def get_busy(self):
         return True
 
