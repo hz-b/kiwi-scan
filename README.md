@@ -96,6 +96,12 @@ scan_runner \
 - A timestamped file such as `sim_scan-20260401123045.txt` is created. If the file exists, a unique id is created.
 - Even without detectors, the file still contains the scan position and scan timestamp columns.
 
+### Logging
+
+Command-line tools support a `--log-level` argument for setting the logging level using MBBO-style values:
+
+`0` = NOTSET, `1` = DEBUG, `2` = INFO, `3` = WARNING, `4` = ERROR, `5` = CRITICAL.
+
 ## Scan Types
 
 kiwi-scan provides a set of built-in scan engines for common beamline and commissioning workflows, including point-by-point scans, continuous motion scans, polling-based acquisition, and nonlinear approach trajectories. In addition, users can implement and register custom scan types through the scan registry API.

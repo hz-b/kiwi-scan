@@ -113,25 +113,3 @@ kiwi2spec \
   --out beamtime.dat
 ```
 
-## Logging
-
-`--log-level` uses kiwi-scan's MBBO-style levels:
-
-| Value | Level |
-|---:|---|
-| `0` | NOTSET |
-| `1` | DEBUG |
-| `2` | INFO |
-| `3` | WARNING |
-| `4` | ERROR |
-| `5` | CRITICAL |
-
-Example:
-
-```bash
-kiwi2spec \
-  --latest-manifest \
-  --log-level 2 \
-  --out latest.spec
-```
-
