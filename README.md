@@ -18,8 +18,8 @@ Base classes are provided for synchonous and asynchronous plugin processing.
 - **EPICS integration** via pyepics wrapper for or a **simulated actuator backend** for tests and development.
 - **Structured outputs** including the main scan file, optional metadata sidecar logging and waveform support, and post-mortem plotting tools.
 - **Event handling** - Subscriptions route monitored events into defined roles.
-- **Trigger** - Triggers allow actions e.g. before, or after scan points or on monitor events.
-- **IOC** - pythonSiftIOC based generic scan IOC.
+- **Triggers** - Triggers run configured PV writes at named scan phases or on monitor events.
+- **IOC** - pythonSoftIOC-based generic scan IOC.
 - **Monitors** - Flexible machine readable formatted text output and live plotting tool.
 - **Data Export** - Extensible export framework for converting kiwi-scan data to external formats, with built-in support for the SPEC file format.
 
@@ -186,7 +186,7 @@ For detailed description check the plugin user and developer documentation:
 
 ## IOC
 
-For running kiwi-scan as a generic EPICS soft IOC  [ioc.md]((https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md).
+For running kiwi-scan as a generic EPICS soft IOC, see [ioc.md](https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md).
 
 ## kiwi2spec Data Export
 
@@ -203,6 +203,11 @@ After installation, the command line tools are available:
 - `actuator_runner` - actuator commands and run optional monitors + formatted output
 - `scanplotter_cli` - plot scan data, optionally use manifest and file index
 - `pollstats_cli` - online statistics without scan from YAML config
+- `scantrigger_cli` - execute triggers from YAML config
+- `manifestfiles` - list, create, archive, or delete manifest-related files
+- `scanioc` - run the generic scan IOC based on pythonSoftIOC
+- `kiwi-convert` - convert scan data through the generic export framework
+- `kiwi2spec` - export one or more scan data files, including metadata, to SPEC
 - `scantrigger_cli`- execute triggers from YAML config
 - `manifestfiles` - a simple tool to list files referenced in manifests
 - `softioc`- run generic scan IOC based on pythonSoftIOC
@@ -218,6 +223,7 @@ scantrigger_cli --help
 pollstats_cli --help
 manifestfiles --help
 scanioc --help
+kiwi-convert --help
 kiwi2spec --help
 ```
 See the [Makefile helpers](#makefile-helpers) section for information how to install the bash completion scripts.
@@ -280,7 +286,7 @@ The post-mortem plotting tools can combine scan files and metadata files for lat
 - `KIWI_SCAN_PLUGIN_PATH` — extra plugin files/directories to import
 - `KIWI_SCAN_SCAN_PATH` — extra scan-type files/directories to import
 
-See [https://github.com/hz-b/kiwi-scan/blob/master/examples/beamline_env.sh](examples/beamline_env.sh) for a setup example.
+See [examples/beamline_env.sh](https://github.com/hz-b/kiwi-scan/blob/master/examples/beamline_env.sh) for a setup example.
 
 ## Docs
 
