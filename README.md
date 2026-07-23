@@ -210,7 +210,6 @@ After installation, the command line tools are available:
 - `kiwi2spec` - export one or more scan data files, including metadata, to SPEC
 - `scantrigger_cli`- execute triggers from YAML config
 - `manifestfiles` - a simple tool to list files referenced in manifests
-- `softioc`- run generic scan IOC based on pythonSoftIOC
 - `kiwi2spec`- export one or more scan data files, including metadata
 
 Examples:
