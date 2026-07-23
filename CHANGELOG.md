@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-23
+
 ### Added
 
 - Added AsyncScanPlugin base class for non-blocking background plugin processing.
