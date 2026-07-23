@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pandas as pd
 
-from kiwi_scan.io.model import ExportBundle, ExportScan
-from kiwi_scan.io.spec import SpecWriter
+from kiwi_scan.export.model import ExportBundle, ExportScan
+from kiwi_scan.export.spec import SpecWriter
 from kiwi_scan.metadata_loader import MetadataFile
 
 
