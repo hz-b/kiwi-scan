@@ -289,6 +289,8 @@ User and developer documentation:
 - [vim](https://github.com/hz-b/kiwi-scan/blob/master/docs/vim.md) - simple syntax highlighting setup
 - [Stats](https://github.com/hz-b/kiwi-scan/blob/master/docs/stats.md) - kiwi statistics support
 - [SyncController](https://github.com/hz-b/kiwi-scan/blob/master/docs/sync-controller.md) - kiwi synced scan loops
+- [IOC](https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md) - kiwi scan IOC
+- [Converter](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi2spec.md) - data export
 
 ## Development setup
 
