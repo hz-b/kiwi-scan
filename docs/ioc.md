@@ -44,6 +44,7 @@ Use exactly one of:
 ```
 
 `--config NAME` loads `NAME.yaml` from `KIWI_SCAN_CONFIG_DIR` or the default kiwi-scan config directory. `--config-file PATH` loads a specific YAML file directly.
+`--config-file PATH` loads a specific YAML file directly.
 
 Optional configuration arguments:
 
@@ -101,6 +102,7 @@ EPICS PV names and scan data keys may contain colons. Therefore only the final `
 
 ```bash
 --data-pv beta=TESTU171PGM1:Beta
+--log-level 0-5
 ```
 
 uses `TESTU171PGM1:Beta` as the scan data key and defaults to type `float`.
@@ -113,15 +115,18 @@ The IOC creates the following control and status records:
 | --- | --- | --- |
 | `KIWI:SCAN:Start` | write | Write `1` to start a scan. The record is reset to `0` by the IOC. |
 | `KIWI:SCAN:Stop` | write | Write `1` to request scan stop. The record is reset to `0` by the IOC. |
+| `KIWI:SCAN:kill` | write | Write a nonzero value to terminate the IOC process immediately. |
 | `KIWI:SCAN:Status` | read | Scan state: `idle`, `running`, `initializing`, or `error`. |
 | `KIWI:SCAN:Busy` | read | Boolean busy state of the active scan. |
 | `KIWI:SCAN:Message` | read | Short status or error message. |
 | `KIWI:SCAN:OutputFile` | read | Basename of the active output file limited to 39 characters. |
-| `KIWI:SCAN:DataWritingEnabled` | read/write | Enable or disable scan data writing for future and active scans. |
+| `KIWI:SCAN:DataWritingEnabled` | read/write | Enable or disable data and metadata writing for future and active scans. |
+| `KIWI:SCAN:LogLevel` | read/write | Runtime logging level using the `0..5` scale. |
 | `KIWI:SCAN:Position` | read | Current scan position as reported by the active scan. |
-| `KIWI:SCAN:ScanType` | write | Scan type for subsequent scans. |
-| `KIWI:SCAN:Config` | write | ScanConfig for subsequent scans. |
+| `KIWI:SCAN:ScanType` | read/write | Registered scan type for subsequent scans. |
+| `KIWI:SCAN:Config` | read/write | Named configuration for subsequent scans. Empty in `--config-file` mode. |
 
+`Config` and `ScanType` changes are accepted only while no scan is active. Runtime config switching is unavailable when the IOC was started with `--config-file`.
 The IOC also creates one configurable scan dimension:
 
 | PV | Direction | Purpose |
@@ -194,13 +199,15 @@ controller = ScanIOCController(
 )
 ```
 
-The controller is intentionally independent of pythonSoftIOC. It provides methods such as:
+The controller is independent of pythonSoftIOC. Important methods include:
 
 - `dimension_defaults()`
 - `make_dimension(...)`
+- `reload_config()`
+- `get_config_name()` / `set_config_name(name)`
+- `get_scan_type()` / `set_scan_type(name)`
 - `start(dimensions)`
 - `execute_current_scan()`
-- `run_scan(dimensions)`
 - `stop()`
 - `get_busy()`
 - `get_position()`

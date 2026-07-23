@@ -49,20 +49,22 @@ subscriptions: []
 ```
 ### Monitor parameters
 
-Use `monitor_type: print` to stream detector values to stdout. The optional `monitor` block contains monitor-specific parameters. The monitor type stays in the top-level `monitor_type` field.
+Use `monitor_type: print` to stream detector values to stdout. Monitor-specific parameters are grouped below `monitor`, while the selected type stays in the top-level `monitor_type` field.
 
 ```yaml
 monitor_type: print
 monitor:
-  format: tsv              # tsv | csv | json, default: tsv
-  include_header: true     # header row for tsv/csv, default: true
-  include_timestamps: true # add TS-ISO8601-* columns, default: false
-  float_format: ".12e"    # Python float format, default: .12e
+  print:
+    enabled: true
+    format: tsv              # tsv | csv | json, default: tsv
+    include_header: true     # header row for tsv/csv, default: true
+    include_timestamps: true # add TS-ISO8601-* columns, default: false
+    float_format: ".12e"    # Python float format, default: .12e
 ```
 
 For `tsv` and `csv`, one header row is written followed by one row per scan point. For `json`, one JSON object is written per scan point. Diagnostic messages use normal logging, so stdout remains a machine-readable data stream.
 
-`monitor_type: plot` needs no extra monitor parameters.
+`monitor_type: plot` uses optional `monitor.print` settings for stdout and `monitor.plots` for plot panels. See [monitor.md](monitor.md).
 
 ### ActuatorConfig
 

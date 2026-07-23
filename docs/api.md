@@ -11,7 +11,7 @@ For subclasses of `BaseScan`, only the documented constructor and non-private me
 
 ### 1. Startup 
 
-Search and load scan engines and plugins
+Search and load scan engines and plugins:
 
 ```python
 import kiwi_scan
@@ -25,16 +25,21 @@ kiwi_scan.load_all_scan_types()
 Building scan configurations in Python:
 
 - `kiwi_scan.datamodels.ActuatorConfig`
+- `kiwi_scan.datamodels.JogConfig`
 - `kiwi_scan.datamodels.ScanDimension`
 - `kiwi_scan.datamodels.ScanConfig`
+- `kiwi_scan.datamodels.MonitorConfig`
 - `kiwi_scan.datamodels.TriggerAction`
 - `kiwi_scan.datamodels.ScanTriggers`
 - `kiwi_scan.datamodels.SubscriptionConfig`
 
 Loading scan configurations from YAML:
+
 - `kiwi_scan.yaml_loader.yaml_loader`
 - `kiwi_scan.yaml_loader.parse_replacements`
 - `kiwi_scan.yaml_loader.get_env_replacements`
+- `kiwi_scan.yaml_loader.list_required_replacements`
+- `kiwi_scan.yaml_loader.get_replacements_help_and_required`
 
 ### 3. Runtime scan API
 
@@ -46,15 +51,18 @@ Helper functions for creating scan objects:
   - create and execute a scan synchronously
 
 The scan object can be used via its interface defined in kiwi_scan.scan.scan_abs.py.
-Derived scan classes have to implement the following methods:
+Derived scan classes implement the following methods and properties:
 
 - `scan.execute()`
+- `scan.scan(positions, monitor=None)`
 - `scan.load_data()`
 - `scan.get_output_file()`
-- `scan.get_value(name, with_metadata=False)`
+- `scan.get_value(name, default=None, with_metadata=False)`
+- `scan.get_current_row_cache()`
+- `scan.get_current_row_value(key, default=None)`
 - `scan.get_actuator(name)`
 - `scan.get_actuators()`
-- `scan.set_data_writing_enabled()`
+- `scan.set_data_writing_enabled(enabled)`
 - `scan.get_data_writing_enabled()`
 - `scan.busy`
 - `scan.position`
@@ -148,6 +156,13 @@ Load scan data:
 - `kiwi_scan.metadata_loader.parse_metadata_file()`
 
 ### 7. Export converters
+API:
+
+- `kiwi_scan.io.ExportScan`
+- `kiwi_scan.io.ExportBundle`
+- `kiwi_scan.io.load_export_bundle_from_scan_file()`
+- `kiwi_scan.io.load_export_bundle_from_manifest()`
+- `kiwi_scan.io.load_export_bundle_from_latest_manifest()`
 
 Custom export converters can add support for exporting to additional file formats. The package comes with the kiwi2spec converter.
 Registered converters can be selected by name.
@@ -168,6 +183,7 @@ This is an example for embedding `kiwi-scan` in another Python process.
 
 ```python
 import threading
+import time
 import kiwi_scan
 import logging
 
@@ -176,7 +192,7 @@ from kiwi_scan.scan.tools import create_scan_with_config
 
 logging.basicConfig(
     level=logging.INFO,
-    format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s"
+    format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
 )
 
 kiwi_scan.load_all_plugins()
