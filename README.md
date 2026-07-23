@@ -303,6 +303,8 @@ User and developer documentation:
 - [IOC](https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md) - kiwi scan IOC
 - [Converter](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi2spec.md) - data export
 
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hz-b/kiwi-scan)
+
 ## Development setup
 
 For repository development, a top-level `Makefile` and `mkvenv.sh` helper script are provided.
