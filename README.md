@@ -13,14 +13,15 @@ Results are written to timestamped text files. Optional metadata sidecars can re
 
 - **YAML configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots and plugin parameters.
 - **Pluggable scan engines** such as `linear`, `approach`, `poll`, `para`, and `cm`, plus externally registered scan types.
-- **Pluggable runtime extensions** Plugins hook into scan logic and events that can add computed columns or act to monitor events.
+- **Pluggable runtime extensions** - Plugins hook into scan logic and events that can add computed columns or act to monitor events.
 Base classes are provided for synchonous and asynchronous plugin processing.
 - **EPICS integration** via pyepics wrapper for or a **simulated actuator backend** for tests and development.
 - **Structured outputs** including the main scan file, optional metadata sidecar logging and waveform support, and post-mortem plotting tools.
-- **Event handling** Subscriptions route monitored events into defined roles.
-- **Trigger** Triggers allow actions e.g. before, or after scan points or on monitor events.
-- **IOC** pythonSiftIOC based generic scan IOC
-- **Monitors** flexible machine readable formatted text output and live plotting tool
+- **Event handling** - Subscriptions route monitored events into defined roles.
+- **Trigger** - Triggers allow actions e.g. before, or after scan points or on monitor events.
+- **IOC** - pythonSiftIOC based generic scan IOC.
+- **Monitors** - Flexible machine readable formatted text output and live plotting tool.
+- **Data Export** - Extensible export framework for converting kiwi-scan data to external formats, with built-in support for the SPEC file format.
 
 ## Installation
 
@@ -181,6 +182,13 @@ For detailed description check the plugin user and developer documentation:
 
 For running kiwi-scan as a generic EPICS soft IOC  [ioc.md]((https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md).
 
+## kiwi2spec Data Export
+
+kiwi2spec converts one or more kiwi-scan data files, including associated metadata, into the SPEC file format for the use with existing analysis and visualization tools.
+Established EPICS-community tools can further convert SPEC data into formats such as NeXus.
+
+[kiwi2spec](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi2spec.md) 
+
 ## Command-line tools
 
 After installation, the command line tools are available:
@@ -192,6 +200,7 @@ After installation, the command line tools are available:
 - `scantrigger_cli`- execute triggers from YAML config
 - `manifestfiles` - a simple tool to list files referenced in manifests
 - `softioc`- run generic scan IOC based on pythonSoftIOC
+- `kiwi2spec`- export one or more scan data files, including metadata
 
 Examples:
 
@@ -203,6 +212,7 @@ scantrigger_cli --help
 pollstats_cli --help
 manifestfiles --help
 scanioc --help
+kiwi2spec --help
 ```
 See the [Makefile helpers](#makefile-helpers) section for information how to install the bash completion scripts.
 
