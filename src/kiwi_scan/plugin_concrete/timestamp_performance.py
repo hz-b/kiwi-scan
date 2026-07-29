@@ -4,13 +4,12 @@
 from __future__ import annotations
 
 import math
-import numbers
 import time
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from kiwi_scan.plugin.base import ScanPlugin
 from kiwi_scan.plugin.registry import register_plugin
+from kiwi_scan.tools import timestamp_to_seconds
 
 
 @register_plugin("TimestampPerformancePlugin")
@@ -46,6 +45,8 @@ class TimestampPerformancePlugin(ScanPlugin):
         self._previous_point_time: Optional[float] = None
         self._previous_timestamp: Dict[str, float] = {}
 
+        self.logger.debug("Timestamp columns: %s", self._timestamp_columns)
+
     def get_headers(self, timestamps: bool) -> List[str]:
         headers: List[str] = ["PerfPointDeltaS"]
         for timestamp_column in self._timestamp_columns:
@@ -69,8 +70,10 @@ class TimestampPerformancePlugin(ScanPlugin):
         values: List[float] = [point_delta]
 
         for timestamp_column in self._timestamp_columns:
-            timestamp = self._ts2sec(row.get(timestamp_column))
+            raw_timestamp = row.get(timestamp_column)
+            timestamp = timestamp_to_seconds(raw_timestamp)
             if timestamp is None:
+                self.logger.debug("No valid timestamp @ column %s: %r", timestamp_column, raw_timestamp)
                 values.extend([math.nan, math.nan])
                 continue
 
@@ -81,6 +84,7 @@ class TimestampPerformancePlugin(ScanPlugin):
             timestamp_age = reference_time - timestamp
             self._previous_timestamp[timestamp_column] = timestamp
 
+            # self.logger.debug("Timestamp performance column=%s delta=%r age=%r", timestamp_column, timestamp_delta, timestamp_age)
             values.extend([float(timestamp_delta), float(timestamp_age)])
 
         return values
@@ -96,35 +100,3 @@ class TimestampPerformancePlugin(ScanPlugin):
             return math.nan
         return float(current - previous)
 
-    @staticmethod
-    def _ts2sec(value: Any) -> Optional[float]:
-        """ Convert an ISO-8601, datetime, or numeric timestamp to seconds. """
-
-        if value is None:
-            return None
-
-        if isinstance(value, numbers.Real):
-            result = float(value)
-            return result if math.isfinite(result) else None
-
-        if isinstance(value, datetime):
-            timestamp = value
-        else:
-            text = str(value).strip()
-            if not text:
-                return None
-            if text.endswith("Z"):
-                text = text[:-1] + "+00:00"
-            try:
-                timestamp = datetime.fromisoformat(text)
-            except ValueError:
-                return None
-
-        if timestamp.tzinfo is None:
-            timestamp = timestamp.replace(tzinfo=timezone.utc)
-
-        try:
-            result = float(timestamp.timestamp())
-        except (OSError, OverflowError, ValueError):
-            return None
-        return result if math.isfinite(result) else None

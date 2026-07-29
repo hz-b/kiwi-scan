@@ -10,6 +10,8 @@ import pdb
 import unittest
 from unittest import TestCase
 from unittest.mock import patch
+from datetime import datetime, timezone
+from kiwi_scan.tools import timestamp_to_seconds
 from kiwi_scan.scan_concrete.linear import LinearScan
 from kiwi_scan.scan_concrete.approach import ApproachMove
 from kiwi_scan.scan_concrete.cm import CMScan
@@ -488,8 +490,18 @@ class TestApproachMove(unittest.TestCase):
         self.assertEqual(len(self.approach.cfg.actuators), n)        # self.assertEqual(result, expected_value)
         pass
 
+class TestAdditionalScanTypesAndScanTools(unittest.TestCase):
 
-class TestAdditionalScanTypes(unittest.TestCase):
+    def test_timestamp_to_seconds(self):
+        expected = datetime(
+            2026, 7, 29, 12, 0, 0, tzinfo=timezone.utc
+        ).timestamp()
+
+        assert timestamp_to_seconds("2026-07-29T12:00:00Z") == expected
+        assert timestamp_to_seconds(expected) == expected
+        assert timestamp_to_seconds(None) is None
+        assert timestamp_to_seconds("invalid") is None
+
     def test_uncovered_scan_types_initialize(self):
         def connect_actuators(scan):
             scan.actuators = {"motor1": object()}
