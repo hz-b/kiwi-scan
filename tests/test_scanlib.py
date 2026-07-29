@@ -13,6 +13,8 @@ from unittest.mock import patch
 from kiwi_scan.scan_concrete.linear import LinearScan
 from kiwi_scan.scan_concrete.approach import ApproachMove
 from kiwi_scan.scan_concrete.cm import CMScan
+from kiwi_scan.scan_concrete.poll import PollScan
+from kiwi_scan.scan_concrete.para import ParaScan
 from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
 from kiwi_scan.actuator_concrete.undulator import UndulatorViaCAN
 
@@ -401,6 +403,31 @@ class TestApproachMove(unittest.TestCase):
         # And that our scan object sees the same
         self.assertEqual(len(self.approach.cfg.actuators), n)        # self.assertEqual(result, expected_value)
         pass
+
+
+class TestAdditionalScanTypes(unittest.TestCase):
+    def test_uncovered_scan_types_initialize(self):
+        def connect_actuators(scan):
+            scan.actuators = {"motor1": object()}
+
+        def connect_detectors(scan):
+            scan.detector_pvs = []
+            scan.detector_pvs_monitor = True
+
+        for scan_type in (CMScan, PollScan, ParaScan):
+            with self.subTest(scan_type=scan_type.__name__), tempfile.TemporaryDirectory() as tmpdir:
+                config = ScanConfig(
+                    actuators={"motor1": ActuatorConfig(pv="PV:ACT1")},
+                    detector_pvs=[],
+                    scan_dimensions=[ScanDimension("motor1", 0.0, 1.0, 2)],
+                    data_writing_enabled=False,
+                )
+                with patch.object(scan_type, "_connect_actuators", connect_actuators), \
+                     patch.object(scan_type, "_connect_detectors", connect_detectors):
+                    scan = scan_type(config, data_dir=tmpdir)
+
+                self.assertIsInstance(scan, scan_type)
+
 
 class TestUndulatorViaCAN(unittest.TestCase):
     def test_pack_velocities_basic(self):

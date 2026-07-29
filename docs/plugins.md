@@ -285,6 +285,26 @@ ControllerSetpoint
 
 When timestamps are enabled, a timestamp column is also added.
 
+### TimestampPerformancePlugin
+
+This is a simple plugin convinient for performance measurements.
+It requires `include_timestamps: true` where kiwi-scan adds the `TS-...` columns next to each plugin output column.
+
+For each configured detector PV `<PV>`, the plugin adds then:
+
+- `PerfDeltaS-<PV>` — current PV timestamp minus its previous timestamp.
+- `PerfAgeS-<PV>` — plugin wall-clock time minus the current PV timestamp.
+
+Parameters:
+
+```yaml
+include_timestamps: true
+
+plugin_configs:
+  - type: TimestampPerformancePlugin
+    name: timestamp_performance
+```
+
 ## Minimal custom plugin example
 
 Create `plugins/drift_watch.py`:

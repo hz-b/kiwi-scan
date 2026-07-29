@@ -99,7 +99,8 @@ class CMScan(BaseScan):
         sampletime acts as timeout fallback (so it still works without heartbeat).
         Position is taken from sync subscription when available; otherwise RBV is polled.
         """
-        self.write_header_to_output_file()
+        with self._time_block("write:header"):
+            self.write_header_to_output_file()
         index = 0
 
         # initial snapshot; may quickly be overwritten by sync subscription indicated by flag
@@ -118,56 +119,75 @@ class CMScan(BaseScan):
             logging.debug("run_daq: Entered cm scan loop")
             if self._stop_requested.is_set():
                 break
-            if self.get_stop_pv() == 1:
+            with self._time_block("stop:poll", idx=index):
+                stop_pv_value = self.get_stop_pv()
+            if stop_pv_value == 1:
                 super().stop()
-                break 
+                break
             # heartbeat-driven tick plus all configured sync-role updates
             self._arm_sync_controller()
             # self._wait_for_tick_or_timeout(self.sampletime)
             if self._stop_requested.is_set():
                 break
-            self._fire_triggers("after_point")
+            with self._time_block("triggers:after_point", idx=index):
+                self._fire_triggers("after_point")
             # --------------------------------------- block scan task
-            if self.sync_controller.is_enabled():
-                self._wait_for_sync(
-                    timeout_s=self.sampletime,
-                    stop_event=self._stop_requested,
-                )
-            else:
-                if self._stop_requested.wait(self.sampletime):
-                    break
+            with self._time_block("sync:wait", idx=index):
+                if self.sync_controller.is_enabled():
+                    self._wait_for_sync(
+                        timeout_s=self.sampletime,
+                        stop_event=self._stop_requested,
+                    )
+                else:
+                    if self._stop_requested.wait(self.sampletime):
+                        break
             # ---------------------------------------
             if self._stop_requested.is_set():
                 break
 
-            if self.first_actuator.is_ready():
+            with self._time_block("actuator:ready", idx=index):
+                actuator_ready = self.first_actuator.is_ready()
+            if actuator_ready:
                 logging.info("run_daq: First actuator is ready.")
                 break
             # Prefer sync-subscription position; fall back to RBV
-            pos = self.first_actuator.rbv
-            if range_exit.update(pos):
+            with self._time_block("position:read", idx=index):
+                pos = self.first_actuator.rbv
+            with self._time_block("range:update", idx=index):
+                scan_finished = range_exit.update(pos)
+            if scan_finished:
                 logging.info("Scan termination detected at pos=%s", pos)
                 break
             if not range_exit.entered:
                 continue
             if self._position_sync_subscription_set:
                 self._position = pos
-            self._fire_triggers("on_point")
-            vals = self.read_detectors()
-            self.update_current_row_cache(idx=index, pos=pos, values=vals)
+            with self._time_block("daq:point", idx=index):
+                with self._time_block("triggers:on_point", idx=index):
+                    self._fire_triggers("on_point")
+                with self._time_block("read_detectors", idx=index):
+                    vals = self.read_detectors()
+                self.update_current_row_cache(idx=index, pos=pos, values=vals)
 
-            plugin_data = []
-            for plugin in self.plugins:
-                data = plugin.on_scan_point(index, pos)
-                plugin_data += data
-                self.extend_current_row_cache(plugin.get_headers(False), data)
-            vals = vals + plugin_data
+                plugin_data = []
+                with self._time_block("plugins", idx=index):
+                    for plugin in self.plugins:
+                        data = plugin.on_scan_point(index, pos)
+                        plugin_data += data
+                        self.extend_current_row_cache(plugin.get_headers(False), data)
+                vals = vals + plugin_data
 
-            monitor_values = self.save_to_file(pos, vals, self.include_timestamps)
-            # >>> Notify monitor/plotter
-            if monitor is not None:
-                logging.debug(f"{monitor_values}")
-                monitor.update(monitor_values)
+                with self._time_block("write:data", idx=index):
+                    monitor_values = self.save_to_file(
+                        pos,
+                        vals,
+                        self.include_timestamps,
+                    )
+                # >>> Notify monitor/plotter
+                with self._time_block("monitor:update", idx=index):
+                    if monitor is not None:
+                        logging.debug(f"{monitor_values}")
+                        monitor.update(monitor_values)
             index += 1
             if self._maxindex > 0 and index >= self._maxindex:
                 super().stop()
@@ -184,67 +204,84 @@ class CMScan(BaseScan):
         """
         self.busyflag = True
         try:
-            self._start_plugins()
+            with self._time_block("plugins:start"):
+                self._start_plugins()
             # 1) Move each actuator to start position
-            for dim in self.scan_dimensions:
-                name = dim.actuator
-                actuator = self.actuators[name]
-                bdist = -actuator.backlash if dim.stop > dim.start else actuator.backlash
-                overshoot = dim.start + bdist
-                logging.info(f"overshoot={overshoot}, bdist={bdist}, backlash={actuator.backlash}")
-                try:
-                    actuator.run_move(overshoot, sync=True)
-                    logging.info(f"Started actuator '{name}' moving to {dim.start}")
-                except Exception as e:
-                    logging.warning(f"Failed to move actuator '{name}': {e}")
+            with self._time_block("move:to_start"):
+                for dim in self.scan_dimensions:
+                    name = dim.actuator
+                    actuator = self.actuators[name]
+                    bdist = -actuator.backlash if dim.stop > dim.start else actuator.backlash
+                    overshoot = dim.start + bdist
+                    logging.info(f"overshoot={overshoot}, bdist={bdist}, backlash={actuator.backlash}")
+                    try:
+                        actuator.run_move(overshoot, sync=True)
+                        logging.info(f"Started actuator '{name}' moving to {dim.start}")
+                    except Exception as e:
+                        logging.warning(f"Failed to move actuator '{name}': {e}")
             # 2) Store all original velocities
-            for name, actuator in self.actuators.items():
-                try:
-                    vel = actuator.get_velocity()
-                    if vel is None:
-                        logging.warning("Could not read original velocity for actuator '%s'; velocity restore will be skipped", name)
-                        continue
-                    self._original_velocities[name] = vel
-                    logging.info(f"Stored velocity for actuator '{name}': {vel}")
-                except Exception as e:
-                    logging.warning(f"Could not read velocity for actuator '{name}': {e}")
+            with self._time_block("velocity:read"):
+                for name, actuator in self.actuators.items():
+                    try:
+                        vel = actuator.get_velocity()
+                        if vel is None:
+                            logging.warning("Could not read original velocity for actuator '%s'; velocity restore will be skipped", name)
+                            continue
+                        self._original_velocities[name] = vel
+                        logging.info(f"Stored velocity for actuator '{name}': {vel}")
+                    except Exception as e:
+                        logging.warning(f"Could not read velocity for actuator '{name}': {e}")
 
             # 3) Set target velocities and start each actuator
-            #  start CA monitors BEFORE motion begins 
-            self._start_metadata_monitor()
-            self._fire_triggers("before")
-            for dim in self.scan_dimensions:
-                name = dim.actuator
-                actuator = self.actuators[name]
-                try:
-                    actuator.set_velocity(dim.velocity)
-                    logging.info(f"Set velocity of actuator '{name}' to {dim.velocity}")
-                    actuator.run_move(dim.stop, sync=False, wait_startup=True)
-                    logging.info(f"Started actuator '{name}' moving to {dim.stop}")
-                except Exception as e:
-                    logging.warning(f"Failed to configure/startup actuator '{name}': {e}")
-            self._start_subscriptions()
+            # start CA monitors BEFORE motion begins
+            with self._time_block("metadata:start"):
+                self._start_metadata_monitor()
+            with self._time_block("triggers:before"):
+                self._fire_triggers("before")
+            with self._time_block("move:start"):
+                for dim in self.scan_dimensions:
+                    name = dim.actuator
+                    actuator = self.actuators[name]
+                    try:
+                        actuator.set_velocity(dim.velocity)
+                        logging.info(f"Set velocity of actuator '{name}' to {dim.velocity}")
+                        actuator.run_move(dim.stop, sync=False, wait_startup=True)
+                        logging.info(f"Started actuator '{name}' moving to {dim.stop}")
+                    except Exception as e:
+                        logging.warning(f"Failed to configure/startup actuator '{name}': {e}")
+            with self._time_block("subscriptions:start"):
+                self._start_subscriptions()
 
             # 4) DAQ loop on primary actuator
-            self.run_daq(monitor)
+            with self._time_block("daq:run"):
+                self.run_daq(monitor)
         finally:
-            self._restore_original_velocities()
-            try:
-                self._end_plugins()
-            finally:
-                self._close_plugins()
-            self._stop_metadata_monitor()
+            with self._time_block("velocity:restore"):
+                self._restore_original_velocities()
+            with self._time_block("plugins:stop"):
+                try:
+                    self._end_plugins()
+                finally:
+                    self._close_plugins()
+            with self._time_block("metadata:stop"):
+                self._stop_metadata_monitor()
             # MonoCMScan overrides BaseScan.scan(), so it must clear subscriptions itself
-            try:
-                self._stop_subscriptions()
-            except Exception:
-                logging.exception("Error stopping scan subscriptions")
+            with self._time_block("subscriptions:stop"):
+                try:
+                    self._stop_subscriptions()
+                except Exception:
+                    logging.exception("Error stopping scan subscriptions")
             
-            if monitor is not None:
-                monitor.close()
+            with self._time_block("monitor:close"):
+                if monitor is not None:
+                    monitor.close()
 
-            self._fire_triggers("after")
-            self.busyflag = False
+            try:
+                with self._time_block("triggers:after"):
+                    self._fire_triggers("after")
+            finally:
+                self.busyflag = False
+                self._perf_report()
 
     def execute(self):
         self._execute_standard(None)

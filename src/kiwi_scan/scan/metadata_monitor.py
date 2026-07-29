@@ -31,6 +31,9 @@ class MetadataCAMonitor:
         self._stop = threading.Event()
         self._writer_thread: Optional[threading.Thread] = None
         self._pvobjs: List[PV] = []
+        self._drop_lock = threading.Lock()
+        self._dropped_events = 0
+        self._last_drop_warning_monotonic = 0.0
 
     # ---------- public API ----------
     def start(self) -> None:
@@ -95,7 +98,21 @@ class MetadataCAMonitor:
         if self._writer_thread:
             self._writer_thread.join(timeout=join_timeout)
             self._writer_thread = None
-        logging.info("MetadataCAMonitor: stopped.")
+        dropped = self.get_drop_count()
+        if dropped:
+            logging.warning( "MetadataCAMonitor: stopped with %d dropped queue event(s).", dropped)
+        else:
+            logging.debug("MetadataCAMonitor: stopped with no dropped queue events.")
+
+    def get_drop_count(self) -> int:
+        """Return the number of monitor events dropped because the queue was full."""
+        with self._drop_lock:
+            return self._dropped_events
+
+    @property
+    def dropped_events(self) -> int:
+        """Number of queue-full drops recorded since this monitor was created."""
+        return self.get_drop_count()
 
     # ---------- internals ----------
     def _write_header(self) -> None:
@@ -158,7 +175,7 @@ class MetadataCAMonitor:
                         value = None
 
                 row = [
-                    datetime.now().astimezone().isoformat(),
+                    datetime.now(tz=timezone.utc).isoformat(),
                     pvname,
                     self._fmt_value(value),
                     self._ts_to_iso(ts),
@@ -172,7 +189,7 @@ class MetadataCAMonitor:
     def _on_event(self, **kwargs) -> None:
         try:
             event = {
-                "recv_ts": datetime.now().astimezone().isoformat(),
+                "recv_ts": datetime.now(tz=timezone.utc).isoformat(),
                 "pv": kwargs.get("pvname") or kwargs.get("pv") or "UNKNOWN",
                 "value": kwargs.get("value"),
                 "pv_ts": self._ts_to_iso(kwargs.get("timestamp")),
@@ -182,8 +199,24 @@ class MetadataCAMonitor:
             try:
                 self._q.put_nowait(event)
             except Full:
-                if (int(time.time()) % 5) == 0:
-                    logging.warning("MetadataCAMonitor: queue full, dropping events.")
+                now = time.monotonic()
+                with self._drop_lock:
+                    self._dropped_events += 1
+                    dropped = self._dropped_events
+                    warn = (
+                        now - self._last_drop_warning_monotonic >= 5.0
+                    )
+                    if warn:
+                        self._last_drop_warning_monotonic = now
+
+                if warn:
+                    logging.warning(
+                        "MetadataCAMonitor: queue full; dropped_events=%d "
+                        "queue_size=%d queue_maxsize=%d",
+                        dropped,
+                        self._q.qsize(),
+                        self._q.maxsize,
+                    )
         except Exception as e:
             logging.error("MetadataCAMonitor: callback error: %s", e, exc_info=True)
 
@@ -193,7 +226,7 @@ class MetadataCAMonitor:
             if ts is None:
                 return ""
             if isinstance(ts, (int, float)):
-                return datetime.fromtimestamp(float(ts)).astimezone().isoformat()
+                return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
             return str(ts)
         except Exception:
             return ""

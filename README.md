@@ -109,6 +109,10 @@ kiwi-scan provides a set of built-in scan engines for common beamline and commis
 For detailed description check the kiwi scan type documentation
 [Kiwi Scan types](https://github.com/hz-b/kiwi-scan/blob/master/docs/scans.md)
 
+Built-in performance measurement can measure scan operations.
+
+See [Performance testing](https://github.com/hz-b/kiwi-scan/blob/master/docs/performance.md)
+
 ## SyncController
 
 
@@ -302,6 +306,8 @@ User and developer documentation:
 - [SyncController](https://github.com/hz-b/kiwi-scan/blob/master/docs/sync-controller.md) - kiwi synced scan loops
 - [IOC](https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md) - kiwi scan IOC
 - [Converter](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi2spec.md) - data export
+- [Performance testing](https://github.com/hz-b/kiwi-scan/blob/master/docs/performance.md) - performance reports
+- [README.md](https://github.com/hz-b/kiwi-scan/blob/master/README.md) - current readme
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hz-b/kiwi-scan)
 

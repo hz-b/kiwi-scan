@@ -208,8 +208,10 @@ class BaseScan(ScanABC):
 
     def _perf_report(self) -> None:
         """Print a compact summary once at the end of a scan."""
-        if not self._perf_enabled or not self._perf:
+        if not self._perf_enabled:
             return
+
+        metadata_queue_drops = self.get_metadata_queue_drop_count()
 
         def p95(values: List[float]) -> float:
             if not values:
@@ -218,7 +220,7 @@ class BaseScan(ScanABC):
             k = int(0.95 * (len(vs) - 1))
             return vs[k]
 
-        print("========== PERF SUMMARY ==========")
+        print("========== PERFORMANCE SUMMARY ==========")
         for name, values in sorted(self._perf.items()):
             n = len(values)
             if n == 0:
@@ -236,7 +238,13 @@ class BaseScan(ScanABC):
                 "[PERF] %-20s n=%d total=%.3fs mean=%.6fs p95=%.6fs max=%.6fs",
                 name, n, total, mean, p95(values), mx
             )
-        print("==================================")
+        print(f"[PERF] {'metadata_queue_drops':<20} count={metadata_queue_drops}")
+        logging.info(
+            "[PERF] %-20s count=%d",
+            "metadata_queue_drops",
+            metadata_queue_drops,
+        )
+        print("==========================================")
 
     # -------------------- subscription/callback integration --------------------
 
@@ -493,6 +501,28 @@ class BaseScan(ScanABC):
             logging.exception("Error stopping metadata monitor")
         finally:
             self._meta_mon_started = False
+
+    def get_metadata_queue_drop_count(self) -> int:
+        """Return metadata monitor queue drops for diagnostics/performance reports."""
+        monitor = getattr(self, "_meta_mon", None)
+        if monitor is None:
+            return 0
+
+        getter = getattr(monitor, "get_drop_count", None)
+        if callable(getter):
+            try:
+                return int(getter())
+            except Exception:
+                logging.debug(
+                    "Failed to read metadata monitor drop count",
+                    exc_info=True,
+                )
+                return 0
+
+        try:
+            return int(getattr(monitor, "dropped_events", 0) or 0)
+        except (TypeError, ValueError):
+            return 0
 
     def read_detectors(self) -> List[Any]:
         """
