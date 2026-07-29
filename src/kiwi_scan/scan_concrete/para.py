@@ -244,6 +244,11 @@ class ParaScan(BaseScan):
 
             with self._time_block("read_detectors", idx=index):
                 vals = self.read_detectors()
+            self.update_current_row_cache(
+                idx=index,
+                pos=current_position,
+                values=vals,
+            )
 
             with self._time_block("triggers:after_point", idx=index):
                 self._fire_triggers("after_point")
@@ -251,7 +256,9 @@ class ParaScan(BaseScan):
             plugin_data: List[Any] = []
             with self._time_block("plugins", idx=index):
                 for plugin in self.plugins:
-                    plugin_data += plugin.on_scan_point(index, current_position)
+                    data = plugin.on_scan_point(index, current_position)
+                    plugin_data += data
+                    self.extend_current_row_cache(plugin.get_headers(False), data)
             vals = vals + plugin_data
 
             with self._time_block("write:data", idx=index):

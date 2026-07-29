@@ -149,11 +149,18 @@ class PollScan(BaseScan):
                 self._fire_triggers("on_point")
                 # logging.debug("Read detectors")
                 vals = self.read_detectors()
+                self.update_current_row_cache(
+                    idx=index,
+                    pos=current_position,
+                    values=vals,
+                )
                 self._fire_triggers("after_point")
                 # plugin data
                 plugin_data = []
                 for plugin in self.plugins:
-                    plugin_data += plugin.on_scan_point(index, current_position)
+                    data = plugin.on_scan_point(index, current_position)
+                    plugin_data += data
+                    self.extend_current_row_cache(plugin.get_headers(False), data)
 
                 vals = vals + plugin_data
                 self.save_to_file(current_position, vals, self.include_timestamps)
