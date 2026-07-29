@@ -205,15 +205,57 @@ class SubscriptionConfig:
     # used only when actuator is set
     source: Optional[str] = None
 
+    @staticmethod
+    def _is_configured(value: Optional[str]) -> bool:
+        return value is not None and bool(str(value).strip())
+
+    def validate(self) -> None:
+        """ Validate subscription config before scan. """
+        name = "" if self.name is None else str(self.name).strip()
+        role = "" if self.role is None else str(self.role).strip()
+
+        if not name:
+            raise ValueError("Subscription must define a non-empty name")
+        if not role:
+            raise ValueError( f"Subscription {name} must define a non-empty role")
+
+        has_pv = self._is_configured(self.pv)
+        has_actuator = self._is_configured(self.actuator)
+
+        if has_pv and has_actuator:
+            raise ValueError(f"Subscription '{name}' must define exactly one of 'pv' or 'actuator', not both")
+        if not has_pv and not has_actuator:
+            raise ValueError(
+                f"Subscription '{name}' must define exactly one of "
+                "'pv' or 'actuator'. For a direct PV subscription, "
+                "add a 'pv' field."
+            )
+        if self._is_configured(self.source) and not has_actuator:
+            raise ValueError(
+                f"Subscription '{name}' defines 'source', but 'source' is "
+                "only valid together with 'actuator'"
+            )
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SubscriptionConfig":
-        return cls(
+        if not isinstance(data, dict):
+            raise TypeError(f"Subscription entry must be a mapping, got {type(data).__name__}")
+
+        missing = [key for key in ("name", "role") if key not in data]
+        if missing:
+            raise ValueError("Subscription entry missing, required: "
+                + ", ".join(missing)
+            )
+
+        config = cls(
             name=data["name"],
             role=data["role"],
             pv=data.get("pv"),
             actuator=data.get("actuator"),
             source=data.get("source"),
         )
+        config.validate()
+        return config
 
 @dataclass
 class MonitorConfig:
@@ -277,6 +319,30 @@ class ScanConfig:
     metadata_file: str = "scan_metadata.txt"                        # sidecar filename
     subscriptions: List[SubscriptionConfig] = field(default_factory=list)
 
+    def validate(self) -> None:
+        """ Validate and normalize configuration via API """
+        subscriptions_raw = self.subscriptions or []
+        if not isinstance(subscriptions_raw, list):
+            raise ValueError("'subscriptions' must be a list of mappings")
+
+        validated_subscriptions: List[SubscriptionConfig] = []
+        for index, subscription in enumerate(subscriptions_raw):
+            try:
+                if isinstance(subscription, dict):
+                    subscription = SubscriptionConfig.from_dict(subscription)
+                elif isinstance(subscription, SubscriptionConfig):
+                    subscription.validate()
+                else:
+                    raise TypeError(
+                        "Subscription entry must be a mapping or "
+                        f"SubscriptionConfig, got {type(subscription).__name__}"
+                    )
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid subscriptions[{index}]: {exc}") from exc
+            validated_subscriptions.append(subscription)
+
+        self.subscriptions = validated_subscriptions
+
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "ScanConfig":
         known_keys = {f.name for f in fields(cls)}
@@ -298,10 +364,19 @@ class ScanConfig:
         # logging.info(f"TRIGGERS_RAW:{triggers_raw}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         triggers = ScanTriggers.from_dict(triggers_raw) if triggers_raw else None
 
-        # Parse subscriptions
+        # Parse and validate subscriptions
+        subscriptions_raw = config_dict.get("subscriptions", [])
+        if subscriptions_raw is None:
+            subscriptions_raw = []
+        if not isinstance(subscriptions_raw, list):
+            raise ValueError("'subscriptions' must be a list of mappings")
+
         subs = []
-        for sub_data in config_dict.get("subscriptions", []):
-            subs.append(SubscriptionConfig.from_dict(sub_data))
+        for index, sub_data in enumerate(subscriptions_raw):
+            try:
+                subs.append(SubscriptionConfig.from_dict(sub_data))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid subscriptions[{index}]: {exc}") from exc
 
         monitor = MonitorConfig.from_dict(config_dict.get("monitor"))
         manifest_mode = str(config_dict.get("manifest_mode", "full")).strip().lower()

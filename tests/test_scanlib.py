@@ -18,7 +18,13 @@ from kiwi_scan.scan_concrete.para import ParaScan
 from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
 from kiwi_scan.actuator_concrete.undulator import UndulatorViaCAN
 
-from kiwi_scan.datamodels import ActuatorConfig, ScanDimension, ScanConfig, JogConfig
+from kiwi_scan.datamodels import (
+    ActuatorConfig,
+    JogConfig,
+    ScanConfig,
+    ScanDimension,
+    SubscriptionConfig,
+)
 
 class TestKiwiScanInstall(unittest.TestCase):
     def test_clean_install_in_temp_venv(self):
@@ -83,6 +89,43 @@ output_file: scan_results.txt
             self.assertEqual(result.returncode, 0, msg=result.stderr)
             # self.assertIn("Scan Type:", result.stdout) # obsolete because output is suppressed and converted to logging.info
 
+    def test_scan_runner_rejects_invalid_subscription_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            config_file = tmp_path / "invalid-subscription.yaml"
+            config_file.write_text(
+                """
+actuators:
+  x:
+    type: sim
+    pv: TEST:PV
+
+detector_pvs: []
+subscriptions:
+  - name: TEST:fb:AI0
+    role: sync
+""",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m", "kiwi_scan.cli.scan_runner",
+                    "--scan_type", "linear",
+                    "--config-file", str(config_file),
+                    "--dim", "actuator=x,start=0,stop=1,steps=2",
+                ],
+                capture_output=True,
+                text=True,
+                cwd=tmp_path,
+            )
+
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("Invalid subscriptions[0]", result.stderr)
+            self.assertIn("add a 'pv' field", result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+
 class TestScanDimension(unittest.TestCase):
     def test_from_dict_known_fields(self):
         data = {'actuator': 'x', 'start': 0.0, 'stop': 1.0, 'steps': 5, 'velocity': 0.2}
@@ -135,6 +178,47 @@ class TestScanDimension(unittest.TestCase):
         self.assertEqual(ScanDimension.get_actuators(dims), ['x', 'y'])
 
 class TestScanConfigParsing(unittest.TestCase):
+
+    def test_subscription_requires_pv_or_actuator(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            "must define exactly one of 'pv' or 'actuator'",
+        ):
+            SubscriptionConfig.from_dict(
+                {
+                    "name": "TEST:fb:AI0",
+                    "role": "sync",
+                }
+            )
+
+    def test_subscription_rejects_pv_and_actuator_together(self):
+        with self.assertRaisesRegex(ValueError, "not both"):
+            SubscriptionConfig.from_dict(
+                {
+                    "name": "position",
+                    "role": "sync",
+                    "pv": "TEST:fb:AI0",
+                    "actuator": "motor1",
+                }
+            )
+
+    def test_scan_config_reports_subscription_index(self):
+        raw = {
+            "actuators": {},
+            "detector_pvs": [],
+            "subscriptions": [
+                {
+                    "name": "TEST:fb:AI0",
+                    "role": "sync",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(
+            ValueError,
+            r"Invalid subscriptions\[0\].*add a 'pv' field",
+        ):
+            ScanConfig.from_dict(raw)
 
     def test_actuator_config_with_extras_and_defaults(self):
         raw = {

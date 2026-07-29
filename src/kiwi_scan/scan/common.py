@@ -59,6 +59,8 @@ class BaseScan(ScanABC):
         logging.debug("Init BaseScan")
         self.busyflag = False
         self.cfg = config
+        # Validate 
+        self.cfg.validate()
         self.scan_type = self.__class__.__name__
         # Perform config cleanup
         self._validate_and_filter_actuators()
@@ -1192,7 +1194,6 @@ class BaseScan(ScanABC):
                 self.scan(positions, monitor)
             except Exception as exc:
                 scan_errors.append(exc)
-                logging.exception("%s scan thread failed", self.__class__.__name__)
         scan_thread = threading.Thread(target=_run_scan, name=f"{self.__class__.__name__}-worker")
         logging.info(f"Starting {self.__class__.__name__}.")
         scan_thread.start()
