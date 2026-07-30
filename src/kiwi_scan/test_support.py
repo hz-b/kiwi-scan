@@ -3,7 +3,6 @@ from __future__ import annotations
 from types import ModuleType, SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional
 
-
 class FakeRawPV:
     """Minimal raw-PV stub used behind fake EpicsPV-like wrappers."""
 

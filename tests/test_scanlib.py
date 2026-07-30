@@ -526,6 +526,17 @@ class TestAdditionalScanTypesAndScanTools(unittest.TestCase):
                 self.assertIsInstance(scan, scan_type)
 
 class TestSimulatedActuatorReadyState(unittest.TestCase):
+    def test_simulation_does_not_provide_pv_monitors(self):
+        actuator = SimulatedActuator(
+            ActuatorConfig(
+                pv="SIM:ACT",
+                dwell_time=0.0,
+            )
+        )
+
+        # SubscriptionManager will therefore use its direct EpicsPV fallback.
+        self.assertFalse(actuator.supports_monitors())
+
     def test_ready_value_matches_simulated_status(self):
         actuator = SimulatedActuator(
             ActuatorConfig(

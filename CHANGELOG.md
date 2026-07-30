@@ -14,11 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Added `TimestampPerformancePlugin` for detector timestamp diagnostics.
 - Added reusable timestamp conversion for the time stamp data columns.
 - Added metadata-monitor queue diagnostics.
+- Added support for endless motion to sim actuator
 
 ### Changed
 
 - Scan and subscription configurations are now validated before scan startup.
 - Metadata monitor timestamps and numeric PV timestamps are consitently written in UTC.
+- Cleaned up monitor backend tests
 
 ### Fixed
 
