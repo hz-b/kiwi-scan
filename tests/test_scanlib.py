@@ -18,6 +18,7 @@ from kiwi_scan.scan_concrete.cm import CMScan
 from kiwi_scan.scan_concrete.poll import PollScan
 from kiwi_scan.scan_concrete.para import ParaScan
 from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
+from kiwi_scan.actuator_concrete.single_simulation import SimulatedActuator
 from kiwi_scan.actuator_concrete.undulator import UndulatorViaCAN
 
 from kiwi_scan.datamodels import (
@@ -523,6 +524,41 @@ class TestAdditionalScanTypesAndScanTools(unittest.TestCase):
                     scan = scan_type(config, data_dir=tmpdir)
 
                 self.assertIsInstance(scan, scan_type)
+
+class TestSimulatedActuatorReadyState(unittest.TestCase):
+    def test_ready_value_matches_simulated_status(self):
+        actuator = SimulatedActuator(
+            ActuatorConfig(
+                pv="SIM:ACT",
+                ready_value=0,
+                dwell_time=0.0,
+            )
+        )
+
+        self.assertTrue(actuator.is_ready())
+        self.assertFalse(actuator.is_moving())
+
+        actuator.move(1.0)
+
+        self.assertFalse(actuator.is_ready())
+        self.assertTrue(actuator.is_moving())
+
+        actuator.stop()
+
+        self.assertTrue(actuator.is_ready())
+        self.assertFalse(actuator.is_moving())
+
+    def test_unreachable_ready_value_simulates_endless_motion(self):
+        actuator = SimulatedActuator(
+            ActuatorConfig(
+                pv="SIM:TIME",
+                ready_value=-1,
+                dwell_time=0.0,
+            )
+        )
+
+        self.assertFalse(actuator.is_ready())
+        self.assertTrue(actuator.is_moving())
 
 
 class TestUndulatorViaCAN(unittest.TestCase):

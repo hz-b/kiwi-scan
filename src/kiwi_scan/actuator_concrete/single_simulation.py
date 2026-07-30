@@ -11,19 +11,14 @@ from kiwi_scan.actuator.single import AbstractActuator
 
 
 class VirtualEventBus:
-    """A tiny in-process "PV" event bus for simulation.
+    """
+    Virtual event bus for PV monitoring.Scan engines can subscribe to a PV name, 
+    receive published values.
 
-    This is meant to back the monitor/callback feature in the
-    :class:`~scan.actuator_concrete.single_simulation.SimulatedActuator`.
-
-    Semantics:
-      * ``subscribe(pvname, cb)`` registers a callback like a pyepics callback:
-        ``cb(pvname=..., value=..., **kwargs)``.
-      * ``publish(pvname, value, **kwargs)`` calls all subscribers.
-      * ``unsubscribe(token)`` removes a subscription.
-
-    It is intentionally minimal: only what we need for unit tests and
-    for simple simulated integrations.
+    ``subscribe(pvname, cb)`` registers a callback like a pyepics callback:
+    ``cb(pvname=..., value=..., **kwargs)``.
+    ``publish(pvname, value, **kwargs)`` calls all subscribers.
+    ``unsubscribe(token)`` removes a subscription.
     """
 
     def __init__(self) -> None:
@@ -62,7 +57,10 @@ class VirtualEventBus:
 
 
 class _SimMonitorHandle:
-    """Lightweight handle for one subscription on the VirtualEventBus."""
+    """
+    Handle for one subscription on the VirtualEventBus.  
+    Remembers one listener and removes it when closed.
+    """
 
     def __init__(self, pvname: str, bus: VirtualEventBus, token: int):
         self.pvname = pvname
@@ -79,8 +77,7 @@ class _SimMonitorHandle:
 
 class SimulatedActuator(AbstractActuator):
     """
-    A simple simulation of an actuator, using internal state
-    rather than EPICS PVs.
+    A simple simulation of an actuator
     """
 
     def __init__(self, config: ActuatorConfig):
@@ -352,7 +349,16 @@ class SimulatedActuator(AbstractActuator):
             self.wait_until_done(target)
 
     def is_ready(self) -> bool:
-        return not self._moving
+        """ 
+        Motor status matches ready_value. ``ready_value: -1`` keeps the actuator permanently
+        not-ready for simulated endless motion.
+        """
+        status_value = int(self._moving)
+
+        try:
+            return float(status_value) == float(self.ready_value)
+        except (TypeError, ValueError):
+            return str(status_value).strip() == str(self.ready_value).strip()
 
     def is_in_position(self, target: float, in_position_band: float) -> bool:
         return abs(self._rbv - target) <= in_position_band
