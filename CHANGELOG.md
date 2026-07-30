@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-07-30
+
+### Added
+
+- Added optional scan performance reporting to CM scan type.
+- Added `TimestampPerformancePlugin` for detector timestamp diagnostics.
+- Added reusable timestamp conversion for the time stamp data columns.
+- Added metadata-monitor queue diagnostics.
+
+### Changed
+
+- Scan and subscription configurations are now validated before scan startup.
+- Metadata monitor timestamps and numeric PV timestamps are consitently written in UTC.
+
+### Fixed
+
+- Fixed incomplete current-row cache updates in `poll` and `para` scans.
+
+---
+
 ## [0.5.0] - 2026-07-23
 
 ### Added
