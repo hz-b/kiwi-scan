@@ -16,7 +16,7 @@ from kiwi_scan.yaml_loader import yaml_loader
 from kiwi_scan.scan.tools import create_scan_with_config
 from kiwi_scan.scan.tools import load_scan_configs, get_scan_config_dir
 from kiwi_scan.scan.registry import get_available_scan_types
-from kiwi_scan.manifestwriter import ManifestWriter
+from kiwi_scan.data.manifestwriter import ManifestWriter
 
 from .datamodels import ScanIOCStatus
 

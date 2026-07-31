@@ -9,7 +9,7 @@ import pandas as pd
 
 from kiwi_scan.export.model import ExportBundle, ExportScan
 from kiwi_scan.export.spec import SpecWriter
-from kiwi_scan.metadata_loader import MetadataFile
+from kiwi_scan.data.metadata_loader import MetadataFile
 
 
 class TestSpecWriterMetadata(unittest.TestCase):

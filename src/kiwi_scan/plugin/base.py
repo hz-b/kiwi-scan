@@ -9,7 +9,7 @@ import os
 import weakref
 
 from kiwi_scan.plugin.registry import PluginConfig
-from kiwi_scan.dataloader import get_kiwi_data_dir_from_environ
+from kiwi_scan.data.loader import get_kiwi_data_dir_from_environ
 from kiwi_scan.actuator.single import PvEvent 
 
 def wrap_values(values: List[Any]) -> List[Dict[str, Any]]:

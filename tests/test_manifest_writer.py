@@ -6,7 +6,7 @@ from pathlib import Path
 from unittest.mock import patch
 import yaml
 
-from kiwi_scan.manifestwriter import ManifestArchiveDeleter, ManifestWriter, ManifestResolver
+from kiwi_scan.data.manifestwriter import ManifestArchiveDeleter, ManifestWriter, ManifestResolver
 
 class TestManifestWriter(unittest.TestCase):
     def test_newmanifest_and_append(self):

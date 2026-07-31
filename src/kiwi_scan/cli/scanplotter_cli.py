@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import List
 
-from kiwi_scan.manifestwriter import ManifestResolver
+from kiwi_scan.data.manifestwriter import ManifestResolver
 from kiwi_scan.postmortem import PostMortemConfig, SeriesSpec, plot_postmortem
 
 _ALLOWED_SERIES_KEYS = {"file", "column", "axis", "label", "type"}

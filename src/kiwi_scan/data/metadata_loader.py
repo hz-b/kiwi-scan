@@ -1,7 +1,6 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-# src/scan/metadata_loader.py
 import logging
 from dataclasses import dataclass
 from typing import Dict, Tuple, Optional, List, Any

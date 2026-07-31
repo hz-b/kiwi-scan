@@ -16,7 +16,7 @@ from kiwi_scan.yaml_loader import (
     yaml_loader,
 )
 from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
-from kiwi_scan.manifestwriter import ManifestWriter
+from kiwi_scan.data.manifestwriter import ManifestWriter
 from kiwi_scan.scan.tools import (
     load_scan_configs,
     create_scan_with_config,

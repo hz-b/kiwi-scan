@@ -5,7 +5,7 @@ import importlib.util
 import tempfile
 from pathlib import Path
 import unittest
-from kiwi_scan.metadata_loader import parse_metadata_file
+from kiwi_scan.data.metadata_loader import parse_metadata_file
 
 
 class TestMetadataLoader(unittest.TestCase):

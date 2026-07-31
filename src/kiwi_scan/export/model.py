@@ -13,14 +13,14 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
-from kiwi_scan.metadata_loader import MetadataFile
+from kiwi_scan.data.metadata_loader import MetadataFile
 
 logger = logging.getLogger(__name__)
 
 
 @dataclass
 class ExportScan:
-    """One scan entry ready for export.
+    """ One scan entry ready for export.
 
     Parameters:
     -----------
