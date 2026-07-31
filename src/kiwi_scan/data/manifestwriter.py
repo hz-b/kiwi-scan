@@ -18,6 +18,7 @@ import logging
 logger = logging.getLogger(__name__)
 
 def get_package_version(package_name: str = "kiwi-scan") -> str:
+    """ TODO: move into tool subpackage """
     try:
         return version(package_name)
     except PackageNotFoundError:
