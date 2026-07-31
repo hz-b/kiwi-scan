@@ -1,5 +1,5 @@
 import unittest
-from kiwi_scan import stats
+from kiwi_scan.tools import stats
 
 class TestRunningMean(unittest.TestCase):
     def test_matches_river_mean_example(self):

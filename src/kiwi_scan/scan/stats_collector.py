@@ -10,7 +10,7 @@ import re
 import threading
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from kiwi_scan import stats
+from kiwi_scan.tools import Mean, Var
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import SubscriptionConfig
 
@@ -42,8 +42,8 @@ class _RunningStatsWindow:
         self.reset_window(clear_last=True)
 
     def reset_window(self, clear_last: bool = False) -> None:
-        self._mean = stats.Mean()
-        self._var = stats.Var()
+        self._mean = Mean()
+        self._var = Var()
         self._minimum: Optional[float] = None
         self._maximum: Optional[float] = None
         self._n = 0
