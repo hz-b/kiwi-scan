@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Union
 from importlib.metadata import version, PackageNotFoundError
 import os
 import socket
@@ -53,7 +53,10 @@ class ManifestWriter:
 
     @staticmethod
     def _absolute_path_value(value: Optional[str], base_dir: Optional[str] = None) -> Optional[str]:
-        """Return an absolute, user-expanded path string for manifest references."""
+        """ 
+        Return an absolute, expanded path like (~/data/..) string 
+        optionally from base dir to resolve relative path. 
+        """
         if not value:
             return None
 
@@ -179,7 +182,8 @@ class ManifestWriter:
         directory: Optional[str] = None,
         scan_type: Optional[str] = "external",
     ) -> str:
-        """Create a new small manifest that references existing data files.
+        """ 
+        Create a new small manifest that references existing data files.
 
         This helper is intended for imported or externally produced scan data
         where kiwi-scan only needs a compact manifest with file references,
@@ -227,9 +231,10 @@ class ManifestWriter:
 
     @classmethod
     def normalize_mode(cls, mode: Optional[str]) -> str:
-        """Return a validated manifest mode.
+        """
+        Validate and return cls manifest mode.
 
-        Accepted values are case-insensitive:
+        Accepted values are case-insensitive and can be overwritten:
           - full: write the complete scan entry including config
           - small: write scan references only, without the full config
           - off: do not write a manifest entry
@@ -529,7 +534,7 @@ class ManifestResolver:
         return None
 
     def list_manifests(self) -> List[Path]:
-        """Return manifest*.yaml/yml files newest-first by manifest created_at."""
+        """ Return manifest yaml files newest-first by manifest created_at. """
         paths = set()
         if self.data_dir is not None:
             for pattern in ("manifest*.yaml", "manifest*.yml"):
@@ -559,6 +564,32 @@ class ManifestResolver:
 
         self.logger.debug(f"Found no manifest file(s) in {self.data_dir}")
         return []
+
+    def resolve_manifests(
+        self,
+        manifest_files: Optional[Iterable[Union[str, Path]]] = None,
+    ) -> List[Path]:
+        """
+        Return manifest files or discover manifests via the resolver.
+        Files are expanded and validated.
+        """
+        explicit_files = list(manifest_files or [])
+        if not explicit_files:
+            self.logger.debug( "No explicit manifest files supplied; discovering manifests in %s", self.data_dir)
+            manifests = self.list_manifests()
+            self.logger.debug("Manifest discovery selected %d file(s): %s", len(manifests), manifests)
+            return manifests
+
+        manifests = [Path(filename).expanduser() for filename in explicit_files]
+        self.logger.debug("Validating %d explicit manifest file(s): %s", len(manifests), manifests)
+
+        missing = [path for path in manifests if not path.is_file()]
+        if missing:
+            self.logger.debug("Explicit manifest files not found: %s", missing)
+            raise FileNotFoundError("Manifest file not found: " + ", ".join(str(path) for path in missing))
+
+        self.logger.debug("Using explicit manifest files: %s", manifests)
+        return manifests
 
     def select_manifest(self, index: int = 0) -> Path:
         if index < 0:
@@ -659,6 +690,44 @@ class ManifestResolver:
                 add(ref.metadata_file)
 
         return result
+
+    def iterate_files(
+        self,
+        manifest_files: Iterable[Union[str, Path]],
+        *,
+        include_meta: bool = False,
+        include_manifest: bool = False,
+        missing: bool = False,
+    ) -> Iterator[Path]:
+        """
+        Generate unique files referenced by multiple manifests.
+        """
+
+        manifests = list(manifest_files)
+        self.logger.debug("Iterating files from %d manifest(s): include_meta=%s include_manifest=%s missing=%s",
+            len(manifests), include_meta, include_manifest, missing)
+
+        seen = set()
+        for manifest_file in manifests:
+            manifest_path = Path(manifest_file).expanduser()
+            files = self.list_files(
+                str(manifest_path),
+                include_meta=include_meta,
+                include_manifest=include_manifest,
+                missing=missing,
+            )
+            self.logger.debug("Manifest %s resolved to %d matching file(s)", manifest_path, len(files))
+
+            for path in files:
+                if path in seen:
+                    self.logger.debug("Skipping duplicate manifest file reference: %s", path)
+                    continue
+
+                seen.add(path)
+                self.logger.debug("yield: file: %s", path)
+                yield path
+
+        self.logger.debug("Completed manifest file iteration with %d unique file(s)", len(seen))
 
     def plan_delete_bundle(
         self,
