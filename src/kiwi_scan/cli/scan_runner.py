@@ -162,11 +162,11 @@ def main():
 
         logging.info("New manifest: %s", path)
 
-        # If ONLY --newmanifest → exit immediately
+        # If ONLY --newmanifest exit immediately
         if len(sys.argv) <= 2:
             return
 
-    # IMPORTANT: load scan types before argparse builds choices
+    # load scan types and scan configs before argparse builds choices
     load_all_scan_types()
 
     scan_configs_index = _safe_load_config_index(config_dir)

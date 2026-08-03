@@ -8,7 +8,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, List, Optional
 
-from kiwi_scan.manifestwriter import ManifestArchiveDeleter, ManifestResolver, ManifestWriter
+from kiwi_scan.data.manifestwriter import ManifestArchiveDeleter, ManifestResolver, ManifestWriter
 from kiwi_scan.scan.tools import set_valid_logging_level
 
 
@@ -29,7 +29,7 @@ def iter_manifest_files(
     include_manifest: bool = False,
     missing: bool = False,
 ) -> Iterable[Path]:
-    """Yield manifest and referenced file paths as absolute one-line paths."""
+    """ Output the manifest file’s location, plus every file path listed in it """
     seen = set()
     for manifest_file in manifest_files:
         for path in resolver.list_files(

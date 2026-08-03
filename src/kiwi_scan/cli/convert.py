@@ -142,7 +142,7 @@ def _exit_on_error(
     status: int,
     unexpected: bool = False,
 ) -> None:
-    """Exit without an uncontrolled traceback. Debug logging retains diagnostics."""
+    """ Exit gracefully with debug output. """
     if unexpected:
         logger.debug("Unexpected conversion failure", exc_info=True)
         description = "%s: %s" % (type(exc).__name__, _error_text(exc))
@@ -165,10 +165,6 @@ def main(argv: Optional[List[str]] = None, *, prog: str = "kiwi_convert") -> int
     except (FileNotFoundError, ValueError, OSError) as exc:
         _exit_on_error(parser, prog, exc, status=2)
     except Exception as exc:
-        # Keep the command-line boundary robust even when a lower layer raises
-        # an exception that was not anticipated here. KeyboardInterrupt and
-        # SystemExit are intentionally not caught because they inherit directly
-        # from BaseException.
         _exit_on_error(parser, prog, exc, status=1, unexpected=True)
 
 

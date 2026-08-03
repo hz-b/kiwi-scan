@@ -30,7 +30,7 @@ logging.basicConfig(
 
 
 def _safe_load_config_index(config_dir: str) -> Dict[str, Any]:
-    """Load config-name index for argparse choices without blocking --config-file."""
+    """ Load available config names from KIWI_SCAN_CONFIG_DIR """
     try:
         return load_scan_configs(config_dir, None)
     except FileNotFoundError:
@@ -38,7 +38,7 @@ def _safe_load_config_index(config_dir: str) -> Dict[str, Any]:
 
 
 def _load_raw_config(args: argparse.Namespace, config_dir: str) -> Tuple[Dict[str, Any], str]:
-    """Load one YAML config with CLI and environment replacements applied."""
+    """ Load scan config from YAML and apply CLI and environment replacement definitions. """
     replacements = parse_replacements(args.replace or [])
     replacements.update(get_env_replacements("KIWI_SCAN"))
 
@@ -53,7 +53,7 @@ def _load_raw_config(args: argparse.Namespace, config_dir: str) -> Tuple[Dict[st
 
 
 def print_required_replacements(args: argparse.Namespace, config_dir: str, origin: str) -> None:
-    """Print replacement help in the same spirit as scan_runner."""
+    """ Replacement help: list of required replacements."""
     if args.config_file:
         cfg_dir = os.path.dirname(origin)
         cfg_files = [os.path.basename(origin)]
