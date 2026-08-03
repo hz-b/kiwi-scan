@@ -1,12 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-from typing import Type, Dict, Optional
+from typing import Any, Dict, Mapping, Optional, Type, Union
 
 from kiwi_scan.datamodels import ActuatorConfig
 from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
 from kiwi_scan.actuator_concrete.single_simulation import SimulatedActuator
 from kiwi_scan.actuator.single import AbstractActuator
+
+
+ActuatorConfigLike = Union[ActuatorConfig, Mapping[str, Any]]
 
 
 class ActuatorFactory:
@@ -67,3 +70,29 @@ def create_actuator(config: ActuatorConfig) -> AbstractActuator:
     if cls is None:
         raise ValueError(f"Unknown type {key}")
     return cls(config)
+
+
+def create_actuators(
+    configs: Mapping[str, ActuatorConfigLike],
+) -> Dict[str, AbstractActuator]:
+    """ 
+    Create a named collection of actuators from config objects or mappings.
+    """
+    if not isinstance(configs, Mapping) or not configs:
+        raise ValueError("Config has no 'actuators:' mapping (or it's empty).")
+
+    actuators: Dict[str, AbstractActuator] = {}
+    for name, raw_config in configs.items():
+        if isinstance(raw_config, ActuatorConfig):
+            config = raw_config
+        elif isinstance(raw_config, Mapping):
+            config = ActuatorConfig.from_dict(dict(raw_config))
+        else:
+            raise TypeError(f"Actuator '{name}' must be an ActuatorConfig or mapping, got {type(raw_config).__name__}")
+
+        try:
+            actuators[name] = create_actuator(config)
+        except ConnectionError as exc:
+            raise ConnectionError( f"Failed to create actuator '{name}': {exc}") from exc
+
+    return actuators

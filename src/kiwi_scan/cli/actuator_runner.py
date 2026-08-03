@@ -13,7 +13,6 @@ import sys
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, Future
-from dataclasses import asdict
 from typing import Any, Dict, List, Optional, Tuple
 
 from kiwi_scan.yaml_loader import (
@@ -24,7 +23,7 @@ from kiwi_scan.yaml_loader import (
 )
 from kiwi_scan.scan.tools import get_scan_config_dir, load_scan_configs, set_valid_logging_level
 from kiwi_scan.datamodels import ActuatorConfig
-from kiwi_scan.actuator.factory import create_actuator
+from kiwi_scan.actuator.factory import create_actuators
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
 
 logging.basicConfig(
@@ -138,26 +137,6 @@ def _load_raw_config(args) -> Tuple[Dict[str, Any], str]:
     cfg_path = os.path.join(config_dir, f"{args.config}.yaml")
     cfg = yaml_loader(cfg_path, repl)
     return cfg, cfg_path
-
-
-def _build_actuators(raw_cfg: Dict[str, Any]) -> Dict[str, AbstractActuator]:
-    acts_raw = raw_cfg.get("actuators") or {}
-    if not isinstance(acts_raw, dict) or not acts_raw:
-        raise ValueError("Config has no 'actuators:' mapping (or it's empty).")
-
-    actuators: Dict[str, AbstractActuator] = {}
-    for name, v in acts_raw.items():
-        if not isinstance(v, dict):
-            raise TypeError(f"Actuator '{name}' must be a mapping, got {type(v)}")
-        try:
-            cfg = ActuatorConfig.from_dict(v)
-            actuators[name] = create_actuator(cfg)
-        except ConnectionError as exc:
-            raise ConnectionError(
-                f"Failed to create actuator '{name}': {exc}"
-            ) from exc
-
-    return actuators
 
 
 def _pick_monitor_provider(actuators: Dict[str, AbstractActuator]) -> AbstractActuator:
@@ -441,7 +420,7 @@ def main() -> None:
             print(help_text)
 
     try:
-        actuators = _build_actuators(raw_cfg)
+        actuators = create_actuators(raw_cfg.get("actuators") or {})
     except (ValueError, TypeError, ConnectionError) as exc:
         p.error(f"failed to build actuators: {exc}")
 
