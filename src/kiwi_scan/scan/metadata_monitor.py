@@ -52,10 +52,16 @@ class MetadataCAMonitor:
                 pv = PV(name, auto_monitor=True)
                 pv.add_callback(self._on_event)
                 self._pvobjs.append(pv)
-            except Exception as e:
-                logging.error(
-                    "MetadataCAMonitor: failed to subscribe %s: %s",
-                    name, e, exc_info=True
+            except ConnectionError as exc:
+                logging.warning(
+                    "MetadataCAMonitor: skipping unavailable PV %s: %s",
+                    name,
+                    exc,
+                )
+            except Exception:
+                logging.exception(
+                    "MetadataCAMonitor: failed to subscribe %s",
+                    name,
                 )
 
         # 3) Write one initial snapshot row per PV at the TOP (right after header)
