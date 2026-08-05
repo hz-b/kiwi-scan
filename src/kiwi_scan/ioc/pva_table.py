@@ -137,6 +137,11 @@ class PvaKiwiDataAdapter:
         try:
             table = self.reader.read_table(scan_index)
             result = DataFrameToNTTableConverter.convert(table)
+        except IndexError as exc:
+            logger.warning( "PVA TABLE request rejected scan_index=%d: %s", scan_index, exc)
+            table = pd.DataFrame({"error": [str(exc)]})
+            table.attrs["source_file"] = "request error"
+            return DataFrameToNTTableConverter.convert(table)
         except Exception:
             logger.exception("PVA TABLE request failed scan_index=%d", scan_index)
             raise

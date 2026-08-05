@@ -639,18 +639,14 @@ class ManifestResolver:
  
     def select_scan_ref(self, manifest_file: str, scan_index: int = 0) -> ManifestScanRef:
         if scan_index < 0:
-            raise IndexError("--scan-index must be >= 0")
+            raise IndexError("scan-index must be >= 0")
 
         refs = self.list_scan_refs(manifest_file)
         if not refs:
             raise ValueError(f"Manifest {manifest_file} contains no scan entries")
         if scan_index >= len(refs):
-            raise IndexError(
-                f"--scan-index {scan_index} is out of range; found {len(refs)} scan entry/entries"
-            )
+            raise IndexError(f"scan-index {scan_index} is out of range; found {len(refs)} scan entry/entries")
         return refs[scan_index]
-
-
 
     def list_files(
         self,
