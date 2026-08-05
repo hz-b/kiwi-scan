@@ -60,7 +60,7 @@ class ScanReader:
         table = DataLoader(str(path), data_dir=str(path.parent)).load_data()
         if table is None:
             logger.error("Could not load scan data file: %s", path)
-            raise FileNotFoundError("Could not load scan data file: %s" % path)
+            raise FileNotFoundError(f"Could not load scan data file: {path}")
 
         table.attrs["source_file"] = path.name
         logger.debug(
@@ -90,7 +90,7 @@ class DataFrameToNTTableConverter:
         )
 
         for index, name in enumerate(table.columns):
-            field = "c%d" % index
+            field = f"c{index}"
             series = table[name]
             numeric = pd.api.types.is_numeric_dtype(series)
             pva_type = "d" if numeric else "s"
