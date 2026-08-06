@@ -192,6 +192,10 @@ For detailed description check the plugin user and developer documentation:
 
 For running kiwi-scan as a generic EPICS soft IOC, see [ioc.md](https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md).
 
+## PVA Server
+
+kiwi-scan provides a command line tool (`kiwi-pva_server`) to start a PVA service for receiving scan data refrenced by the manifest index. See the [PVA server documentation](https://github.com/hz-b/kiwi-scan/blob/master/docs/pva_server.md).
+
 ## kiwi2spec Data Export
 
 kiwi2spec converts one or more kiwi-scan data files, including associated metadata, into the SPEC file format for the use with existing analysis and visualization tools.
@@ -210,6 +214,7 @@ After installation, the command line tools are available:
 - `scantrigger_cli` - execute triggers from YAML config
 - `manifestfiles` - list, create, archive, or delete manifest-related files
 - `scanioc` - run the generic scan IOC based on pythonSoftIOC
+- `kiwi-pva_server` - run the PVA server
 - `kiwi-convert` - convert scan data through the generic export framework
 - `kiwi2spec` - export one or more scan data files, including metadata, to SPEC
 - `scantrigger_cli`- execute triggers from YAML config
@@ -226,6 +231,7 @@ scantrigger_cli --help
 pollstats_cli --help
 manifestfiles --help
 scanioc --help
+kiwi-pva_server --help
 kiwi-convert --help
 kiwi2spec --help
 ```
@@ -261,6 +267,7 @@ User and developer documentation:
 - [Stats](https://github.com/hz-b/kiwi-scan/blob/master/docs/stats.md) - kiwi statistics support
 - [SyncController](https://github.com/hz-b/kiwi-scan/blob/master/docs/sync-controller.md) - kiwi synced scan loops
 - [IOC](https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md) - kiwi scan IOC
+- [PVA Server](https://github.com/hz-b/kiwi-scan/blob/master/docs/pva_server.md) - PVA server capability and command-line tool
 - [Converter](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi2spec.md) - data export
 - [Performance testing](https://github.com/hz-b/kiwi-scan/blob/master/docs/performance.md) - performance reports
 - [README.md](https://github.com/hz-b/kiwi-scan/blob/master/README.md) - current readme
