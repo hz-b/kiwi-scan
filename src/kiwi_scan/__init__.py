@@ -23,10 +23,10 @@ import logging
 import os
 import pkgutil
 import sys
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Set
+
 from kiwi_scan.scan.registry import load_all_scan_types
-from importlib.metadata import version, PackageNotFoundError
 
 __all__ = ["__version__", "load_all_plugins", "load_all_scan_types"]
 try:
@@ -46,7 +46,7 @@ def _module_suffix_for_path(pyfile: Path) -> str:
     contain files with the same basename.
     """
     resolved = str(pyfile.resolve())
-    digest = hashlib.sha1(resolved.encode("utf-8")).hexdigest()[:12]
+    digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:12]
     return f"{pyfile.stem}_{digest}"
 
 
@@ -132,7 +132,7 @@ def load_all_plugins(raise_on_error: bool = False) -> None:
     if not raw.strip():
         logger.debug("%s not set; built-in plugins loaded only", PLUGIN_ENVVAR)
     else:
-        seen: Set[Path] = set()
+        seen = set()  # contains Pathes 
 
         for entry in raw.split(os.pathsep):
             entry = entry.strip()

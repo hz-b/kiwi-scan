@@ -57,7 +57,7 @@ dependencies = [
 
 [project.optional-dependencies] 
 dev = [ "pytest", "caproto[complete]", "jinja2", "pylint" ]
-ioc = [ "softioc" ]
+ioc = [ "softioc", "p4p" ]
 
 [project.urls]
 Homepage = "https://github.com/hz-b/kiwi-scan"
