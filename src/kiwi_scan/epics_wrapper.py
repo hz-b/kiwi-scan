@@ -2,13 +2,15 @@
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
-from typing import Optional
+
 import logging
 import threading
 import time
-from typing import Any, Callable, Optional, Dict
+from typing import Any, Callable, Dict, Optional
+
 import epics
 
+logger = logging.getLogger(__name__)
 _CA_LOCK = threading.Lock()
 
 def _safe_poll() -> None:
@@ -20,7 +22,7 @@ def _safe_poll() -> None:
         time.sleep(0.01)
         epics.ca.poll()
     except Exception:
-        pass
+        logger.debug("EPICS CA poll failed", exc_info=True)
 
 class EpicsPV:
     """
@@ -48,7 +50,7 @@ class EpicsPV:
         self._callback_refs: list[Callable[..., None]] = []  # prevent callback GC
         self.last_written: Any = None
 
-        logging.debug("Creating PV %s", pvname)
+        logger.debug("Creating PV %s", pvname)
 
         # Create + connect (serialized)
         def _create_and_connect() -> bool:
@@ -58,7 +60,7 @@ class EpicsPV:
                 pv = epics.PV(pvname, auto_monitor=False)
 
             self._pv = pv
-            logging.debug("Wait for connection to %s", pvname)
+            logger.debug("Wait for connection to %s", pvname)
             ok = pv.wait_for_connection(timeout=self.connection_timeout)
             _safe_poll()
             return ok
@@ -93,9 +95,7 @@ class EpicsPV:
         try:
             pv.auto_monitor = True
         except Exception:
-            # Some versions may not like setting auto_monitor after creation;
-            # keep best-effort and rely on direct gets.
-            pass
+            logger.debug("Failed to enable EPICS auto_monitor", exc_info=True)
         _safe_poll()
 
     def _wrap_callback(self, user_cb: Callable[..., None]) -> Callable[..., None]:
@@ -103,10 +103,10 @@ class EpicsPV:
             try:
                 user_cb(pvname=pvname, value=value, **kwargs)
             except TypeError:
-                # logging.error("Callback mismatch: %s %s", user_cb, e)
+                # logger.error("Callback mismatch: %s %s", user_cb, e)
                 user_cb(pvname, value)
             except Exception:
-                logging.exception("Error in PV callback for '%s'", self.pvname)
+                logger.exception("Error in PV callback for '%s'", self.pvname)
         return _cb
 
     # ----------------- public API -----------------
@@ -138,8 +138,9 @@ class EpicsPV:
                 # pyepics has pv.timestamp, pv.severity, pv.status sometimes
                 meta: Dict[str, Any] = {"value": val}
                 try:
-                    meta["timestamp"] = float(getattr(pv, "timestamp"))
+                    meta["timestamp"] = float(pv.timestamp)
                 except Exception:
+                    logger.debug("Failed to get timestamp for PV %s; using local time", self.pvname, exc_info=True)
                     meta["timestamp"] = time.time()
                 meta["pvname"] = self.pvname
                 return meta
@@ -167,11 +168,11 @@ class EpicsPV:
             pv.put(v, timeout=self.timeout)
             if self.queueing_delay > 0:
                 time.sleep(self.queueing_delay)
-            logging.debug("Set PV %s = %r", self.pvname, v)
+            logger.debug("Set PV %s = %r", self.pvname, v)
             self.last_written = v
             return True
         except Exception as e:
-            logging.error("Failed to set PV %s to %r: %s", self.pvname, v, e)
+            logger.error("Failed to set PV %s to %r: %s", self.pvname, v, e)
             return False
     def add_callback(self, callback: Callable[..., None], **kwargs: Any) -> Optional[int]:
         pv = self._require_pv()
@@ -185,7 +186,7 @@ class EpicsPV:
             try:
                 pv.auto_monitor = True
             except Exception:
-                pass
+                logger.debug("Failed to enable auto_monitor for PV %s", self.pvname, exc_info=True)
             _safe_poll()
             nonlocal cb_index
             try:
@@ -206,7 +207,7 @@ class EpicsPV:
             try:
                 pv.clear_callbacks()
             except Exception:
-                pass
+                logger.debug("Failed to clear callbacks for PV %s", self.pvname, exc_info=True)
             _safe_poll()
 
         self._ca(_do_clear)
@@ -221,7 +222,7 @@ class EpicsPV:
     
     # Ignore strict connection handling above
     @classmethod
-    def create_monitor(cls, pvname: str, **kwargs) -> "EpicsPV":
+    def create_monitor(cls, pvname: str, **kwargs) -> EpicsPV:
         """
         Create a PV for monitoring without blocking on connection.
         """
