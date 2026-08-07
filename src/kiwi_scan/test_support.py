@@ -86,6 +86,9 @@ class FakePV:
         return len(self.callbacks)
 
     def remove_callback(self, idx: int) -> None:
+        if self.__class__.use_raw_pv:
+            self._pv.remove_callback(idx)
+
         if isinstance(self.callbacks, dict):
             self.callbacks.pop(idx, None)
             return
@@ -119,6 +122,11 @@ class FakePV:
 
     def check_pv(self) -> None:
         return None
+
+    def disconnect(self) -> None:
+        if self.__class__.use_raw_pv:
+            self._pv.disconnect()
+        self._disconnect()
 
     def _disconnect(self) -> None:
         self.disconnected = True

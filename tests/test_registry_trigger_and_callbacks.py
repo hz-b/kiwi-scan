@@ -173,6 +173,10 @@ class TestEpicsActuatorMonitorLifecycle(unittest.TestCase):
         self.assertIs(handle, actuator._monitors["MON:PV"])
         self.assertEqual(actuator._epics_cb_indices["MON:PV"], [100])
 
+        # Keep the callback object so we can later simulate an event that was
+        # already queued/in flight when the monitor was removed.
+        stale_callback = handle.callbacks[100]
+
         handle.trigger(100, value=12.5, timestamp=3.0, severity=1, status=0)
 
         self.assertEqual(len(received), 1)
@@ -187,12 +191,16 @@ class TestEpicsActuatorMonitorLifecycle(unittest.TestCase):
 
         self.assertEqual(handle._pv.removed, [100])
         self.assertTrue(handle._pv.disconnected)
+        self.assertNotIn(100, handle.callbacks)
         self.assertNotIn("MON:PV", actuator._monitors)
         self.assertIsNone(actuator.get_last_event("MON:PV"))
 
-        # Even if a stale callback slipped through, it should be ignored after removal.
-        handle.trigger(100, value=99.0)
+        # Simulate an already queued/in-flight callback after monitor removal.
+        # The actuator dispatcher must ignore it because the monitor and its
+        # listeners have already been removed.
+        stale_callback(pvname="MON:PV", value=99.0)
         self.assertEqual(len(received), 1)
+        self.assertIsNone(actuator.get_last_event("MON:PV"))
 
 
 if __name__ == "__main__":

@@ -2,38 +2,42 @@
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
-from contextlib import contextmanager
-from collections import defaultdict
+
 import logging
-import queue
-from typing import List, Any, Dict, Optional, Tuple, Iterator
-from datetime import timezone
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, FIRST_COMPLETED, wait
 import os
-import time
+import queue
 import random
 import string
-import epics
 import threading
-# import pdb
-from kiwi_scan.actuator.single import AbstractActuator
+import time
+from collections import defaultdict
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import contextmanager
+from datetime import datetime, timezone
+from typing import Any, Dict, Iterator, List, Optional
+
+import epics
+
 from kiwi_scan.actuator.factory import create_actuator
-from kiwi_scan.datamodels import ActuatorConfig, ScanDimension, ScanConfig
-from kiwi_scan.plugin.registry import create_plugin
+
+# import pdb
+from kiwi_scan.actuator.single import AbstractActuator, PvEvent
 from kiwi_scan.data.loader import DataLoader, resolve_data_dir
+from kiwi_scan.data.manifestwriter import ManifestWriter
+from kiwi_scan.datamodels import ActuatorConfig, ScanConfig, ScanDimension
+from kiwi_scan.epics_wrapper import EpicsPV
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.monitor.factory import create_monitor
+from kiwi_scan.plugin.registry import create_plugin
 from kiwi_scan.scan.scan_abs import ScanABC
-from kiwi_scan.epics_wrapper import EpicsPV
-from kiwi_scan.data.manifestwriter import ManifestWriter
-from kiwi_scan.actuator.single import PvEvent
+
+from .column_provider import DataColumnProvider
 from .metadata_monitor import MetadataCAMonitor
-from .trigger_manager import TriggerManager
 from .subscription_manager import SubscriptionManager
 from .sync_controller import SyncController
-from .column_provider import DataColumnProvider
+from .trigger_manager import TriggerManager
 
+logger = logging.getLogger(__name__)
 
 class BaseScan(ScanABC):
     """
@@ -53,10 +57,8 @@ class BaseScan(ScanABC):
     """
     def __init__(self, config: ScanConfig, data_dir=None):
         epics.ca.use_initial_context()
-        #pv = EpicsPV("TESTU171PGM1:Psi")
-        #print(pv.get())
         super().__init__(config, data_dir)
-        logging.debug("Init BaseScan")
+        logger.debug("Init BaseScan")
         self.busyflag = False
         self.cfg = config
         # Validate 
@@ -66,7 +68,7 @@ class BaseScan(ScanABC):
         self._validate_and_filter_actuators()
 
         self.plugins = [create_plugin(plugin_config, self) for plugin_config in self.cfg.plugin_configs]
-        logging.debug(f"Plugin Configs: {self.cfg.plugin_configs}")
+        logger.debug(f"Plugin Configs: {self.cfg.plugin_configs}")
 
         # Perform config cleanup
         self._validate_and_filter_actuators()
@@ -77,7 +79,7 @@ class BaseScan(ScanABC):
         self.trigger_manager = TriggerManager.from_config(self.cfg.triggers)
         # Prepare I/O
         self.data_dir = os.path.abspath(resolve_data_dir(data_dir, config.data_dir))
-        logging.info(f"Data directory: {self.data_dir}")
+        logger.info(f"Data directory: {self.data_dir}")
 
         self._data_writer_lock = threading.RLock()
         self._requested_output_file = config.output_file
@@ -94,19 +96,18 @@ class BaseScan(ScanABC):
         self._apply_sample_rate(getattr(config, "sample_rate_hz", None))
 
         self.debug = config.debug
-        if self.debug:
-            logging.basicConfig(level=logging.INFO)
-            # pdb.set_trace()
+        # if self.debug:
+        #    pdb.set_trace()
         self.output_file: Optional[str] = None
         if self._data_writing_enabled:
             self._ensure_output_file_exists()
         # setup
-        logging.debug("_connect_detectors")
+        logger.debug("_connect_detectors")
         self._connect_detectors()
-        logging.debug("_connect_actuators")
+        logger.debug("_connect_actuators")
         self._connect_actuators()
         self.actuators = getattr(self, "actuators", {})
-        logging.debug("init subscription manager")
+        logger.debug("init subscription manager")
         self.subscription_manager = SubscriptionManager(
             getattr(self.cfg, "subscriptions", None) or [],
             actuator_configs=getattr(self.cfg, "actuators", {}) or {},
@@ -115,7 +116,7 @@ class BaseScan(ScanABC):
         self.sync_controller = SyncController(
             getattr(self.cfg, "subscriptions", None) or []
         )
-        logging.debug("_validate_config")
+        logger.debug("_validate_config")
         
         self._validate_config()
         if config.stop_pv:
@@ -147,9 +148,9 @@ class BaseScan(ScanABC):
         )
         self._manifest_mode = getattr(self.cfg, "manifest_mode", "full")
         if self._perf_enabled:
-            logging.info("Performance reporting enabled")
+            logger.info("Performance reporting enabled")
         else:
-            logging.debug("Performance report disabled")
+            logger.debug("Performance report disabled")
         self._perf: Dict[str, List[float]] = defaultdict(list)
         
         # --- event-driven wakeup state (used in _on_heartbeat_event()) with condition  ---
@@ -181,7 +182,7 @@ class BaseScan(ScanABC):
         
         # TODO: cleanup, use  _start_subscriptions ouside
         if getattr(self, "ROLE_CALLBACKS", None):
-            logging.debug("Detected legacy ROLE_CALLBACKS on %s; auto-starting subscriptions for compatibility", type(self).__name__)
+            logger.debug("Detected legacy ROLE_CALLBACKS on %s; auto-starting subscriptions for compatibility", type(self).__name__)
             self._start_subscriptions()
     
     # -------------------- performance testing --------------------
@@ -204,9 +205,9 @@ class BaseScan(ScanABC):
             self._perf[name].append(dt)
             # Debug per-point; summary is printed at end.
             if idx is not None:
-                logging.debug("[PERF] idx=%d %-20s %.6f s", idx, name, dt)
+                logger.debug("[PERF] idx=%d %-20s %.6f s", idx, name, dt)
             else:
-                logging.debug("[PERF] %-20s %.6f s", name, dt)
+                logger.debug("[PERF] %-20s %.6f s", name, dt)
 
     def _perf_report(self) -> None:
         """Print a compact summary once at the end of a scan."""
@@ -236,16 +237,9 @@ class BaseScan(ScanABC):
                 f"n={n} total={total:.3f}s mean={mean:.6f}s "
                 f"p95={p95(values):.6f}s max={mx:.6f}s"
             )
-            logging.info(
-                "[PERF] %-20s n=%d total=%.3fs mean=%.6fs p95=%.6fs max=%.6fs",
-                name, n, total, mean, p95(values), mx
-            )
+            logger.info("[PERF] %-20s n=%d total=%.3fs mean=%.6fs p95=%.6fs max=%.6fs", name, n, total, mean, p95(values), mx)
         print(f"[PERF] {'metadata_queue_drops':<20} count={metadata_queue_drops}")
-        logging.info(
-            "[PERF] %-20s count=%d",
-            "metadata_queue_drops",
-            metadata_queue_drops,
-        )
+        logger.info("[PERF] %-20s count=%d", "metadata_queue_drops", metadata_queue_drops)
         print("==========================================")
 
     # -------------------- subscription/callback integration --------------------
@@ -298,10 +292,7 @@ class BaseScan(ScanABC):
 
         ok = self.sync_controller.wait(timeout=timeout_s, stop_event=stop_event)
         if not ok:
-            logging.debug(
-                "SyncController wait ended without full sync (required=%s)",
-                list(self.sync_controller.required_names),
-            )
+            logger.debug("SyncController wait ended without full sync (required=%s)", list(self.sync_controller.required_names))
         return ok
 
     def _validate_and_filter_actuators(self):
@@ -316,7 +307,7 @@ class BaseScan(ScanABC):
         unused_actuators = all_actuators - dim_actuators
 
         if unused_actuators:
-            logging.warning(f"Removing unused actuators not referenced in scan_dimensions: {unused_actuators}")
+            logger.warning(f"Removing unused actuators not referenced in scan_dimensions: {unused_actuators}")
             for name in unused_actuators:
                 del self.cfg.actuators[name]
 
@@ -326,13 +317,13 @@ class BaseScan(ScanABC):
                 raise ValueError(f"ScanDimension refers to unknown actuator: '{dim.actuator}'")
 
     def _connect_detectors(self):
-        logging.debug(f"Detector PVs: {self.cfg.detector_pvs}")
-        logging.debug("Init Detectors")
-        logging.debug(f"Monitor: {self.cfg.detector_pvs_monitor}")
+        logger.debug(f"Detector PVs: {self.cfg.detector_pvs}")
+        logger.debug("Init Detectors")
+        logger.debug(f"Monitor: {self.cfg.detector_pvs_monitor}")
 
         self.detector_pvs = []
         for i, pvname in enumerate(self.cfg.detector_pvs):
-            logging.debug("Creating detector PV %d/%d: %s", i+1, len(self.cfg.detector_pvs), pvname)
+            logger.debug("Creating detector PV %d/%d: %s", i+1, len(self.cfg.detector_pvs), pvname)
             pv = EpicsPV(
                 pvname,
                 timeout=1.0,
@@ -340,15 +331,15 @@ class BaseScan(ScanABC):
                 queueing_delay=0.0,
                 auto_monitor=True,
             )
-            logging.debug("Created detector PV: %s", pvname)
+            logger.debug("Created detector PV: %s", pvname)
             self.detector_pvs.append(pv)
             self.detector_pvs_monitor = self.cfg.detector_pvs_monitor;
 
     def _connect_actuators(self):
-        logging.debug("Init Actuators")
+        logger.debug("Init Actuators")
         # 1. Check for at least one actuator
         if not getattr(self.cfg, "actuators", None):
-            logging.info("No actuators have been configured!")
+            logger.info("No actuators have been configured!")
             self.actuators = {}
             return
 
@@ -362,15 +353,15 @@ class BaseScan(ScanABC):
             else:
                 raise TypeError(f"Actuator config for '{name}' must be dict or ActuatorConfig, got {type(raw_cfg)}")
 
-            logging.info(f"Creating actuator '{name}' → PV='{cfg.pv}', RB_PV='{cfg.rb_pv}'")
+            logger.info(f"Creating actuator '{name}' → PV='{cfg.pv}', RB_PV='{cfg.rb_pv}'")
             # instantiate the Actuator
             act = create_actuator(cfg)
-            logging.debug("Actuator created")
+            logger.debug("Actuator created")
             actuators[name] = act
 
         # assign the full dict back onto self
         self.actuators = actuators
-        logging.info(f"Number of actuators: {len(self.actuators)}")
+        logger.info(f"Number of actuators: {len(self.actuators)}")
 
     def _validate_config(self):
         if not (self.scan_dimensions or self.parallel_scans or self.nested_scans):
@@ -383,7 +374,7 @@ class BaseScan(ScanABC):
 
         rate = float(sample_rate_hz)
         if rate <= 0.0:
-            logging.error(f"sample_rate_hz must be positive, got {rate}")
+            logger.error(f"sample_rate_hz must be positive, got {rate}")
             rate = rate * -1.0
 
         self.sample_rate_hz = rate
@@ -407,10 +398,8 @@ class BaseScan(ScanABC):
         delay = scheduled_sample_time - now
         if delay > 0:
             time.sleep(delay)
-        logging.debug(
-                f"delay = {delay:.6f}, "
-                f"start time = {datetime.fromtimestamp(start_time).strftime('%H:%M:%S.%f')}, "
-                f"scheduled time = {datetime.fromtimestamp(scheduled_sample_time).strftime('%H:%M:%S.%f')}")
+        logger.debug( f"delay = {delay:.6f}, start time = {datetime.fromtimestamp(start_time, tz=timezone.utc).strftime('%H:%M:%S.%f')}, "
+                f"scheduled time = {datetime.fromtimestamp(scheduled_sample_time, tz=timezone.utc).strftime('%H:%M:%S.%f')}")
 
     def get_data_writing_enabled(self) -> bool:
         with self._data_writer_lock:
@@ -435,11 +424,11 @@ class BaseScan(ScanABC):
             self._data_writing_enabled = enabled
 
         if enabled:
-            logging.info("Data writing enabled")
+            logger.info("Data writing enabled")
             if self.busy:
                 self._start_metadata_monitor()
         else:
-            logging.info("Data writing disabled")
+            logger.info("Data writing disabled")
             self._stop_metadata_monitor()
 
     def _ensure_output_file_exists(self) -> Optional[str]:
@@ -483,16 +472,16 @@ class BaseScan(ScanABC):
 
     def _start_metadata_monitor(self) -> None:
         if not self.get_data_writing_enabled():
-            logging.info("Metadata monitor not started: data writing is disabled")
+            logger.info("Metadata monitor not started: data writing is disabled")
             return
         if self._meta_mon_started:
             return
         try:
             self._meta_mon.start()
             self._meta_mon_started = True
-            logging.info("Started metadata task")
+            logger.info("Started metadata task")
         except Exception as e:
-            logging.error("Failed to start metadata monitor: %s", e, exc_info=True)
+            logger.error("Failed to start metadata monitor: %s", e, exc_info=True)
 
     def _stop_metadata_monitor(self) -> None:
         if not self._meta_mon_started:
@@ -500,7 +489,7 @@ class BaseScan(ScanABC):
         try:
             self._meta_mon.stop()
         except Exception:
-            logging.exception("Error stopping metadata monitor")
+            logger.exception("Error stopping metadata monitor")
         finally:
             self._meta_mon_started = False
 
@@ -515,10 +504,7 @@ class BaseScan(ScanABC):
             try:
                 return int(getter())
             except Exception:
-                logging.debug(
-                    "Failed to read metadata monitor drop count",
-                    exc_info=True,
-                )
+                logger.debug("Failed to read metadata monitor drop count", exc_info=True)
                 return 0
 
         try:
@@ -544,14 +530,14 @@ class BaseScan(ScanABC):
                 # >>>> Read from cache for DAQ! 'set detector_pvs_monitor: False' only for network performance tests <<<< !
                 reading = pv.get_with_metadata(use_monitor=self.detector_pvs_monitor) 
                 if reading is None:
-                    logging.warning("Received None for PV %s", pv.pvname)
+                    logger.warning("Received None for PV %s", pv.pvname)
                     readings.append(None)
                 else:
                     readings.append(reading)
             except Exception as e:
-                logging.error("Failed to read metadata for PV %s: %s", pv.pvname, e, exc_info=True)
+                logger.error("Failed to read metadata for PV %s: %s", pv.pvname, e, exc_info=True)
                 readings.append(None)
-            # logging.debug("PV %s → %r", pv.pvname, reading)
+            # logger.debug("PV %s → %r", pv.pvname, reading)
         return readings
 
     # -------------------- data column provider integration --------------------
@@ -573,7 +559,7 @@ class BaseScan(ScanABC):
             try:
                 headers += list(provider.get_headers(include_timestamps))
             except Exception:
-                logging.exception("Failed to read data column provider headers from %s", provider)
+                logger.exception("Failed to read data column provider headers from %s", provider)
         return headers
 
     def _get_data_column_values(self) -> List[Any]:
@@ -582,7 +568,7 @@ class BaseScan(ScanABC):
             try:
                 values += list(provider.get_values())
             except Exception:
-                logging.exception("Failed to read data column provider values from %s", provider)
+                logger.exception("Failed to read data column provider values from %s", provider)
         return values
 
     def _build_detector_headers(self, include_timestamps: bool) -> List[str]:
@@ -607,14 +593,13 @@ class BaseScan(ScanABC):
         signal_names: List[str] = [pv.pvname for pv in self.detector_pvs]
         for plugin in self.plugins:
             signal_names += plugin.get_headers(False)
-        logging.debug("Built monitor signal names: %s", signal_names)
+        logger.debug("Built monitor signal names: %s", signal_names)
         return signal_names
 
     def build_output_headers(self, include_timestamps: Optional[bool] = None) -> List[str]:
-        """Build the full scan-file header list in one place.
-
-        The returned list matches the order written by
-        :meth:`write_header_to_output_file`.
+        """
+        Build the full scan-file header list in one place.
+        The returned list matches the order written by `write_header_to_output_file`.
         """
         if include_timestamps is None:
             include_timestamps = self.include_timestamps
@@ -629,7 +614,7 @@ class BaseScan(ScanABC):
         headers += self._build_detector_headers(include_timestamps)
         headers += self._build_plugin_headers(include_timestamps)
 
-        logging.debug("Built output headers: %s", headers)
+        logger.debug("Built output headers: %s", headers)
         return headers
 
     def _timestamp_to_iso(self, timestamp: Any) -> str:
@@ -781,7 +766,7 @@ class BaseScan(ScanABC):
             try:
                 provider.update_last_point(last, include_timestamps)
             except Exception:
-                logging.exception("Failed to update last-point cache from %s", provider)
+                logger.exception("Failed to update last-point cache from %s", provider)
 
     def _reset_data_column_provider_windows(self) -> None:
         """Start a new provider data window for the next scan point."""
@@ -792,7 +777,7 @@ class BaseScan(ScanABC):
             try:
                 reset()
             except Exception:
-                logging.exception("Failed to reset data column provider %s", provider)
+                logger.exception("Failed to reset data column provider %s", provider)
 
     @staticmethod
     def _format_scan_value(value: Any) -> str:
@@ -807,7 +792,7 @@ class BaseScan(ScanABC):
         """
         Write one scan row and return the same concrete row values.
         """
-        logging.debug(f"Detector values to be written: {detector_values}")
+        logger.debug(f"Detector values to be written: {detector_values}")
 
         # Independent per-line timestamp time zone aware (ISO 8601)
         line_ts_iso = datetime.now().astimezone().isoformat()
@@ -829,10 +814,10 @@ class BaseScan(ScanABC):
                 include_timestamps=include_timestamps,
             )
         except Exception:
-            logging.debug("Failed to update last-point cache", exc_info=True)
+            logger.debug("Failed to update last-point cache", exc_info=True)
 
         if not self.get_data_writing_enabled():
-            logging.debug("Skipping data write because data writing is disabled")
+            logger.debug("Skipping data write because data writing is disabled")
             return row_values
 
         if not self._data_header_written:
@@ -841,7 +826,7 @@ class BaseScan(ScanABC):
         # TODO: output format from cfg (as in print monitor)
         with open(self.output_file, "a", encoding="utf-8") as file:
             line = "\t".join(self._format_scan_value(value) for value in row_values) + "\n"
-            logging.debug(f"Save line to file:{line}")
+            logger.debug(f"Save line to file:{line}")
             file.write(line)
 
         return row_values
@@ -955,7 +940,7 @@ class BaseScan(ScanABC):
         Load recent data file
         """
         if self.output_file is None:
-            logging.info("No scan data file exists")
+            logger.info("No scan data file exists")
             return None
         data_loader = DataLoader(self.output_file, data_dir=self.data_dir)
         return data_loader.load_data()
@@ -968,22 +953,22 @@ class BaseScan(ScanABC):
             file: The opened file object.
         """
         if not self.get_data_writing_enabled():
-            logging.debug("Skipping header write because data writing is disabled")
-            return None
+            logger.debug("Skipping header write because data writing is disabled")
+            return 
 
         if self._data_header_written:
-            return None
+            return
 
         output_file = self._ensure_output_file_exists()
         if output_file is None:
-            return None
+            return
 
         headers = self.build_output_headers(self.include_timestamps)
 
         with open(output_file, "w", encoding="utf-8") as file:
             file.write("\t".join(headers) + "\n")
         self._data_header_written = True
-        return None
+        return
 
     def get_stop_pv(self):
         """  Read stop PV and reset it if triggered (value == 1).
@@ -992,20 +977,14 @@ class BaseScan(ScanABC):
         if self.stop_pv:
             try:
                 value = self.stop_pv.get()
-                logging.info(f"scan stop PV value received: {value}")
+                logger.info(f"scan stop PV value received: {value}")
             except Exception as e:
-                logging.error(
-                    f"Failed to get stop PV {self.stop_pv.pvname}: {e}",
-                    exc_info=True,
-                )
+                logger.error(f"Failed to get stop PV {self.stop_pv.pvname}: {e}", exc_info=True)
             if value == 1:
                 try:
                     self.stop_pv.put(0)
                 except Exception as e:
-                    logging.error(
-                        f"Failed to reset stop PV {self.stop_pv.pvname}: {e}",
-                        exc_info=True,
-                    )
+                    logger.error(f"Failed to reset stop PV {self.stop_pv.pvname}: {e}", exc_info=True)
         return value
 
     def _start_plugins(self) -> None:
@@ -1017,19 +996,19 @@ class BaseScan(ScanABC):
         """
         for plugin in getattr(self, "plugins", []) or []:
             try:
-                logging.debug("Starting plugin %s", getattr(plugin, "name", plugin))
+                logger.debug("Starting plugin %s", getattr(plugin, "name", plugin))
                 plugin.on_start()
             except Exception:
-                logging.exception("Failed to start plugin %s", getattr(plugin, "name", plugin))
+                logger.exception("Failed to start plugin %s", getattr(plugin, "name", plugin))
 
     def _end_plugins(self) -> None:
         """Run plugin end hooks."""
         for plugin in getattr(self, "plugins", []) or []:
             try:
-                logging.debug("Ending plugin %s", getattr(plugin, "name", plugin))
+                logger.debug("Ending plugin %s", getattr(plugin, "name", plugin))
                 plugin.on_end()
             except Exception:
-                logging.exception("Failed to end plugin %s", getattr(plugin, "name", plugin))
+                logger.exception("Failed to end plugin %s", getattr(plugin, "name", plugin))
 
     def _close_plugins(self) -> None:
         """Close plugin-owned resources without requiring old plugins to change."""
@@ -1038,10 +1017,10 @@ class BaseScan(ScanABC):
             if not callable(close):
                 continue
             try:
-                logging.debug("Closing plugin %s", getattr(plugin, "name", plugin))
+                logger.debug("Closing plugin %s", getattr(plugin, "name", plugin))
                 close()
             except Exception:
-                logging.exception("Failed to close plugin %s", getattr(plugin, "name", plugin))
+                logger.exception("Failed to close plugin %s", getattr(plugin, "name", plugin))
 
     def scan(self, positions, monitor: BaseMonitor = None):
         """
@@ -1060,14 +1039,14 @@ class BaseScan(ScanABC):
             self.write_header_to_output_file()
             self._start_plugins()
             self._start_subscriptions()
-            logging.debug(f"Actuators: {list(self.actuators)}")
-            logging.debug(f"Requested positions: {positions}")
+            logger.debug(f"Actuators: {list(self.actuators)}")
+            logger.debug(f"Requested positions: {positions}")
             self._start_metadata_monitor()
 
             # prepare new_positions and tell us if we added an overshoot step
             new_positions, overshoot_applied = self._prepare_positions(positions)
             if not new_positions:
-                logging.warning("No valid actuators with positions—nothing to scan.")
+                logger.warning("No valid actuators with positions—nothing to scan.")
                 self.busyflag = False
                 return
 
@@ -1077,7 +1056,7 @@ class BaseScan(ScanABC):
             self._fire_triggers("before")
             for idx in range(n_steps):
                 if self._stop_requested.is_set():
-                    logging.info("Stop requested—aborting scan before step %d.", idx)
+                    logger.info("Stop requested—aborting scan before step %d.", idx)
                     break
 
                 self._daq_is_on = False
@@ -1087,9 +1066,9 @@ class BaseScan(ScanABC):
                         continue
                     tgt = new_positions[name][idx]
                     if self._stop_requested.is_set():
-                        logging.info("Stop requested—skipping remaining move commands.")
+                        logger.info("Stop requested—skipping remaining move commands.")
                         break
-                    logging.info(f"[{name}] moving to {tgt}")
+                    logger.info(f"[{name}] moving to {tgt}")
                     act.move(tgt)
 
                 if self._stop_requested.is_set():
@@ -1102,7 +1081,7 @@ class BaseScan(ScanABC):
                 )
 
                 if self._stop_requested.is_set():
-                    logging.info("Stop requested—aborting scan after actuator wait.")
+                    logger.info("Stop requested—aborting scan after actuator wait.")
                     break
 
                 # 3) skip detector‐read on the overshoot step
@@ -1115,12 +1094,12 @@ class BaseScan(ScanABC):
                 with self._time_block("triggers:on_point", idx=idx):
                     self._fire_triggers("on_point")
                 if self.integration_time > 0.0:
-                    logging.info(f"DAQ for integration_time = {self.integration_time}")
+                    logger.info(f"DAQ for integration_time = {self.integration_time}")
                     if self._stop_requested.wait(self.integration_time):
-                        logging.info("Stop requested during integration time")
+                        logger.info("Stop requested during integration time")
                         break
                 else:
-                    logging.info(f"integration_time = {self.integration_time}")
+                    logger.info(f"integration_time = {self.integration_time}")
                 ## pos_snapshot = {n: new_positions[n][idx] for n in new_positions}
                 first_actuator = next(iter(new_positions))
                 pos_snapshot = new_positions[first_actuator][idx]
@@ -1141,16 +1120,16 @@ class BaseScan(ScanABC):
                 # >>> Notify monitor/plotter
                 with self._time_block("monitor:update", idx=idx):
                     if monitor is not None:
-                        logging.debug(f"{monitor_values}")
+                        logger.debug(f"{monitor_values}")
                         monitor.update(monitor_values)
 
                 # 5) abort if needed
                 if self.get_stop_pv() == 1:
-                    logging.info("Stop PV triggered—aborting scan.")
+                    logger.info("Stop PV triggered—aborting scan.")
                     break
 
             self._fire_triggers("after")
-            logging.info("Scan complete for all actuators.")
+            logger.info("Scan complete for all actuators.")
         
         finally:
             self._daq_is_on = False
@@ -1166,7 +1145,7 @@ class BaseScan(ScanABC):
             try:
                 self._stop_subscriptions()
             except Exception:
-                logging.exception("Error stopping scan subscriptions")
+                logger.exception("Error stopping scan subscriptions")
             self.busyflag = False
             self._perf_report()
     
@@ -1175,12 +1154,12 @@ class BaseScan(ScanABC):
             with self._time_block("manifest:append"):
                 self.append_to_manifest()
         else:
-            logging.debug("Data writer disabled, not added to manifest")
+            logger.debug("Data writer disabled, not added to manifest")
 
         monitor = create_monitor(self.cfg)
         monitor_headers = self.build_output_headers(self.include_timestamps)
         if monitor is not None:
-            logging.debug("Starting monitor")
+            logger.debug("Starting monitor")
             monitor.start(monitor_headers, headers=monitor_headers)
 
         scan_errors: List[Exception] = []
@@ -1195,7 +1174,7 @@ class BaseScan(ScanABC):
             except Exception as exc:
                 scan_errors.append(exc)
         scan_thread = threading.Thread(target=_run_scan, name=f"{self.__class__.__name__}-worker")
-        logging.info(f"Starting {self.__class__.__name__}.")
+        logger.info(f"Starting {self.__class__.__name__}.")
         scan_thread.start()
         if monitor is not None:
             monitor.loop()
@@ -1204,7 +1183,7 @@ class BaseScan(ScanABC):
         if scan_errors:
             # Pass failures to upper layer. 
             raise scan_errors[0]
-        logging.info(f"{self.__class__.__name__} scan complete.")
+        logger.info(f"{self.__class__.__name__} scan complete.")
 
     def _prepare_positions(self, positions):
         """
@@ -1317,38 +1296,38 @@ class BaseScan(ScanABC):
                     try:
                         fut.result()
                     except Exception as e:
-                        logging.error(f"[{name}] wait failed: {e}")
+                        logger.error(f"[{name}] wait failed: {e}")
 
                 if self._stop_requested.is_set():
-                    logging.info("Stop requested—waiting for actuator wait workers to exit.")
+                    logger.info("Stop requested—waiting for actuator wait workers to exit.")
                     # Do not return immediately. Workers now observe stop_event.
                     # Loop until pending is empty.
 
     def stop(self) -> None:
         """Request scan stop and best-effort stop all configured actuators."""
-        logging.info("Stop requested for %s", self.__class__.__name__)
+        logger.info("Stop requested for %s", self.__class__.__name__)
 
         try:
             self._stop_requested.set()
         except Exception:
-            logging.debug("Failed to set scan stop event", exc_info=True)
+            logger.debug("Failed to set scan stop event", exc_info=True)
 
         self._daq_is_on = False
 
         actuators = getattr(self, "actuators", {}) or {}
         for name, actuator in actuators.items():
             try:
-                logging.info("Stopping actuator '%s'", name)
+                logger.info("Stopping actuator '%s'", name)
                 actuator.stop()
             except Exception:
-                logging.exception("Failed to stop actuator '%s'", name)
+                logger.exception("Failed to stop actuator '%s'", name)
 
         try:
             with self._tick_cond:
                 self._tick_seq += 1
                 self._tick_cond.notify_all()
         except Exception:
-            logging.debug("Failed to wake scan wait condition", exc_info=True)
+            logger.debug("Failed to wake scan wait condition", exc_info=True)
 
     @property
     def busy(self) -> bool:
@@ -1392,7 +1371,7 @@ class BaseScan(ScanABC):
             return {}
         return dict(self.actuators)
 
-    def append_to_manifest(self, scan_type: str = None) -> None:
+    def append_to_manifest(self, scan_type: str | None = None) -> None:
         """
         Append scan configuration to the active manifest.
         Args:
@@ -1414,28 +1393,26 @@ class BaseScan(ScanABC):
             )
 
         except Exception:
-            # Never break a scan because of manifest issues
-            import logging
-            logging.exception("Failed to append scan to manifest")
+            logger.exception("Failed to append scan to manifest")
     
     # -------------------- role callback default handlers --------------------
     
     def _on_status_event(self, ev: PvEvent, subscription=None) -> None:
         self._last_status = ev
-        logging.debug("[status] %s=%r", ev.pvname, ev.value)
+        logger.debug("[status] %s=%r", ev.pvname, ev.value)
 
     def _on_heartbeat_event(self, ev: PvEvent, subscription=None) -> None:
         self._last_heartbeat = ev
         with self._tick_cond:
             self._tick_seq += 1
             self._tick_cond.notify_all()
-        logging.debug("[heartbeat] %s=%r (seq=%d)", ev.pvname, ev.value, self._tick_seq)
+        logger.debug("[heartbeat] %s=%r (seq=%d)", ev.pvname, ev.value, self._tick_seq)
     
     def _on_stop_event(self, ev: PvEvent, subscription=None) -> None:
         """
         Immediate stop trigger. Stops actuators best-effort and wakes the loop.
         """
-        logging.info("[stop] %s=%r -> stopping scan", ev.pvname, ev.value)
+        logger.info("[stop] %s=%r -> stopping scan", ev.pvname, ev.value)
         if self.busyflag == True:
             self._stop_requested.set()
             with self._tick_cond:
@@ -1444,7 +1421,7 @@ class BaseScan(ScanABC):
                 for act in self.actuators.values():
                     act.stop()
             except Exception:
-                logging.exception("Error while stopping actuators on stop event")
+                logger.exception("Error while stopping actuators on stop event")
 
     def _wait_for_tick_or_timeout(self, timeout_s: float) -> bool:
         """
@@ -1487,7 +1464,7 @@ class BaseScan(ScanABC):
             try:
                 self._fire_triggers("monitor")
             except Exception:
-                logging.exception("WORKER: Failed to fire monitor triggers")
+                logger.exception("WORKER: Failed to fire monitor triggers (ev = {ev})")
 
     def _on_plugin_event(self, ev: PvEvent, subscription=None) -> None:
         """
@@ -1499,9 +1476,9 @@ class BaseScan(ScanABC):
     def _plugin_worker_loop(self) -> None:
         while not self._plugin_worker_stop.is_set():
             ev = self._plugin_q.get()
-            # logging.debug("PLUGIN_WORKER: pv=%s", ev.pvname) 
+            # logger.debug("PLUGIN_WORKER: pv=%s", ev.pvname) 
             try:
                 for plugin in self.plugins:
                     plugin.on_monitor(ev)
             except Exception:
-                logging.exception("WORKER: Failed to run plugin")
+                logger.exception("WORKER: Failed to run plugin")
