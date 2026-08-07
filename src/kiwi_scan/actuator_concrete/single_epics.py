@@ -115,58 +115,36 @@ class EpicsActuator(AbstractActuator):
         return self._monitors.get(pvname)
 
     def remove_monitor(self, pvname: str) -> None:
-        """
-        Remove CA callbacks for the monitored PV and clear bookkeeping.
-        """
-        # Detach CA callbacks
+        """ Remove CA callbacks for the monitored PV and clear bookkeeping. """
         with self._monitor_lock:
             mon = self._monitors.get(pvname)
             cb_indices = list(self._epics_cb_indices.get(pvname, []))
 
-        try:
-            # pyepics.PV is mon._pv in EpicsPV, TODO: implement remove_callback in EpicsPV
-            raw_pv = mon._pv if mon is not None else None
-            raw_pv = getattr(mon, "_pv", None) if mon is not None else None
-            if raw_pv is not None:
-                # Prefer removing only our callbacks if possible
-                if hasattr(raw_pv, "remove_callback"):
-                    for idx in cb_indices:
-                        try:
-                            raw_pv.remove_callback(idx)
-                        except Exception:
-                            logger.exception("[EPICS] remove_callback failed for %s idx=%r", pvname, idx)
-                elif hasattr(raw_pv, "clear_callbacks"):
-                    # Fallback: clear everything on that PV (coarser)
-                    raw_pv.clear_callbacks()
-
-                # Optional: disconnect to stop CA traffic
-                if hasattr(raw_pv, "disconnect"):
-                    try:
-                        raw_pv.disconnect()
-                    except Exception:
-                        pass
-        except Exception:
-            logger.exception("[EPICS] Failed to detach monitor callbacks for %s", pvname)
+        if mon is not None:
+            for idx in cb_indices:
+                try:
+                    mon.remove_callback(idx)
+                except Exception:
+                    logger.exception("[EPICS] remove_callback failed for %s idx=%r", pvname, idx)
+            try:
+                mon.disconnect()
+            except Exception:
+                logger.debug("[EPICS] disconnect failed for %s", pvname, exc_info=True)
 
         with self._monitor_lock:
             self._epics_cb_indices.pop(pvname, None)
 
-        # Clear monitor bookkeeping (callbacks + last events)
         super().remove_monitor(pvname)
 
     def clear_monitors(self) -> None:
-        """
-        Remove all EPICS monitors for this actuator.
-        """
+        """ Remove all EPICS monitors for this actuator. """
         with self._monitor_lock:
             pvs = list(self._monitors.keys())
         for pv in pvs:
             self.remove_monitor(pv)
 
     def _dispatch_pv_update(self, pvname: str, value: Any, **kw: Any):
-        """
-        Only record/callback for PVs that are still monitored/listened to.
-        """
+        """ Only record/callback for PVs that are still monitored/listened to. """
         with self._monitor_lock:
             has_monitor = pvname in self._monitors
             has_listeners = bool(self._monitor_callbacks.get(pvname))
@@ -180,9 +158,7 @@ class EpicsActuator(AbstractActuator):
 
     @property
     def rbv(self) -> Optional[Any]:
-        """
-        Shortcut property to get the readback value.
-        """
+        """ Shortcut property to get the readback value.  """
         
         if self.rb_pv:
             val = self.rb_pv.get(use_monitor=True)
@@ -193,9 +169,7 @@ class EpicsActuator(AbstractActuator):
 
     @rbv.setter
     def rbv(self, value: Any) -> None:
-        """
-        Shortcut property to set the readback value (for testing or simulation).
-        """
+        """ Shortcut property to set the readback value (for testing or simulation).  """
         if self.rb_pv:
             self.rb_pv.put(value)
         else:
@@ -203,9 +177,7 @@ class EpicsActuator(AbstractActuator):
 
     @property
     def cmdv(self) -> Optional[Any]:
-        """
-        Shortcut property to get the commanded position value.
-        """
+        """ Shortcut property to get the commanded position value.  """
         if self.cmd_pv:
             val = self.cmd_pv.get(use_monitor=True) 
             if val is None: 
@@ -215,9 +187,7 @@ class EpicsActuator(AbstractActuator):
 
     @cmdv.setter
     def cmdv(self, value: Any) -> None:
-        """
-        Shortcut property to set the commanded position value (for testing or simulation).
-        """
+        """ Shortcut property to set the commanded position value (for testing or simulation).  """
         if self.cmd_pv:
             self.cmd_pv.put(value)
         else:
@@ -225,9 +195,7 @@ class EpicsActuator(AbstractActuator):
     
     @property
     def cmdvelv(self) -> Optional[Any]:
-        """
-        Shortcut property to get the commanded position value.
-        """
+        """ Shortcut property to get the commanded position value.  """
         if self.cmdvel_pv:
             val = self.cmdvel_pv.get(use_monitor=True) 
             if val is None: 

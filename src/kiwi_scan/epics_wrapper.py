@@ -199,6 +199,17 @@ class EpicsPV:
             _safe_poll()
 
         self._ca(_do_add)
+        return cb_index
+
+    def remove_callback(self, index: int) -> None:
+        """Remove one callback by the index returned from add_callback()."""
+        pv = self._require_pv()
+        self._ca(lambda: pv.remove_callback(index))
+
+    def disconnect(self) -> None:
+        """Disconnect this PV from Channel Access."""
+        pv = self._require_pv()
+        self._ca(pv.disconnect)
 
     def clear_callbacks(self) -> None:
         pv = self._require_pv()
