@@ -98,19 +98,30 @@ class UndulatorViaCAN(UndulatorViaEPICS):
     
     @staticmethod
     def pack_velocities(vgap: float, vshift: float) -> int:
-        def scaled_int16(value: float) -> int:
-            raw = round(value * 32767.0)
-            return max(-32768, min(32767, raw))
+        """
+        Pack gap/shift speed factors into CAN_BROADCAST_SPEED.
+        Source: https://idcs-documentation.sourceforge.io/uniserv_can.html
 
-        gap = scaled_int16(vgap)
-        shift = scaled_int16(vshift)
+        Each input is a multiplier in the range 0.0 .. 1.0:
+          0.0 -> 0x0000
+          1.0 -> 0xFFFF
 
-        packed = ((shift & 0xFFFF) << 16) | (gap & 0xFFFF)
+        Bits 0..15 contain the gap multiplier.
+        Bits 16..31 contain the shift multiplier.
+        """
 
-        # Preserve the same 32 bits as a signed EPICS long.
+        def scaled_uint16(value: float) -> int:
+            if not 0.0 <= value <= 1.0:
+                raise ValueError(f"CAN speed multiplier must be between 0.0 and 1.0, got {value}") 
+            return round(value * 0xFFFF)
+
+        gap = scaled_uint16(vgap)
+        shift = scaled_uint16(vshift)
+        packed = (shift << 16) | gap
+        # EPICS long is signed 32 bit. Preserve the same 32 CAN bits.
         if packed >= 0x80000000:
             packed -= 0x100000000
-        logger.info(f"packed: {packed}")
+        logger.debug("Packed CAN speed multipliers gap=%s shift=%s -> 0x%08X", vgap, vshift, packed & 0xFFFFFFFF)
 
         return packed
 
