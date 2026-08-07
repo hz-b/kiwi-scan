@@ -571,36 +571,71 @@ class TestSimulatedActuatorReadyState(unittest.TestCase):
         self.assertFalse(actuator.is_ready())
         self.assertTrue(actuator.is_moving())
 
-
 class TestUndulatorViaCAN(unittest.TestCase):
-    def test_pack_velocities_basic(self):
-        # Positive values in range
-        assert UndulatorViaCAN.pack_velocities(100, 200) == ((200 & 0xFFFF) << 16) | (100 & 0xFFFF)
+    def test_pack_velocities_zero(self):
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(0.0, 0.0),
+            0x00000000,
+        )
+
+    def test_pack_velocities_positive(self):
+        # 0.5 * 32767 -> 16384 = 0x4000
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(0.5, 0.5),
+            0x40004000,
+        )
+
+    def test_pack_velocities_full_positive(self):
+        # 1.0 -> 32767 = 0x7FFF
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(1.0, 1.0),
+            0x7FFF7FFF,
+        )
 
     def test_pack_velocities_negative_gap(self):
-        # Negative gap
-        assert UndulatorViaCAN.pack_velocities(-100, 200) == ((200 & 0xFFFF) << 16) | ((-100 & 0xFFFF))
+        # gap: -0.5 -> -16384 -> 0xC000
+        # shift: 0.5 ->  16384 -> 0x4000
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(-0.5, 0.5),
+            0x4000C000,
+        )
 
     def test_pack_velocities_negative_shift(self):
-        # Negative shift
-        assert UndulatorViaCAN.pack_velocities(100, -200) == (((-200 & 0xFFFF) << 16) | (100 & 0xFFFF))
+        # Unsigned bit pattern is 0xC0004000.
+        # Returned as signed EPICS long:
+        # 0xC0004000 - 0x100000000 = -1073725440
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(0.5, -0.5),
+            -1073725440,
+        )
 
     def test_pack_velocities_both_negative(self):
-        # Both negative
-        assert UndulatorViaCAN.pack_velocities(-100, -200) == (((-200 & 0xFFFF) << 16) | ((-100 & 0xFFFF)))
+        # Unsigned bit pattern: 0xC000C000
+        # Converted to signed 32-bit integer.
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(-0.5, -0.5),
+            0xC000C000 - 0x100000000,
+        )
 
-    def test_pack_velocities_upper_bound(self):
-        # Upper bound
-        assert UndulatorViaCAN.pack_velocities(40000, 40000) == ((32767 & 0xFFFF) << 16) | (32767 & 0xFFFF)
+    def test_pack_velocities_clamps_upper_bound(self):
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(2.0, 2.0),
+            0x7FFF7FFF,
+        )
 
-    def test_pack_velocities_lower_bound(self):
-        # Lower bound
-        assert UndulatorViaCAN.pack_velocities(-40000, -40000) == ((-32768 & 0xFFFF) << 16) | ((-32768 & 0xFFFF))
+    def test_pack_velocities_clamps_lower_bound(self):
+        # Values below -1 eventually clamp to signed int16 minimum.
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(-2.0, -2.0),
+            0x80008000 - 0x100000000,
+        )
 
     def test_pack_velocities_rounding(self):
-        # Values close to boundaries, test rounding
-        assert UndulatorViaCAN.pack_velocities(32767.4, -32767.6) == ((-32768 & 0xFFFF) << 16) | (32767 & 0xFFFF)
-
+        # 0.1 * 32767 = 3276.7 -> 3277 = 0x0CCD
+        self.assertEqual(
+            UndulatorViaCAN.pack_velocities(0.1, 0.1),
+            0x0CCD0CCD,
+        )
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

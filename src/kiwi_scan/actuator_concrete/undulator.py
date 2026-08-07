@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 import logging
-from typing import Sequence, Optional, Any
+from typing import Sequence
 
-import numpy as np
 from kiwi_scan.actuator.multi import MultiActuator
 from kiwi_scan.actuator.single import AbstractActuator
 from kiwi_scan.datamodels import ActuatorConfig
 from kiwi_scan.epics_wrapper import EpicsPV
+
+logger = logging.getLogger(__name__)
 
 class UndulatorViaEPICS(MultiActuator):
     """
@@ -55,14 +56,14 @@ class UndulatorViaEPICS(MultiActuator):
                 )
             return self.jog_velocity_pv.put(arr)
         else:
-            logging.error("No jog_velocity_pv configured")
+            logger.error("No jog_velocity_pv configured")
             return False
 
     def _write_jog_command(self, velocities: Sequence[float]) -> bool:
         """Writes the start command for jog operation (if required)."""
         jog_cfg = getattr(self.config, 'jog', None)
         if not self.jog_command_pv:
-            logging.debug("No jog_command_pv, not writing jog start command.")
+            logger.debug("No jog_command_pv, not writing jog start command.")
             return True  # Not an error; just nothing to do.
 
         velocity = velocities[0]
@@ -78,17 +79,17 @@ class UndulatorViaEPICS(MultiActuator):
     def jog(self, velocities: Sequence[float], sync: bool = True) -> None:
         if len(velocities) != 2:
             raise ValueError("Undulator needs two velocities (gap, shift)")
-        logging.info(f"Velocities: {velocities}")
+        logger.info(f"Velocities: {velocities}")
         ok = self._write_jog_velocities(velocities)
         if not ok:
             raise RuntimeError(f"Failed to write jog velocities {velocities}.")
 
         success = self._write_jog_command(velocities)
         if not success:
-            logging.error(f"Failed to set jog start command for {self.jog_command_pv.pvname}")
+            logger.error(f"Failed to set jog start command for {self.jog_command_pv.pvname}")
 
         if sync:
-            logging.debug("Jog sync=True: no sync implementation (override if needed)")
+            logger.debug("Jog sync=True: no sync implementation (override if needed)")
 
 class UndulatorViaCAN(UndulatorViaEPICS):
     """
@@ -97,21 +98,30 @@ class UndulatorViaCAN(UndulatorViaEPICS):
     
     @staticmethod
     def pack_velocities(vgap: float, vshift: float) -> int:
-        def to_int16(val):
-            val = int(round(val))
-            return max(-32768, min(32767, val))
-        vgap_int16 = to_int16(vgap)
-        vshift_int16 = to_int16(vshift)
-        return ((vshift_int16 & 0xFFFF) << 16) | (vgap_int16 & 0xFFFF)
+        def scaled_int16(value: float) -> int:
+            raw = round(value * 32767.0)
+            return max(-32768, min(32767, raw))
+
+        gap = scaled_int16(vgap)
+        shift = scaled_int16(vshift)
+
+        packed = ((shift & 0xFFFF) << 16) | (gap & 0xFFFF)
+
+        # Preserve the same 32 bits as a signed EPICS long.
+        if packed >= 0x80000000:
+            packed -= 0x100000000
+        logger.info(f"packed: {packed}")
+
+        return packed
 
     def _write_jog_velocities(self, velocities: Sequence[float]) -> bool:
         if len(velocities) != 2:
             raise ValueError("UndulatorViaCAN needs two velocities (gap, shift)")
         packed = self.pack_velocities(velocities[0], velocities[1])
-        if self.jog_command_pv is not None:
-            return self.jog_command_pv.put(int(packed))
+        if self.jog_velocity_pv is not None:
+            return self.jog_velocity_pv.put(int(packed))
         else:
-            logging.error("No jog_command_pv configured for this UndulatorViaCAN")
+            logger.error("No jog_command_pv configured for this UndulatorViaCAN")
             return False
 
 UNDULATOR_TYPES = {
