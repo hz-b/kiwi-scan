@@ -1,15 +1,16 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-import time
 import logging
 import threading
-from abc import ABC, abstractmethod
-from typing import Callable, Optional, Any, Dict, List
+import time
+from typing import Any, Callable, Dict, List, Optional
 
+from kiwi_scan.actuator.single import AbstractActuator, MonitorCallback
 from kiwi_scan.datamodels import ActuatorConfig
 from kiwi_scan.epics_wrapper import EpicsPV
-from kiwi_scan.actuator.single import AbstractActuator, PvEvent, MonitorCallback
+
+logger = logging.getLogger(__name__)
 
 class EpicsActuator(AbstractActuator):
     """
@@ -22,7 +23,7 @@ class EpicsActuator(AbstractActuator):
         self.pv = EpicsPV(config.pv) if config.pv else None
         self.ca_timeout = config.ca_timeout if config.ca_timeout else 1.0
         self.auto_monitor = config.auto_monitor 
-        logging.debug(f"Actuator CA settings:  ca_timeout: {self.ca_timeout}, auto_monitor: {self.auto_monitor}")
+        logger.debug(f"Actuator CA settings:  ca_timeout: {self.ca_timeout}, auto_monitor: {self.auto_monitor}")
         self.rel_pv = EpicsPV(config.rel_pv) if config.rel_pv else None
         self.rb_pv = EpicsPV(config.rb_pv, auto_monitor=self.auto_monitor, queueing_delay=0.0) if config.rb_pv else None
         self.cmd_pv = EpicsPV(config.cmd_pv) if config.cmd_pv else None
@@ -99,7 +100,7 @@ class EpicsActuator(AbstractActuator):
                     self._dispatch_pv_update(name, value, **kw)
 
                 # EpicsPV.add_callback returns callback index from pyepics
-                logging.info(f"ACT->add_monitor: Add callback to PV {pvname}")
+                logger.info(f"ACT->add_monitor: Add callback to PV {pvname}")
                 cb_idx = mon.add_callback(_on_ca_event, run_now=False, with_ctrlvars=False)
                 self._monitors[pvname] = mon
                 self._epics_cb_indices[pvname] = [cb_idx]
@@ -123,7 +124,8 @@ class EpicsActuator(AbstractActuator):
             cb_indices = list(self._epics_cb_indices.get(pvname, []))
 
         try:
-            # Our EpicsPV wraps a real pyepics.PV in mon._pv
+            # pyepics.PV is mon._pv in EpicsPV, TODO: implement remove_callback in EpicsPV
+            raw_pv = mon._pv if mon is not None else None
             raw_pv = getattr(mon, "_pv", None) if mon is not None else None
             if raw_pv is not None:
                 # Prefer removing only our callbacks if possible
@@ -132,7 +134,7 @@ class EpicsActuator(AbstractActuator):
                         try:
                             raw_pv.remove_callback(idx)
                         except Exception:
-                            logging.exception("[EPICS] remove_callback failed for %s idx=%r", pvname, idx)
+                            logger.exception("[EPICS] remove_callback failed for %s idx=%r", pvname, idx)
                 elif hasattr(raw_pv, "clear_callbacks"):
                     # Fallback: clear everything on that PV (coarser)
                     raw_pv.clear_callbacks()
@@ -144,7 +146,7 @@ class EpicsActuator(AbstractActuator):
                     except Exception:
                         pass
         except Exception:
-            logging.exception("[EPICS] Failed to detach monitor callbacks for %s", pvname)
+            logger.exception("[EPICS] Failed to detach monitor callbacks for %s", pvname)
 
         with self._monitor_lock:
             self._epics_cb_indices.pop(pvname, None)
@@ -248,7 +250,7 @@ class EpicsActuator(AbstractActuator):
         if self.pv:
             self.pv.check_pv()
         else:
-            logging.warning("Creating EPICS actuator without setter PV")
+            logger.warning("Creating EPICS actuator without setter PV")
         if self.start_pv:
             self.start_pv.check_pv()
         if self.velocity_pv:
@@ -276,16 +278,16 @@ class EpicsActuator(AbstractActuator):
         start = time.time()
         while not condition():
             if stop_event is not None and stop_event.is_set():
-                logging.info("Stop requested while waiting for actuator condition")
+                logger.info("Stop requested while waiting for actuator condition")
                 return False
 
             if timeout is not None and (time.time() - start) > timeout:
-                logging.warning(msg)
+                logger.warning(msg)
                 return False
 
             if stop_event is not None:
                 if stop_event.wait(interval):
-                    logging.info("Stop requested while waiting for actuator condition")
+                    logger.info("Stop requested while waiting for actuator condition")
                     return False
             else:
                 time.sleep(interval)
@@ -296,15 +298,15 @@ class EpicsActuator(AbstractActuator):
         if self.start_pv:
             success = self.start_pv.put(self.start_command)
             if not success:
-                logging.error(f"Failed to start actuator via {self.start_pv.pvname}")
+                logger.error(f"Failed to start actuator via {self.start_pv.pvname}")
 
     def set_velocity(self, velocity: float) -> None:
         self.velocity = velocity
         if self.velocity_pv:
             success = self.velocity_pv.put(velocity)
             if not success:
-                logging.error(f"Failed to set velocity via {self.velocity_pv.pvname}")
-        logging.info(f"Velocity set to {self.velocity}")
+                logger.error(f"Failed to set velocity via {self.velocity_pv.pvname}")
+        logger.info(f"Velocity set to {self.velocity}")
 
     def get_velocity(self) -> Optional[float]:
         if self.get_velocity_pv:
@@ -315,15 +317,15 @@ class EpicsActuator(AbstractActuator):
         return None
 
     def _issue_move(self, position: float) -> None:
-        logging.info(f"[{self.pvname}] move to {position}")
+        logger.info(f"[{self.pvname}] move to {position}")
         success = False
         if self.pv:
             success = self.pv.put(position)
         else:
-            logging.error("Cannot issue move: setter PV is not configured")
+            logger.error("Cannot issue move: setter PV is not configured")
 
         if not success:
-            logging.error(f"Failed to write position to {self.pvname}")
+            logger.error(f"Failed to write position to {self.pvname}")
         self.start_actuator()
         time.sleep(self.q_delay)
 
@@ -337,10 +339,10 @@ class EpicsActuator(AbstractActuator):
         Otherwise compute an absolute target from rbv and use the normal move PV.
         """
         if self.rel_pv is not None:
-            logging.info(f"[{self.pvname}] rel-move by {delta}")
+            logger.info(f"[{self.pvname}] rel-move by {delta}")
             success = self.rel_pv.put(delta)
             if not success:
-                logging.error("Failed to write relative move %r to %s", delta, self.rel_pv.pvname)
+                logger.error("Failed to write relative move %r to %s", delta, self.rel_pv.pvname)
             self.start_actuator()
             time.sleep(self.q_delay)
             return
@@ -348,14 +350,14 @@ class EpicsActuator(AbstractActuator):
         # Fallback: compute absolute target from readback
         cur = self.rbv
         if cur is None:
-            logging.error( f"Relative move requested but no rel_pv configured/available and rbv is None for actuator '{self.pvname}'.")
+            logger.error( f"Relative move requested but no rel_pv configured/available and rbv is None for actuator '{self.pvname}'.")
             return 
         try:
             target = float(cur) + float(delta)
         except Exception as exc:
-            logging.error(f"Failed to compute absolute target from rbv={cur!r} and delta={delta!r}: {exc}")
+            logger.error(f"Failed to compute absolute target from rbv={cur!r} and delta={delta!r}: {exc}")
             return 
-        logging.info(f"[{self.pvname}] rel-move fallback: rbv={cur} delta={delta} -> target={target}")
+        logger.info(f"[{self.pvname}] rel-move fallback: rbv={cur} delta={delta} -> target={target}")
         self._issue_move(target)
 
     def run_move(
@@ -396,7 +398,7 @@ class EpicsActuator(AbstractActuator):
 
         cur = self.rbv
         if cur is None:
-            logging.error( f"Relative move requested but no rel_pv configured/available and rbv is None for actuator '{self.pvname}'.")
+            logger.error( f"Relative move requested but no rel_pv configured/available and rbv is None for actuator '{self.pvname}'.")
             return
         target = float(cur) + float(delta)
         self._issue_move(target)
@@ -410,10 +412,10 @@ class EpicsActuator(AbstractActuator):
 
     def jog(self, velocity: float, sync: bool = True) -> None:
         
-        logging.info(f"Jog with velocity {velocity}")
+        logger.info(f"Jog with velocity {velocity}")
 
         jog_cfg = self.config.jog
-        logging.info(f"jog_cfg = {jog_cfg}")
+        logger.info(f"jog_cfg = {jog_cfg}")
         if not jog_cfg:
             raise ValueError("Jog feature is not configured for this actuator")
         
@@ -425,7 +427,7 @@ class EpicsActuator(AbstractActuator):
                 cmd_velocity = velocity
             success = self.jog_velocity_pv.put(cmd_velocity)
             if not success:
-                logging.error(f"Failed to set velocity via {self.jog_velocity_pv.pvname}")
+                logger.error(f"Failed to set velocity via {self.jog_velocity_pv.pvname}")
         
         # 2) If a command PV is provided, determine the command value
         if self.jog_command_pv:
@@ -436,7 +438,7 @@ class EpicsActuator(AbstractActuator):
                 cmd = jog_cfg.command_pos or 1.0
             success = self.jog_command_pv.put(cmd)
             if not success:
-                logging.error(f"Failed to set {self.jog_command_pv.pvname}")
+                logger.error(f"Failed to set {self.jog_command_pv.pvname}")
         if sync:
             self.wait_for_startup_and_done()
     
@@ -453,7 +455,7 @@ class EpicsActuator(AbstractActuator):
     def _status_value_is_ready(self, val: Any) -> bool:
         """Decode a concrete status-PV value into ready/not-ready."""
         mask = getattr(self, "ready_bitmask", 0)
-        logging.debug("is_ready(): mask=%r val=%r", mask, val)
+        logger.debug("is_ready(): mask=%r val=%r", mask, val)
 
         if mask:
             try:
@@ -465,7 +467,7 @@ class EpicsActuator(AbstractActuator):
                     if isinstance(self.ready_value, str)
                     else int(self.ready_value)
                 )
-                logging.debug(
+                logger.debug(
                     "is_ready(): status=%r mask=%r ready_val=%r",
                     status,
                     mask,
@@ -473,7 +475,7 @@ class EpicsActuator(AbstractActuator):
                 )
                 return (status & mask) == ready_val
             except (TypeError, ValueError):
-                logging.debug("is_ready(): failed bitmask evaluation", exc_info=True)
+                logger.debug("is_ready(): failed bitmask evaluation", exc_info=True)
                 # Fall back to simple comparison below.
 
         try:
@@ -495,7 +497,7 @@ class EpicsActuator(AbstractActuator):
 
         val = self._read_status_value()
         if val is None:
-            logging.debug(f"[{self.pvname}] status state unknown")
+            logger.debug(f"[{self.pvname}] status state unknown")
             return None
 
         return self._status_value_is_ready(val)
@@ -526,12 +528,12 @@ class EpicsActuator(AbstractActuator):
 
         while True:
             if stop_event is not None and stop_event.is_set():
-                logging.info(f"[{self.pvname}] in-position check aborted by stop_event")
+                logger.info(f"[{self.pvname}] in-position check aborted by stop_event")
                 return False
 
             current = self.rb_pv.get(timeout=self.ca_timeout)
             if current is None:
-                logging.warning("Readback PV returned None")
+                logger.warning("Readback PV returned None")
                 return True
 
             if abs(current - target) <= self.in_pos_band:
@@ -542,7 +544,7 @@ class EpicsActuator(AbstractActuator):
 
             if stop_event is not None:
                 if stop_event.wait(0.1):
-                    logging.info(f"[{self.pvname}] in-position check aborted by stop_event")
+                    logger.info(f"[{self.pvname}] in-position check aborted by stop_event")
                     return False
             else:
                 time.sleep(0.1)
@@ -558,40 +560,30 @@ class EpicsActuator(AbstractActuator):
         self,
         stop_event: Optional[threading.Event] = None,
     ) -> bool:
-        """Wait until actuator motion has started.
-
-        Returns True if startup was observed. Returns False on timeout or when
-        stop_event is set. If no status PV is configured, startup cannot be
-        observed and the method returns True after logging a debug message.
+        """
+        Wait until actuator motion has started.
+        Returns: 
+            True if startup was observed or no status PV configured.
+            False on timeout or when stop_event is set. 
         """
         if self._stop_requested(stop_event):
-            logging.info(f"[{self.pvname}] startup wait aborted before start")
+            logger.info(f"[{self.pvname}] startup wait aborted before start")
             return False
 
         if not self.status_pv:
-            logging.debug(f"[{self.pvname}] no status PV configured; cannot observe startup")
+            logger.debug(f"[{self.pvname}] no status PV configured; cannot observe startup")
             return True
 
-        logging.debug(f"[{self.pvname}] waiting for move to start")
-        started = self._wait_for_condition(
-            self.is_moving,
-            self.startup_timeout,
-            msg=(
-                f"[{self.pvname}] move start was not observed within "
-                f"{self.startup_timeout}s"
-            ),
-            stop_event=stop_event,
-        )
+        logger.debug(f"[{self.pvname}] waiting for move to start")
+        started = self._wait_for_condition(self.is_moving, self.startup_timeout,
+            msg=(f"[{self.pvname}] move start was not observed within {self.startup_timeout}s"), stop_event=stop_event)
 
         if self._stop_requested(stop_event):
-            logging.info(f"[{self.pvname}] startup wait aborted")
+            logger.info(f"[{self.pvname}] startup wait aborted")
             return False
 
         if not started:
-            logging.warning(
-                f"[{self.pvname}] move start was not observed; "
-                "this may be a fast move, status delay, or short disconnect"
-            )
+            logger.warning( f"[{self.pvname}] move start was not observed")
 
         return bool(started)
 
@@ -600,7 +592,7 @@ class EpicsActuator(AbstractActuator):
         if stop_event is not None and stop_event.is_set():
             return
 
-        logging.debug(f"[{self.pvname}] waiting for ready state")
+        logger.debug(f"[{self.pvname}] waiting for ready state")
         # TODO: Add configurable timeout
         self._wait_for_condition(self.is_ready, stop_event=stop_event)
     
@@ -616,7 +608,7 @@ class EpicsActuator(AbstractActuator):
         if self.dwell_time <= 0:
             return True
 
-        logging.debug(f"[{self.pvname}] dwell for {self.dwell_time}s")
+        logger.debug(f"[{self.pvname}] dwell for {self.dwell_time}s")
 
         if stop_event is not None:
             return not stop_event.wait(self.dwell_time)
@@ -635,37 +627,37 @@ class EpicsActuator(AbstractActuator):
 
         try:
             if self._stop_requested(stop_event):
-                logging.info(f"[{self.pvname}] wait aborted before start")
+                logger.info(f"[{self.pvname}] wait aborted before start")
                 return
 
             if has_status:
                 self.wait_for_startup_and_done(stop_event=stop_event)
                 if self._stop_requested(stop_event):
-                    logging.info(f"[{self.pvname}] wait aborted after status wait")
+                    logger.info(f"[{self.pvname}] wait aborted after status wait")
                     return
 
             if has_band:
-                logging.debug(f"[{self.pvname}] waiting in-band")
+                logger.debug(f"[{self.pvname}] waiting in-band")
                 if not self.in_position_check(position, stop_event=stop_event):
                     if self._stop_requested(stop_event):
-                        logging.info(f"[{self.pvname}] in-band wait aborted")
+                        logger.info(f"[{self.pvname}] in-band wait aborted")
                         return
-                    logging.warning(f"{self.pvname} never reached in-band position")
+                    logger.warning(f"{self.pvname} never reached in-band position")
 
                 if self._stop_requested(stop_event):
-                    logging.info(f"[{self.pvname}] wait aborted after in-band check")
+                    logger.info(f"[{self.pvname}] wait aborted after in-band check")
                     return
 
             if has_status or has_band or self.dwell_time > 0:
                 if not self._dwell_interruptible(stop_event):
-                    logging.info(f"[{self.pvname}] dwell interrupted")
+                    logger.info(f"[{self.pvname}] dwell interrupted")
                     return
             else:
-                logging.info(f"[{self.pvname}] no wait conditions")
+                logger.info(f"[{self.pvname}] no wait conditions")
 
         finally:
             elapsed = time.time() - t0
-            logging.info(f"[{self.pvname}] done in {elapsed:.3f}s")
+            logger.info(f"[{self.pvname}] done in {elapsed:.3f}s")
             self._last_move_time = elapsed
 
 
@@ -673,7 +665,7 @@ class EpicsActuator(AbstractActuator):
         if self.stop_pv:
             success = self.stop_pv.put(self.config.stop_command)
             if not success:
-                logging.error(f"Failed to stop actuator via {self.stop_pv.pvname}")
+                logger.error(f"Failed to stop actuator via {self.stop_pv.pvname}")
         else:
-            logging.debug("Stop PV not defined, no action taken")
+            logger.debug("Stop PV not defined, no action taken")
 
