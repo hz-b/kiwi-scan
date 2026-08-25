@@ -13,6 +13,14 @@ import epics
 logger = logging.getLogger(__name__)
 _CA_LOCK = threading.Lock()
 
+
+def ensure_ca_context() -> None:
+    """ Attach the current thread to the initial EPICS CA context if possible.  """
+    try:
+        epics.ca.use_initial_context()
+    except epics.ca.ChannelAccessException:
+        logger.debug("Could not attach initial EPICS CA context", exc_info=True)
+
 def _safe_poll() -> None:
     """ 
     try: Yield to EPICS CA
@@ -148,7 +156,7 @@ class EpicsPV:
         return _do()
 
     def put(self, value: Any) -> bool:
-        """Put a value to the PV.
+        """ Put a value to the PV.
         Supports scalar writes and waveform (array) writes.
         """
         pv = self._require_pv()
@@ -157,23 +165,18 @@ class EpicsPV:
         v = value
         tolist = getattr(v, "tolist", None)
         if callable(tolist):
-            try:
-                v = tolist()
-            except Exception:
-                v = value
+            v = tolist()
         try:
-            # TODO: Check risk and evaluate if 
-            # PV puts should lock globally or per PV because of 
-            # pyepics / CA thread-safety issues under load
             pv.put(v, timeout=self.timeout)
             if self.queueing_delay > 0:
                 time.sleep(self.queueing_delay)
-            logger.debug("Set PV %s = %r", self.pvname, v)
+            logger.debug("Set PV {self.pvname}={v}")
             self.last_written = v
             return True
-        except Exception as e:
-            logger.error("Failed to set PV %s to %r: %s", self.pvname, v, e)
+        except Exception as e: # noqa BLE001
+            logger.error(f"Failed to set {self.pvname}={v}:{e}")
             return False
+
     def add_callback(self, callback: Callable[..., None], **kwargs: Any) -> Optional[int]:
         pv = self._require_pv()
         wrapped = self._wrap_callback(callback)

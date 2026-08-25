@@ -2,14 +2,14 @@
 # SPDX-License-Identifier: MIT
 
 import logging
-import threading
-import epics
-from typing import Optional
-from kiwi_scan.scan.common import BaseScan
-from kiwi_scan.monitor.base import BaseMonitor
-from kiwi_scan.datamodels import ScanConfig
+
 from kiwi_scan.actuator.single import PvEvent
+from kiwi_scan.datamodels import ScanConfig
+from kiwi_scan.monitor.base import BaseMonitor
+from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.range_exit_detector import RangeExitDetector
+
+logger = logging.getLogger(__name__)
 
 # TODO: refactor with poll,monocm, ...
 # TODO: offsets for backlash and end of range
@@ -20,7 +20,7 @@ class CMScan(BaseScan):
         if not self.scan_dimensions:
             raise ValueError("CMScan requires at least one ScanDimension")
         
-        logging.info("Creating samplerate from scan dimensions: %s", self.scan_dimensions)
+        logger.info("Creating samplerate from scan dimensions: %s", self.scan_dimensions)
         dim = config.scan_dimensions[0]
         if dim.start == dim.stop:
             raise ArithmeticError(f"Start equals stop == {dim.start!r}")
@@ -41,19 +41,19 @@ class CMScan(BaseScan):
         """Restore actuator velocities saved before the continuous move."""
         for name, orig_vel in self._original_velocities.items():
             if orig_vel is None:
-                logging.debug("Skipping velocity restore for actuator '%s': original velocity is None", name)
+                logger.debug("Skipping velocity restore for actuator '%s': original velocity is None", name)
                 continue
 
             actuator = self.actuators.get(name)
             if actuator is None:
-                logging.warning("Cannot restore velocity for unknown actuator '%s'", name)
+                logger.warning("Cannot restore velocity for unknown actuator '%s'", name)
                 continue
 
             try:
                 actuator.set_velocity(orig_vel)
-                logging.info("Restored velocity for actuator '%s' to %s", name, orig_vel)
-            except Exception as e:
-                logging.warning("Failed to restore velocity for actuator '%s': %s", name, e)
+                logger.info(f"Restored velocity for actuator {name} to {orig_vel}")
+            except Exception as e: # noqa BLE001
+                logger.error(f"Failed to restore velocity for actuator {name}: {e}")
 
     def stop(self) -> None:
         """Request CM scan stop and restore original actuator velocities."""
@@ -80,11 +80,11 @@ class CMScan(BaseScan):
         if self._is_position_sync_subscription(subscription):
             try:
                 self._position = float(ev.value)
-            except Exception:
+            except (TypeError, ValueError):
                 self._position = ev.value
             self._position_sync_subscription_set = True
 
-        logging.debug(
+        logger.debug(
             "[sync] %s=%r -> _position=%r (source=%r, sub=%s)",
             ev.pvname,
             ev.value,
@@ -107,8 +107,6 @@ class CMScan(BaseScan):
         self._position_sync_subscription_set = False
         self._position = self.first_actuator.rbv
         self._stop_requested.clear()
-        primary_dim = self.scan_dimensions[0]
-        primary = self.actuators[primary_dim.actuator]
         range_exit = RangeExitDetector(
             self._start,
             self._stop,
@@ -116,7 +114,7 @@ class CMScan(BaseScan):
             out_threshold=2,
         )
         while True:
-            logging.debug("run_daq: Entered cm scan loop")
+            logger.debug("run_daq: Entered cm scan loop")
             if self._stop_requested.is_set():
                 break
             with self._time_block("stop:poll", idx=index):
@@ -133,14 +131,7 @@ class CMScan(BaseScan):
                 self._fire_triggers("after_point")
             # --------------------------------------- block scan task
             with self._time_block("sync:wait", idx=index):
-                if self.sync_controller.is_enabled():
-                    self._wait_for_sync(
-                        timeout_s=self.sampletime,
-                        stop_event=self._stop_requested,
-                    )
-                else:
-                    if self._stop_requested.wait(self.sampletime):
-                        break
+                self._wait_for_sync(stop_event=self._stop_requested)
             # ---------------------------------------
             if self._stop_requested.is_set():
                 break
@@ -148,7 +139,7 @@ class CMScan(BaseScan):
             with self._time_block("actuator:ready", idx=index):
                 actuator_ready = self.first_actuator.is_ready()
             if actuator_ready:
-                logging.info("run_daq: First actuator is ready.")
+                logger.info("run_daq: First actuator is ready.")
                 break
             # Prefer sync-subscription position; fall back to RBV
             with self._time_block("position:read", idx=index):
@@ -156,7 +147,7 @@ class CMScan(BaseScan):
             with self._time_block("range:update", idx=index):
                 scan_finished = range_exit.update(pos)
             if scan_finished:
-                logging.info("Scan termination detected at pos=%s", pos)
+                logger.info("Scan termination detected at pos=%s", pos)
                 break
             if not range_exit.entered:
                 continue
@@ -186,7 +177,7 @@ class CMScan(BaseScan):
                 # >>> Notify monitor/plotter
                 with self._time_block("monitor:update", idx=index):
                     if monitor is not None:
-                        logging.debug(f"{monitor_values}")
+                        logger.debug(f"{monitor_values}")
                         monitor.update(monitor_values)
             index += 1
             if self._maxindex > 0 and index >= self._maxindex:
@@ -199,7 +190,7 @@ class CMScan(BaseScan):
         1) Move to start position
         2) Store current velocities
         3) Apply configured velocities and start moves
-        4) Run DAQ while primary actuator is within range
+        4) Run DAQ while 1st actuator is within range
         5) Restore original velocities
         """
         self.busyflag = True
@@ -213,24 +204,24 @@ class CMScan(BaseScan):
                     actuator = self.actuators[name]
                     bdist = -actuator.backlash if dim.stop > dim.start else actuator.backlash
                     overshoot = dim.start + bdist
-                    logging.info(f"overshoot={overshoot}, bdist={bdist}, backlash={actuator.backlash}")
+                    logger.info(f"overshoot={overshoot}, bdist={bdist}, backlash={actuator.backlash}")
                     try:
                         actuator.run_move(overshoot, sync=True)
-                        logging.info(f"Started actuator '{name}' moving to {dim.start}")
-                    except Exception as e:
-                        logging.warning(f"Failed to move actuator '{name}': {e}")
+                        logger.info(f"Started actuator '{name}' moving to {dim.start}")
+                    except Exception as e: # noqa BLE001
+                        logger.warning(f"Failed to move actuator '{name}': {e}")
             # 2) Store all original velocities
             with self._time_block("velocity:read"):
                 for name, actuator in self.actuators.items():
                     try:
                         vel = actuator.get_velocity()
                         if vel is None:
-                            logging.warning("Could not read original velocity for actuator '%s'; velocity restore will be skipped", name)
+                            logger.warning("Could not read original velocity for actuator '%s'; velocity restore will be skipped", name)
                             continue
                         self._original_velocities[name] = vel
-                        logging.info(f"Stored velocity for actuator '{name}': {vel}")
-                    except Exception as e:
-                        logging.warning(f"Could not read velocity for actuator '{name}': {e}")
+                        logger.info(f"Stored velocity for actuator '{name}': {vel}")
+                    except Exception as e: # noqa BLE001
+                        logger.warning(f"Could not read velocity for actuator '{name}': {e}")
 
             # 3) Set target velocities and start each actuator
             # start CA monitors BEFORE motion begins
@@ -244,11 +235,11 @@ class CMScan(BaseScan):
                     actuator = self.actuators[name]
                     try:
                         actuator.set_velocity(dim.velocity)
-                        logging.info(f"Set velocity of actuator '{name}' to {dim.velocity}")
+                        logger.info(f"Set velocity of actuator '{name}' to {dim.velocity}")
                         actuator.run_move(dim.stop, sync=False, wait_startup=True)
-                        logging.info(f"Started actuator '{name}' moving to {dim.stop}")
-                    except Exception as e:
-                        logging.warning(f"Failed to configure/startup actuator '{name}': {e}")
+                        logger.info(f"Started actuator '{name}' moving to {dim.stop}")
+                    except Exception as e: # noqa BLE001
+                        logger.error(f"Failed to configure/startup actuator '{name}': {e}")
             with self._time_block("subscriptions:start"):
                 self._start_subscriptions()
 
@@ -270,7 +261,7 @@ class CMScan(BaseScan):
                 try:
                     self._stop_subscriptions()
                 except Exception:
-                    logging.exception("Error stopping scan subscriptions")
+                    logger.exception("Error stopping scan subscriptions")
             
             with self._time_block("monitor:close"):
                 if monitor is not None:

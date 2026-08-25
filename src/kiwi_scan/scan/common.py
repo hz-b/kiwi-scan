@@ -10,22 +10,20 @@ import random
 import string
 import threading
 import time
+
+# import pdb
 from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterator, List, Optional
 
-import epics
-
 from kiwi_scan.actuator.factory import create_actuator
-
-# import pdb
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
 from kiwi_scan.data.loader import DataLoader, resolve_data_dir
 from kiwi_scan.data.manifestwriter import ManifestWriter
 from kiwi_scan.datamodels import ActuatorConfig, ScanConfig, ScanDimension
-from kiwi_scan.epics_wrapper import EpicsPV
+from kiwi_scan.epics_wrapper import EpicsPV, ensure_ca_context
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.monitor.factory import create_monitor
 from kiwi_scan.plugin.registry import create_plugin
@@ -56,7 +54,7 @@ class BaseScan(ScanABC):
        [Monitors]        [Metadata Sidecar]
     """
     def __init__(self, config: ScanConfig, data_dir=None):
-        epics.ca.use_initial_context()
+        ensure_ca_context()
         super().__init__(config, data_dir)
         logger.debug("Init BaseScan")
         self.busyflag = False
@@ -83,7 +81,7 @@ class BaseScan(ScanABC):
 
         self._data_writer_lock = threading.RLock()
         self._requested_output_file = config.output_file
-        self._output_timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        self._output_timestamp = datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
         self._data_writing_enabled = bool(
             getattr(config, "data_writing_enabled", True)
         )
@@ -286,13 +284,10 @@ class BaseScan(ScanABC):
     def _arm_sync_controller(self) -> None:
         self.sync_controller.arm()
 
-    def _wait_for_sync(self, timeout_s=None, stop_event=None) -> bool:
-        if not self.sync_controller.is_enabled():
-            return True
-
-        ok = self.sync_controller.wait(timeout=timeout_s, stop_event=stop_event)
+    def _wait_for_sync(self, stop_event=None) -> bool:
+        ok = self.sync_controller.wait(stop_event=stop_event)
         if not ok:
-            logger.debug("SyncController wait ended without full sync (required=%s)", list(self.sync_controller.required_names))
+            logger.debug("SyncController wait aborted (required=%s)", list(self.sync_controller.required_names))
         return ok
 
     def _validate_and_filter_actuators(self):
@@ -387,6 +382,7 @@ class BaseScan(ScanABC):
         if rate_hz is None:
             rate_hz = getattr(self.cfg, "sample_rate_hz", 1.0)
         self._apply_sample_rate(rate_hz)
+        self.sync_controller.set_timer_period(self.sampletime)
     
     def task_delay(self, start_time, sampletime, index):
         """
@@ -455,15 +451,15 @@ class BaseScan(ScanABC):
             name, ext = os.path.splitext(base_filename)
             new_filename = os.path.join(self.data_dir, f"{name}-{timestamp}{ext}")
             if not os.path.exists(new_filename):
-                with open(new_filename, 'w') as f:
+                with open(new_filename, 'w'):
                     pass  # Create an empty file
                 return new_filename
             # If the file exists, add a random 6-character suffix and retry
-            random_suffix = ''.join(random.choices(string.ascii_letters + string.digits, k=6))
+            random_suffix = "".join(random.choices(string.ascii_letters + string.digits, k=6))  # nosec B311
             new_filename = os.path.join(self.data_dir, f"{name}-{timestamp}_{random_suffix}{ext}")
             
             if not os.path.exists(new_filename):
-                with open(new_filename, 'w') as f:
+                with open(new_filename, 'w'):
                     pass  # Create an empty file
                 return new_filename
 
@@ -480,8 +476,8 @@ class BaseScan(ScanABC):
             self._meta_mon.start()
             self._meta_mon_started = True
             logger.info("Started metadata task")
-        except Exception as e:
-            logger.error("Failed to start metadata monitor: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("Failed to start metadata monitor")
 
     def _stop_metadata_monitor(self) -> None:
         if not self._meta_mon_started:
@@ -534,8 +530,8 @@ class BaseScan(ScanABC):
                     readings.append(None)
                 else:
                     readings.append(reading)
-            except Exception as e:
-                logger.error("Failed to read metadata for PV %s: %s", pv.pvname, e, exc_info=True)
+            except Exception as e:  # noqa BLE001 
+                logger.error(f"Failed to read metadata for PV {pv.pvname}, {e}")
                 readings.append(None)
             # logger.debug("PV %s → %r", pv.pvname, reading)
         return readings
@@ -860,19 +856,14 @@ class BaseScan(ScanABC):
 
         # Build ordered data headers (one per dict in values)
         data_headers: List[str] = []
-        detector_names: List[str] = []
-        try:
-            detector_names = [pv.pvname for pv in getattr(self, "detector_pvs", [])]
-            data_headers += detector_names
-        except Exception:
-            detector_names = []
+        detector_names = [ pv.pvname for pv in getattr(self, "detector_pvs", []) ]
+        data_headers += detector_names
 
-        try:
-            for plugin in getattr(self, "plugins", []) or []:
-                # only the data headers (timestamps are derived from wrapped dict timestamp)
+        for plugin in getattr(self, "plugins", []) or []:
+            try:
                 data_headers += plugin.get_headers(False)
-        except Exception:
-            pass
+            except Exception:  # noqa: BLE001
+                logger.error("Failed to get headers from plugin %s", getattr(plugin, "name", plugin))
 
         # Map each acquired dict to its header; fallback to pvname inside dict if present
         for i, item in enumerate(values or []):
@@ -971,22 +962,24 @@ class BaseScan(ScanABC):
         return
 
     def get_stop_pv(self):
-        """  Read stop PV and reset it if triggered (value == 1).
-             Returns the current PV value or None on failure. """
+        """ 
+        Read stop PV and reset it if triggered (value == 1).
+        Returns the current PV value or None on failure.  
+        """
         value = None
         if self.stop_pv:
             try:
                 value = self.stop_pv.get()
-                logger.info(f"scan stop PV value received: {value}")
-            except Exception as e:
-                logger.error(f"Failed to get stop PV {self.stop_pv.pvname}: {e}", exc_info=True)
+                logger.info(f"Scan stop PV value received: {value}")
+            except Exception as e: # noqa: BLE001
+                logger.error(f"Failed to get stop PV {self.stop_pv.pvname}: {e}")
             if value == 1:
                 try:
                     self.stop_pv.put(0)
-                except Exception as e:
-                    logger.error(f"Failed to reset stop PV {self.stop_pv.pvname}: {e}", exc_info=True)
+                except Exception as e: # noqa: BLE001
+                    logger.error(f"Failed to reset stop PV {self.stop_pv.pvname}: {e}")
         return value
-
+    
     def _start_plugins(self) -> None:
         """Run plugin start hooks.
 
@@ -1029,10 +1022,7 @@ class BaseScan(ScanABC):
          2. optionally prepend an overshoot point (if any backlash>0)
          3. broadcast moves, wait in parallel, then read & save (skipping the overshoot)
         """
-        try:
-            epics.ca.use_initial_context()
-        except Exception:
-            pass
+        ensure_ca_context()
         self.busyflag = True
         self._stop_requested.clear()
         try:
@@ -1165,13 +1155,10 @@ class BaseScan(ScanABC):
         scan_errors: List[Exception] = []
 
         def _run_scan() -> None:
+            ensure_ca_context()
             try:
-                try:
-                    epics.ca.use_initial_context()
-                except Exception:
-                    pass
                 self.scan(positions, monitor)
-            except Exception as exc:
+            except Exception as exc: # noqa: BLE001
                 scan_errors.append(exc)
         scan_thread = threading.Thread(target=_run_scan, name=f"{self.__class__.__name__}-worker")
         logger.info(f"Starting {self.__class__.__name__}.")
@@ -1293,15 +1280,13 @@ class BaseScan(ScanABC):
 
                 for fut in done:
                     name = futures[fut]
-                    try:
-                        fut.result()
-                    except Exception as e:
-                        logger.error(f"[{name}] wait failed: {e}")
+                    exc = fut.exception()
+
+                    if exc is not None:
+                        logger.error("[%s] actuator wait failed: %s", name, exc)
 
                 if self._stop_requested.is_set():
                     logger.info("Stop requested—waiting for actuator wait workers to exit.")
-                    # Do not return immediately. Workers now observe stop_event.
-                    # Loop until pending is empty.
 
     def stop(self) -> None:
         """Request scan stop and best-effort stop all configured actuators."""
@@ -1323,6 +1308,7 @@ class BaseScan(ScanABC):
                 logger.exception("Failed to stop actuator '%s'", name)
 
         try:
+            self.sync_controller.wake()
             with self._tick_cond:
                 self._tick_seq += 1
                 self._tick_cond.notify_all()
@@ -1415,6 +1401,7 @@ class BaseScan(ScanABC):
         logger.info("[stop] %s=%r -> stopping scan", ev.pvname, ev.value)
         if self.busyflag == True:
             self._stop_requested.set()
+            self.sync_controller.wake()
             with self._tick_cond:
                 self._tick_cond.notify_all()
             try:
@@ -1464,7 +1451,7 @@ class BaseScan(ScanABC):
             try:
                 self._fire_triggers("monitor")
             except Exception:
-                logger.exception("WORKER: Failed to fire monitor triggers (ev = {ev})")
+                logger.exception(f"WORKER: Failed to fire monitor triggers (ev = {ev})")
 
     def _on_plugin_event(self, ev: PvEvent, subscription=None) -> None:
         """
@@ -1472,13 +1459,14 @@ class BaseScan(ScanABC):
         PvEvent data provided for the plugin hook.
         """
         self._plugin_q.put(ev)
-    
+
     def _plugin_worker_loop(self) -> None:
         while not self._plugin_worker_stop.is_set():
             ev = self._plugin_q.get()
-            # logger.debug("PLUGIN_WORKER: pv=%s", ev.pvname) 
-            try:
-                for plugin in self.plugins:
+
+            for plugin in self.plugins:
+                try:
                     plugin.on_monitor(ev)
-            except Exception:
-                logger.exception("WORKER: Failed to run plugin")
+                except Exception:
+                    logger.exception( "Plugin '%s' failed handling monitor event %s",
+                        getattr(plugin, "name", type(plugin).__name__), ev.pvname)

@@ -3,16 +3,14 @@
 
 import logging
 import time
-import threading
-from typing import Optional
 
-from kiwi_scan.scan.common import BaseScan
+from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor.base import BaseMonitor
-from kiwi_scan.monitor.factory import create_monitor
-from kiwi_scan.actuator.single import PvEvent
+from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.range_exit_detector import RangeExitDetector
 
+logger = logging.getLogger(__name__)
 
 class PollScan(BaseScan):
     """
@@ -33,7 +31,7 @@ class PollScan(BaseScan):
         if not self.scan_dimensions:
             raise ValueError("PollScan requires at least one ScanDimension")
 
-        logging.info("Creating samplerate from scan dimensions: %s", self.scan_dimensions)
+        logger.info("Creating samplerate from scan dimensions: %s", self.scan_dimensions)
         self.set_samplerate()
         self._start = self.scan_dimensions[0].start
         self._stop = self.scan_dimensions[0].stop
@@ -58,11 +56,11 @@ class PollScan(BaseScan):
         if self._is_position_sync_subscription(subscription):
             try:
                 self._position = float(ev.value)
-            except Exception:
+            except (TypeError, ValueError):
                 self._position = ev.value
             self._position_sync_subscription_set = True
 
-        logging.debug(
+        logger.debug(
             "[sync] %s=%r -> _position=%r (source=%r, sub=%s)",
             ev.pvname,
             ev.value,
@@ -90,7 +88,7 @@ class PollScan(BaseScan):
             out_threshold=6,
         )
         while not first_actuator.is_moving():
-            logging.debug("Wait for actuator to start")
+            logger.debug("Wait for actuator to start")
             time.sleep(0.05)
 
         self._stop_requested.clear()
@@ -100,10 +98,10 @@ class PollScan(BaseScan):
             self._position_sync_subscription_set = False
             while True:
                 if self._stop_requested.is_set():
-                    logging.debug("Stop event set")
+                    logger.debug("Stop event set")
                     break
                 if self.get_stop_pv() == 1:
-                    logging.debug("Stop PV set")
+                    logger.debug("Stop PV set")
                     break
 
                 # Start a new sync cycle, then wait for heartbeat and all
@@ -111,20 +109,13 @@ class PollScan(BaseScan):
                 self._arm_sync_controller()
 
                 if self._stop_requested.is_set():
-                    logging.debug("Stop event set")
+                    logger.debug("Stop event set")
                     break
 
-                if self.sync_controller.is_enabled():
-                    self._wait_for_sync(
-                        timeout_s=self.sampletime,
-                        stop_event=self._stop_requested,
-                    )
-                else:
-                    if self._stop_requested.wait(self.sampletime):
-                        break
+                self._wait_for_sync(stop_event=self._stop_requested)
 
                 if self._stop_requested.is_set():
-                    logging.debug("Stop event set")
+                    logger.debug("Stop event set")
                     break
 
                 # Prefer subscribed position if sync role is configured, else read rbv
@@ -141,13 +132,13 @@ class PollScan(BaseScan):
                 range_exit_detected = range_exit.update(pos) 
                 first_actuator_ready = first_actuator.is_ready() 
                 if range_exit_detected and first_actuator_ready and self._start != self._stop:
-                    logging.info("Scan termination detected at pos=%s", pos)
+                    logger.info("Scan termination detected at pos=%s", pos)
                     break
                 if first_actuator_ready:
                     continue
 
                 self._fire_triggers("on_point")
-                # logging.debug("Read detectors")
+                # logger.debug("Read detectors")
                 vals = self.read_detectors()
                 self.update_current_row_cache(
                     idx=index,
@@ -170,7 +161,7 @@ class PollScan(BaseScan):
                     monitor.update(vals)
 
                 index += 1
-                logging.debug("Poll %d @ pos=%r", index, current_position)
+                logger.debug("Poll %d @ pos=%r", index, current_position)
 
                 # refresh from actuator rbv if no sync subscription is used
                 # (keeps range check honest for non-subscribed setups)
@@ -191,7 +182,7 @@ class PollScan(BaseScan):
             try:
                 self._clear_subscriptions()
             except Exception:
-                logging.exception("Error clearing scan subscriptions")
+                logger.exception("Error clearing scan subscriptions")
 
             self._fire_triggers("after")
             self.busyflag = False

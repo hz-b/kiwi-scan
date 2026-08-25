@@ -20,13 +20,14 @@ from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.range_exit_detector import RangeExitDetector
-from kiwi_scan.scan.stats_collector import StatsCollector
 from kiwi_scan.scan.registry import register_scan
+from kiwi_scan.scan.stats_collector import StatsCollector
 
+logger = logging.getLogger(__name__)
 
 @register_scan("para")
 class ParaScan(BaseScan):
-    """Passive, externally driven step scan.
+    """ Passive, externally driven step scan.
 
     This scan never commands actuator motion. Instead, it waits for an
     external process or operator to move one or more configured actuators,
@@ -54,7 +55,7 @@ class ParaScan(BaseScan):
         if not self.scan_dimensions:
             raise ValueError("ParaScan requires at least one ScanDimension")
 
-        logging.info("Creating parasitical samplerate from scan dimensions: %s", self.scan_dimensions)
+        logger.info("Creating parasitical samplerate from scan dimensions: %s", self.scan_dimensions)
         self.set_samplerate(sample_rate_hz=20)
 
         self.register_subscription_role("heartbeat", self._on_heartbeat_event)
@@ -86,7 +87,7 @@ class ParaScan(BaseScan):
             collect=bool(getattr(self, "_daq_is_on", False)),
         )
 
-        logging.debug(
+        logger.debug(
             "[stat] %s=%r daq=%s sub=%s",
             ev.pvname,
             ev.value,
@@ -101,7 +102,7 @@ class ParaScan(BaseScan):
         try:
             pos = float(value)
         except (TypeError, ValueError):
-            logging.debug("Cannot range-check non-numeric readback %r for actuator %s", value, dim.actuator)
+            logger.debug("Cannot range-check non-numeric readback %r for actuator %s", value, dim.actuator)
             return False
 
         start = float(dim.start)
@@ -149,7 +150,7 @@ class ParaScan(BaseScan):
             try:
                 value = actuator.rbv
             except Exception:
-                logging.exception("Failed to read RBV for actuator '%s'", dim.actuator)
+                logger.exception("Failed to read RBV for actuator '%s'", dim.actuator)
                 value = None
             snapshot[dim.actuator] = value
         return snapshot
@@ -167,7 +168,7 @@ class ParaScan(BaseScan):
                 if not actuator.is_ready():
                     return False
             except Exception:
-                logging.exception("Failed to read ready state for actuator '%s'", dim.actuator)
+                logger.exception("Failed to read ready state for actuator '%s'", dim.actuator)
                 return False
         return True
 
@@ -178,7 +179,7 @@ class ParaScan(BaseScan):
                 if actuator.is_moving():
                     return True
             except Exception:
-                logging.exception("Failed to read moving state for actuator '%s'", dim.actuator)
+                logger.exception("Failed to read moving state for actuator '%s'", dim.actuator)
         return False
 
     def _termination_detected(
@@ -194,7 +195,7 @@ class ParaScan(BaseScan):
             except (TypeError, ValueError):
                 continue
             if range_exits[dim.actuator].update(pos):
-                logging.info("Scan termination detected for actuator '%s' at pos=%s", dim.actuator, pos)
+                logger.info("Scan termination detected for actuator '%s' at pos=%s", dim.actuator, pos)
                 return True
         return False
 
@@ -205,7 +206,7 @@ class ParaScan(BaseScan):
             return
 
         if self.sync_controller.is_enabled():
-            self._wait_for_sync(timeout_s=self.sampletime, stop_event=self._stop_requested)
+            self._wait_for_sync(stop_event=self._stop_requested)
         else:
             # Heartbeat-driven wakeup with timeout fallback for setups that do
             # not configure sync-role subscriptions.
@@ -230,10 +231,10 @@ class ParaScan(BaseScan):
                 self._fire_triggers("on_point")
 
             if self.integration_time > 0.0:
-                logging.info("DAQ for integration_time = %s", self.integration_time)
+                logger.info("DAQ for integration_time = %s", self.integration_time)
                 time.sleep(self.integration_time)
             else:
-                logging.info("integration_time = %s", self.integration_time)
+                logger.info("integration_time = %s", self.integration_time)
 
             # Take the actuator snapshot after the integration window.  This is
             # the position that is written to the file and passed to plugins.
@@ -266,26 +267,19 @@ class ParaScan(BaseScan):
 
             with self._time_block("monitor:update", idx=index):
                 if monitor is not None:
-                    logging.debug("%s", vals)
+                    logger.debug("%s", vals)
                     monitor.update(vals)
 
-            logging.info("ParaScan point %d recorded at %s=%r", index, primary_name, current_position)
+            logger.info("ParaScan point %d recorded at %s=%r", index, primary_name, current_position)
         finally:
             self._daq_is_on = False
 
     def scan(self, positions, monitor: Optional[BaseMonitor] = None):
-        """Run the passive parasitical step-scan loop.
-
-        ``positions`` is intentionally ignored.  The scan positions come from
-        current actuator readbacks because motion is performed externally.
         """
-        del positions
-
-        try:
-            import epics
-            epics.ca.use_initial_context()
-        except Exception:
-            pass
+        Run the passive parasitical step-scan loop.
+        The scan steps derived from current actuator state readbacks because motion is performed externally.
+        """
+        del positions # intentionally ignored
 
         self.busyflag = True
         self._stop_requested.clear()
@@ -306,10 +300,10 @@ class ParaScan(BaseScan):
 
             while True:
                 if self._stop_requested.is_set():
-                    logging.debug("Stop event set")
+                    logger.debug("Stop event set")
                     break
                 if self.get_stop_pv() == 1:
-                    logging.info("Stop PV triggered—aborting para scan.")
+                    logger.info("Stop PV triggered—aborting para scan.")
                     break
 
                 self._wait_cycle()
@@ -323,19 +317,19 @@ class ParaScan(BaseScan):
                     break
 
                 if not in_range:
-                    logging.debug("Waiting for all actuators to enter range: %s", snapshot)
+                    logger.debug("Waiting for all actuators to enter range: %s", snapshot)
                     continue
 
                 have_recorded_inside_range = True
 
                 if not self._all_actuators_ready():
-                    logging.debug("Actuators in range but not ready yet: %s", snapshot)
+                    logger.debug("Actuators in range but not ready yet: %s", snapshot)
                     continue
 
                 if not self._position_changed(snapshot, self._last_position_snapshot, tolerances):
                     # Stable, ready, and unchanged since the previous point.  This
                     # is the passive scan's wait-for-external-step state.
-                    logging.debug("Skipping duplicate ready position snapshot: %s", snapshot)
+                    logger.debug("Skipping duplicate ready position snapshot: %s", snapshot)
                     continue
 
                 self._acquire_point(index, snapshot, monitor)
@@ -351,11 +345,11 @@ class ParaScan(BaseScan):
                 # actuators are ready again before recording the next point.
                 while not self._stop_requested.is_set():
                     if self.get_stop_pv() == 1:
-                        logging.info("Stop PV triggered—aborting para scan.")
+                        logger.info("Stop PV triggered—aborting para scan.")
                         self._stop_requested.set()
                         break
                     if self._any_actuator_moving():
-                        logging.debug("External para step startup detected")
+                        logger.debug("External para step startup detected")
                         break
                     self._wait_cycle()
 
@@ -367,7 +361,7 @@ class ParaScan(BaseScan):
             try:
                 self._stop_subscriptions()
             except Exception:
-                logging.exception("Error stopping scan subscriptions")
+                logger.exception("Error stopping scan subscriptions")
             try:
                 self._fire_triggers("after")
             finally:
