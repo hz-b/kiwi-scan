@@ -123,7 +123,6 @@ tags
 
 # Optional: exclude scan data directory if you create one
 scandata/
-data/
 
 *.orig
 *.1st
