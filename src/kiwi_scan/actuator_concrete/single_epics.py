@@ -154,7 +154,9 @@ class EpicsActuator(AbstractActuator):
 
     @property
     def pvname(self) -> str:
-        return self.pv.pvname
+        if self.pv:
+            return self.pv.pvname
+        return "<setter PV not configured>"
 
     @property
     def rbv(self) -> Optional[Any]:
@@ -285,13 +287,12 @@ class EpicsActuator(AbstractActuator):
         return None
 
     def _issue_move(self, position: float) -> None:
-        logger.info(f"[{self.pvname}] move to {position}")
-        success = False
-        if self.pv:
-            success = self.pv.put(position)
-        else:
-            logger.error("Cannot issue move: setter PV is not configured")
+        if not self.pv:
+            logger.error( "Cannot issue move to %r: setter PV is not configured", position)
+            return
 
+        logger.info("[%s] move to %f", self.pvname, position)
+        success = self.pv.put(position)
         if not success:
             logger.error(f"Failed to write position to {self.pvname}")
         self.start_actuator()
@@ -636,4 +637,3 @@ class EpicsActuator(AbstractActuator):
                 logger.error(f"Failed to stop actuator via {self.stop_pv.pvname}")
         else:
             logger.debug("Stop PV not defined, no action taken")
-

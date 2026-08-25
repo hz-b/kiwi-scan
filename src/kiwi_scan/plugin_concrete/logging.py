@@ -206,10 +206,18 @@ class LoggingPlugin(ScanPlugin):
         if mask:
             try:
                 status = int(value)
-                ready_val = int(ready_value, 0) if isinstance(ready_value, str) else int(ready_value)
+                ready_val = (
+                    int(ready_value, 0)
+                    if isinstance(ready_value, str)
+                    else int(ready_value)
+                )
                 return (status & int(mask)) == ready_val
             except (TypeError, ValueError):
-                return None
+                self.logger.debug(
+                    "Failed to decode ready state using bitmask; "
+                    "falling back to direct comparison",
+                    exc_info=True,
+                )
 
         try:
             return float(value) == float(ready_value)

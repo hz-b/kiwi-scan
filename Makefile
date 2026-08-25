@@ -86,17 +86,6 @@ lint: ## Run pylint on src/kiwi_scan (uses mkvenv.sh when needed)
 test: ## Run the current test scripts (uses mkvenv.sh when needed)
 	@if [ -z "$$KIWI_SCAN_DATA_DIR" ]; then mkdir -p scandata; fi
 	@$(WITH_VENV); \
-	python3 tests/test_actuator.py; \
-	python3 tests/test_generic_scan_ioc.py; \
-	EPICS_WRITETEST=1 python3 tests/test_epics_wrapper_integration.py; \
-	python3 tests/test_stats.py; \
-	python3 tests/test_registry_trigger_and_callbacks.py; \
-	python3 tests/test_subscription_manager.py; \
-	python3 tests/test_manifest_writer.py; \
-	python3 tests/test_metadata_loader.py; \
-	python3 tests/test_spec.py; \
-	python3 tests/test_data_column_provider_writer.py; \
-	python3 tests/test_stats_collector.py; \
-	python3 tests/test_scanlib.py
+	PYTHONPATH=src EPICS_WRITETEST=1 python -m pytest --cov=src/kiwi_scan --cov-report=term
 
 

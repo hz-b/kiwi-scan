@@ -56,7 +56,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies] 
-dev = [ "pytest", "caproto[complete]", "jinja2", "pylint", "ruff", "bandit" ]
+dev = [ "pytest", "pytest-cov", "caproto[complete]", "jinja2", "pylint", "ruff", "bandit" ]
 ioc = [ "softioc", "p4p" ]
 
 [project.urls]

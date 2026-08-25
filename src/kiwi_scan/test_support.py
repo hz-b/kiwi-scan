@@ -58,7 +58,16 @@ class FakePV:
         self.severity = 0
         self.status = 0
         self._value = self.__class__.default_get_value
+        self.get_calls: List[Dict[str, Any]] = []
+        self.get_responses: List[Any] = []
         self.put_calls: List[Any] = []
+        self.put_result = True
+        self.put_exception: Optional[Exception] = None
+        self.check_pv_calls = 0
+        self.check_pv_exception: Optional[Exception] = None
+        self.wait_for_connection_calls: List[Optional[float]] = []
+        self.wait_for_connection_result = True
+        self.add_callback_kwargs: List[Dict[str, Any]] = []
 
         if self.__class__.callback_mode == "dict":
             self.callbacks: Dict[int, Callable[..., None]] = {}
@@ -74,9 +83,11 @@ class FakePV:
             self.__class__.instances.append(self)
 
     def wait_for_connection(self, timeout: Optional[float] = None) -> bool:
-        return True
+        self.wait_for_connection_calls.append(timeout)
+        return self.wait_for_connection_result
 
     def add_callback(self, callback: Callable[..., None], **kwargs: Any) -> int:
+        self.add_callback_kwargs.append(dict(kwargs))
         if self.__class__.callback_mode == "dict":
             idx = self.__class__.next_index
             self.__class__.next_index += 1
@@ -112,17 +123,25 @@ class FakePV:
         cb(pvname=self.pvname, value=value, **kwargs)
 
     def get(self, timeout: Optional[float] = None, use_monitor: bool = False) -> Any:
+        self.get_calls.append({"timeout": timeout, "use_monitor": use_monitor})
+        if self.get_responses:
+            return self.get_responses.pop(0)
         return self._value
 
     def put(self, value: Any, timeout: Optional[float] = None) -> bool:
-        self._value = value
         if self.__class__.track_put_calls:
             self.put_calls.append(value)
         self.last_written = value
-        return True
+        if self.put_exception is not None:
+            raise self.put_exception
+        if self.put_result:
+            self._value = value
+        return self.put_result
 
     def check_pv(self) -> None:
-        return None
+        self.check_pv_calls += 1
+        if self.check_pv_exception is not None:
+            raise self.check_pv_exception
 
     def disconnect(self) -> None:
         if self.__class__.use_raw_pv:
@@ -170,6 +189,26 @@ def make_fake_monitor_pv_class(*, start_index: int = 100):
         default_get_value = 0
 
     return FakeMonitorPV
+
+
+def make_fake_actuator_pv_class(*, start_index: int = 100):
+    """Configurable PV fake for unit-testing EPICS actuator behavior."""
+
+    class FakeActuatorPV(FakePV):
+        instances: ClassVar[List[FakePV]] = []
+        next_index = start_index
+        track_instances = True
+        callback_mode = "dict"
+        use_raw_pv = True
+        track_put_calls = True
+
+        @classmethod
+        def create_monitor(cls, pvname: str, **kwargs: Any) -> FakePV:
+            monitor = cls(pvname, **kwargs)
+            monitor.created_via_create_monitor = True
+            return monitor
+
+    return FakeActuatorPV
 
 
 def make_fake_trigger_pv_class():

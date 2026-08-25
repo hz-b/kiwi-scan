@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Union
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
 
 import yaml
 
@@ -41,7 +41,7 @@ class ManifestWriter:
     MODE_FULL = "full"
     MODE_SMALL = "small"
     MODE_OFF = "off"
-    VALID_MODES = {MODE_FULL, MODE_SMALL, MODE_OFF}
+    VALID_MODES = frozenset({MODE_FULL, MODE_SMALL, MODE_OFF})
 
     DEFAULT_STATE_FILE = Path.home() / ".config" / "kiwi-scan" / "active_manifest"
     DEFAULT_MANIFEST_DIR = Path.cwd()
@@ -162,8 +162,7 @@ class ManifestWriter:
 
         if filename is None:
             base_dir = Path(directory).expanduser() if directory else cls.DEFAULT_MANIFEST_DIR
-            filename = str(base_dir / ("%s_%s.yaml" % (prefix, now.strftime("%Y%m%d_%H%M%S"))))
-
+            filename = str(base_dir / f"{prefix}_{now:%Y%m%d_%H%M%S}.yaml")
         path = Path(filename).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -437,7 +436,7 @@ class ManifestArchiveDeleter:
                     failed_files.append(full)
                     continue
 
-                arcname = "files/%04d_%s" % (index, full.name)
+                arcname = f"files/{index:04d}_{full.name}"
                 cls.logger.debug("Adding %s as %s", full, arcname)
                 tar.add(str(full), arcname=arcname, recursive=False)
                 archived_files.append(full)
@@ -569,7 +568,7 @@ class ManifestResolver:
 
     def resolve_manifests(
         self,
-        manifest_files: Optional[Iterable[Union[str, Path]]] = None,
+        manifest_files: Optional[Iterable[str | Path]] = None,
     ) -> List[Path]:
         """
         Return manifest files or discover manifests via the resolver.
@@ -617,7 +616,7 @@ class ManifestResolver:
         data = self.load_manifest(path)
         scans = data.get("scans") or []
         if not isinstance(scans, list):
-            raise ValueError(f"Manifest {path} has invalid 'scans' section; expected a list")
+            raise TypeError(f"Manifest {path} has invalid 'scans' section; expected a list")
 
         refs: List[ManifestScanRef] = []
         for entry in scans:
@@ -691,7 +690,7 @@ class ManifestResolver:
 
     def iterate_files(
         self,
-        manifest_files: Iterable[Union[str, Path]],
+        manifest_files: Iterable[str | Path],
         *,
         include_meta: bool = False,
         include_manifest: bool = False,
@@ -729,11 +728,11 @@ class ManifestResolver:
 
     def plan_delete_bundle(
         self,
-        manifest_files: Optional[Iterable[Union[str, Path]]] = None,
+        manifest_files: Optional[Iterable[str | Path]] = None,
         *,
         include_meta: bool = False,
         include_manifest: bool = True,
-        bundle_dir: Union[str, Path] = "/tmp",
+        bundle_dir: str | Path = "/tmp",
         bundle_prefix: str = "kiwi-scan-delete",
     ) -> ManifestDeletePlan:
         """Build a side-effect-free plan to archive and delete manifest files.
@@ -870,18 +869,28 @@ class ManifestResolver:
         with path.open("r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
         if not isinstance(data, dict):
-            raise ValueError(f"Manifest {path} is invalid; expected a YAML mapping")
+            raise TypeError(f"Manifest {path} is invalid; expected a YAML mapping")
         return data
 
     def _manifest_sort_key(self, path: Path) -> float:
         try:
             data = self.load_manifest(path)
-            created_at = (data.get("manifest") or {}).get("created_at")
-            dt = self._parse_datetime(created_at)
-            if dt is not None:
-                return dt.timestamp()
-        except Exception:
-            pass
+        except (OSError, UnicodeError, yaml.YAMLError, ValueError) as exc:
+            self.logger.debug( "Could not read creation time from manifest %s; using file modification time: %s", path, exc)
+        else:
+            manifest = data.get("manifest") or {}
+
+            if not isinstance(manifest, dict):
+                self.logger.debug( "Manifest section in %s is not a mapping; using file modification time", path)
+            else:
+                created_at = manifest.get("created_at")
+                dt = self._parse_datetime(created_at)
+                if dt is not None:
+                    try:
+                        return dt.timestamp()
+                    except (OverflowError, OSError, ValueError) as exc:
+                        self.logger.debug( "Could not convert creation time from manifest %s; using file modification time: %s", path, exc)
+
         return path.stat().st_mtime
 
     @staticmethod

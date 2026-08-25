@@ -60,6 +60,14 @@ class CMScan(BaseScan):
         super().stop()
         self._restore_original_velocities()
 
+    def _run_cleanup_step(self, label, cleanup) -> None:
+        """ Run cleanup operation without preventing later cleanup by gracefully handling exceptions. TODO: move to common """
+        try:
+            with self._time_block(label):
+                cleanup()
+        except Exception:
+            logger.exception("Error during CM scan cleanup step '%s'", label)
+
     """ ----------- sync event handler -----------------------
         Example config yaml:
             subscriptions:
@@ -67,11 +75,12 @@ class CMScan(BaseScan):
                 role: sync
                 actuator: energy
                 source: rbv
+                timeout: 1.0
     """
     def _on_sync_event(self, ev: PvEvent, subscription=None) -> None:
         """
-        Record sync events for the SyncController. Only the primary actuator
-        RBV-style sync source updates self._position.
+        Record sync events for the SyncController. 
+        The primary actuator RBV-style sync source updates self._position if defined as sync source.
         """
         self._last_sync = ev
         self.sync_controller.note_event(getattr(subscription, "name", None))
@@ -141,9 +150,15 @@ class CMScan(BaseScan):
             if actuator_ready:
                 logger.info("run_daq: First actuator is ready.")
                 break
-            # Prefer sync-subscription position; fall back to RBV
+            # Prefer the position delivered by the primary actuator's sync
+            # subscription. Poll the actuator RBV only when no such event has
+            # been received.
             with self._time_block("position:read", idx=index):
-                pos = self.first_actuator.rbv
+                if self._position_sync_subscription_set:
+                    pos = self._position
+                else:
+                    pos = self.first_actuator.rbv
+                    self._position = pos
             with self._time_block("range:update", idx=index):
                 scan_finished = range_exit.update(pos)
             if scan_finished:
@@ -151,8 +166,6 @@ class CMScan(BaseScan):
                 break
             if not range_exit.entered:
                 continue
-            if self._position_sync_subscription_set:
-                self._position = pos
             with self._time_block("daq:point", idx=index):
                 with self._time_block("triggers:on_point", idx=index):
                     self._fire_triggers("on_point")
@@ -247,33 +260,17 @@ class CMScan(BaseScan):
             with self._time_block("daq:run"):
                 self.run_daq(monitor)
         finally:
-            with self._time_block("velocity:restore"):
-                self._restore_original_velocities()
-            with self._time_block("plugins:stop"):
-                try:
-                    self._end_plugins()
-                finally:
-                    self._close_plugins()
-            with self._time_block("metadata:stop"):
-                self._stop_metadata_monitor()
-            # MonoCMScan overrides BaseScan.scan(), so it must clear subscriptions itself
-            with self._time_block("subscriptions:stop"):
-                try:
-                    self._stop_subscriptions()
-                except Exception:
-                    logger.exception("Error stopping scan subscriptions")
-            
-            with self._time_block("monitor:close"):
-                if monitor is not None:
-                    monitor.close()
-
-            try:
-                with self._time_block("triggers:after"):
-                    self._fire_triggers("after")
-            finally:
-                self.busyflag = False
-                self._perf_report()
+            # A failure in one (independant) cleanup step must not leave the remaining scan resources active.
+            self._run_cleanup_step("velocity:restore", self._restore_original_velocities)
+            self._run_cleanup_step("plugins:stop", self._end_plugins)
+            self._run_cleanup_step("plugins:close", self._close_plugins)
+            self._run_cleanup_step("metadata:stop", self._stop_metadata_monitor)
+            self._run_cleanup_step("subscriptions:stop", self._stop_subscriptions)
+            if monitor is not None:
+                self._run_cleanup_step("monitor:close", monitor.close)
+            self._run_cleanup_step( "triggers:after", lambda: self._fire_triggers("after")) # expects no argument
+            self.busyflag = False
+            self._run_cleanup_step("performance:report", self._perf_report)
 
     def execute(self):
         self._execute_standard(None)
-
