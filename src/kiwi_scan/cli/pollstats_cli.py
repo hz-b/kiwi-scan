@@ -3,14 +3,14 @@
 
 from __future__ import annotations
 
-import shutil
 import argparse
 import logging
 import os
+import shutil
 import sys
 import time
 from datetime import datetime, timezone
-from typing import Any, List, Optional
+from typing import List, Optional
 
 from kiwi_scan.datamodels import ScanConfig, SubscriptionConfig
 from kiwi_scan.scan.stats_collector import StatsCollector
@@ -22,6 +22,7 @@ from kiwi_scan.yaml_loader import (
     yaml_loader,
 )
 
+logger = logging.getLogger(__name__)
 
 def _load_config(args: argparse.Namespace) -> ScanConfig:
     replacements = parse_replacements(args.replace or [])
@@ -52,10 +53,9 @@ def _subscriptions_for_role(
 def _format_value(value):
     if value is None:
         return ""
-
     try:
         return f"{float(value):.6g}"
-    except Exception:
+    except (TypeError, ValueError):
         return str(value)
 
 _LAST_LINE = ""
@@ -142,7 +142,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--log-level",
         type=int,
-        choices=range(0, 6),
+        choices=range(6),
         metavar="0-5",
         help="MBBO record level mapped to Python logging.",
     )
@@ -190,7 +190,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         manager.start()
     except ConnectionError as exc:
-        logging.error("Failed to start manager: %s", exc)
+        logger.error("Failed to start manager: %s", exc)
         return 1
     try:
         while True:
@@ -217,7 +217,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         try:
             manager.stop()
         except Exception:
-            logging.exception("Failed to stop subscriptions")
+            logger.exception("Failed to stop subscriptions")
 
     return 0
 

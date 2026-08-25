@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 from .controller import ScanIOCController
 from .datamodels import DataPVSpec
@@ -43,7 +43,7 @@ def create_controller(options: GenericScanIOCOptions) -> ScanIOCController:
         replacements=options.replacements,
     )
 
-def create_ioc(options: GenericScanIOCOptions) -> "GenericScanIOC":
+def create_ioc(options: GenericScanIOCOptions) -> GenericScanIOC:
     """Create the softIOC adapter from options.
 
     Importing :mod:`kiwi_scan.ioc.factory` must not require the optional

@@ -11,12 +11,15 @@ import os
 import threading
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 
-from kiwi_scan.datamodels import ScanConfig, ScanDimension
-from kiwi_scan.yaml_loader import yaml_loader
-from kiwi_scan.scan.tools import create_scan_with_config
-from kiwi_scan.scan.tools import load_scan_configs, get_scan_config_dir
-from kiwi_scan.scan.registry import get_available_scan_types
 from kiwi_scan.data.manifestwriter import ManifestWriter
+from kiwi_scan.datamodels import ScanConfig, ScanDimension
+from kiwi_scan.scan.registry import get_available_scan_types
+from kiwi_scan.scan.tools import (
+    create_scan_with_config,
+    get_scan_config_dir,
+    load_scan_configs,
+)
+from kiwi_scan.yaml_loader import yaml_loader
 
 from .datamodels import ScanIOCStatus
 
@@ -56,8 +59,7 @@ def _describe_dimensions(dimensions: Sequence[ScanDimension]) -> str:
     parts = []
     for dim in dimensions:
         parts.append(
-            "%s:start=%s,stop=%s,steps=%s,velocity=%s"
-            % (
+            "{}:start={},stop={},steps={},velocity={}".format(
                 dim.actuator,
                 dim.start,
                 dim.stop,
@@ -146,7 +148,7 @@ class ScanIOCController:
             self._require_idle_unlocked()
             directory = self.data_dir or os.environ.get("KIWI_SCAN_DATA_DIR")
             path = ManifestWriter.newmanifest(directory=directory)
-            self.message = "new manifest: %s" % os.path.basename(path)
+            self.message = f"new manifest: {os.path.basename(path)}"
 
         logger.info("Created and selected new active manifest: %s", path)
         return path
@@ -175,8 +177,7 @@ class ScanIOCController:
         except KeyError as exc:
             available = ", ".join(sorted(configs)) or "<none>"
             raise KeyError(
-                "Scan config %r not found in %r. Available configs: %s"
-                % (config_name, self.config_dir, available)
+                f"Scan config {config_name!r} not found in {self.config_dir!r}. Available configs: {available}"
             ) from exc
 
     def _load_base_config(self) -> ScanConfig:
@@ -185,7 +186,7 @@ class ScanIOCController:
             path = os.path.abspath(os.path.expanduser(self.config_file))
             logger.info("Loading IOC scan config from file: %s", path)
             if not os.path.isfile(path):
-                raise FileNotFoundError("config file not found: %s" % path)
+                raise FileNotFoundError(f"config file not found: {path}")
             config = _load_scan_config_from_file(path, self.replacements)
             logger.debug("Loaded config file %s", path)
             return config
@@ -273,7 +274,7 @@ class ScanIOCController:
             # Keep the runtime DataWritingEnabled setting unchanged.
             self.config_name = config_name
             self.base_config = scan_config_loaded
-            self.message = "config selected: %s" % config_name
+            self.message = f"config selected: {config_name}"
             self._log_loaded_config("Selected IOC base config")
 
     def get_scan_type(self) -> str:
@@ -290,14 +291,13 @@ class ScanIOCController:
         available = set(get_available_scan_types())
         if available and scan_type not in available:
             raise ValueError(
-                "unknown scan type %r; available types: %s"
-                % (scan_type, ", ".join(sorted(available)))
+                "unknown scan type {!r}; available types: {}".format(scan_type, ", ".join(sorted(available)))
             )
 
         with self._lock:
             self._require_idle_unlocked()
             self.scan_type = scan_type
-            self.message = "scan type selected: %s" % scan_type
+            self.message = f"scan type selected: {scan_type}"
 
     def dimension_defaults(self) -> Tuple[str, float, float, int, float]:
         """ Return default actuator/start/stop/steps/velocity values for IOC PVs. """
@@ -334,10 +334,10 @@ class ScanIOCController:
             raise ValueError("Actuator must not be empty")
         parsed_steps = int(steps)
         if parsed_steps < 1:
-            raise ValueError("Steps must be >= 1, got %r" % steps)
+            raise ValueError(f"Steps must be >= 1, got {steps!r}")
         parsed_velocity = float(velocity or 0.0)
         if parsed_velocity < 0:
-            raise ValueError("Velocity must be >= 0, got %r" % velocity)
+            raise ValueError(f"Velocity must be >= 0, got {velocity!r}")
         return ScanDimension(
             actuator=actuator,
             start=float(start),
@@ -363,7 +363,7 @@ class ScanIOCController:
 
         scan = self._scan_factory(self.scan_type, cfg, self.data_dir)
         if scan is None:
-            raise RuntimeError("Failed to create scan object for type %r" % self.scan_type)
+            raise RuntimeError(f"Failed to create scan object for type {self.scan_type!r}")
         logger.info("Created scan object %s", type(scan).__name__)
         return scan
 

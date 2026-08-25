@@ -12,19 +12,25 @@ import signal
 import sys
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, Future
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
-from kiwi_scan.yaml_loader import (
-    parse_replacements,
-    get_env_replacements,
-    get_replacements_help_and_required,
-    yaml_loader,
-)
-from kiwi_scan.scan.tools import get_scan_config_dir, load_scan_configs, set_valid_logging_level
-from kiwi_scan.datamodels import ActuatorConfig
 from kiwi_scan.actuator.factory import create_actuators
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
+from kiwi_scan.datamodels import ActuatorConfig
+from kiwi_scan.scan.tools import (
+    get_scan_config_dir,
+    load_scan_configs,
+    set_valid_logging_level,
+)
+from kiwi_scan.yaml_loader import (
+    get_env_replacements,
+    get_replacements_help_and_required,
+    parse_replacements,
+    yaml_loader,
+)
+
+logger = logging.getLogger(__name__)
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -48,29 +54,35 @@ def _parse_name_value(spec: str) -> Tuple[str, float]:
         raise ValueError(f"Expected numeric value in {spec!r}") from exc
 
 def _parse_name_value_any(spec: str) -> Tuple[str, Any]:
-    """Parse NAME=VALUE where VALUE can be a float list (e.g. [1, 2])."""
+    """ Parse NAME=VALUE where VALUE is a number or a JSON list. """
     if "=" not in spec:
         raise ValueError(f"Expected NAME=VALUE, got {spec!r}")
-    name, s_val = spec.split("=", 1)
+
+    name, value_text = spec.split("=", 1)
     name = name.strip()
+    value_text = value_text.strip()
+
     if not name:
         raise ValueError(f"Empty name in {spec!r}")
-    s_val = s_val.strip()
-    if not s_val:
+
+    if not value_text:
         raise ValueError(f"Empty value in {spec!r}")
 
-    # Allow multi-axis relative moves for MultiActuator.
-    if s_val.startswith("["):
+    # A value starting with "[" may be a list, for example: motor=[1.0, 2.0]
+    # Try JSON first. If it is not valid JSON, continue below and
+    # let the normal numeric-value error handling produce the final error.
+    if value_text.startswith("["):
         try:
-            return name, json.loads(s_val)
-        except Exception:
-            # fall back to float parsing below
+            return name, json.loads(value_text)
+        except json.JSONDecodeError:
             pass
 
+    # Otherwise expect a single numeric value, for example: motor=1.5
     try:
-        return name, float(s_val)
+        return name, float(value_text)
     except ValueError as exc:
         raise ValueError(f"Expected numeric value or JSON list in {spec!r}") from exc
+
 
 def _parse_monitor_spec(spec: str) -> Dict[str, Optional[str]]:
     """
@@ -138,67 +150,90 @@ def _load_raw_config(args) -> Tuple[Dict[str, Any], str]:
     cfg = yaml_loader(cfg_path, repl)
     return cfg, cfg_path
 
+def _pick_monitor_provider( actuators: Dict[str, AbstractActuator]) -> AbstractActuator:
+    """ Return the first actuator that supports monitor subscriptions. """
+    for actuator in actuators.values():
+        if actuator.supports_monitors():
+            return actuator
 
-def _pick_monitor_provider(actuators: Dict[str, AbstractActuator]) -> AbstractActuator:
-    for act in actuators.values():
-        try:
-            if act.supports_monitors():
-                return act
-        except Exception:
-            continue
-    raise RuntimeError("No actuator backend supports monitors in this config.")
+    raise RuntimeError(
+        "No actuator backend supports monitors in this config."
+    )
 
 # ----------------------------- monitor + output -----------------------------
 
 class _EventWriter(threading.Thread):
     def __init__(
         self,
-        q: "queue.Queue[dict]",
+        q: queue.Queue[dict],
         *,
         out_path: Optional[str],
         stop_event: threading.Event,
     ):
         super().__init__(daemon=True)
+
+        # monitor events
         self._q = q
+
+        # When this event is set, the writer thread should stop.
         self._stop_event = stop_event
-        self._fh = open(out_path, "a", encoding="utf-8", buffering=1) if out_path else None
 
-    def close(self) -> None:
-        try:
-            if self._fh:
-                self._fh.close()
-        finally:
-            self._fh = None
+        self._out_path = out_path
 
-    def _emit(self, line: str) -> None:
+    def _emit(self, line: str, file_handle=None) -> None:
+        """ Print one monitor line and optionally write it to the output file. """
         print(line)
-        if self._fh:
-            self._fh.write(line + "\n")
+
+        if file_handle is not None:
+            file_handle.write(line + "\n")
+
+    def _run_writer(self, file_handle=None) -> None:
+        """Process queued monitor events until the writer is stopped."""
+        while not self._stop_event.is_set():
+            try:
+                # Wait briefly for the next monitor event.
+                item = self._q.get(timeout=0.1)
+            except queue.Empty:
+                # Nothing arrived yet. Go around and check stop_event again.
+                continue
+
+            # None is used as a special "stop now" message.
+            if item is None:
+                break
+
+            # Extract the values we want to display.
+            mon = item.get("monitor_id")
+            name = item.get("actuator")
+            src = item.get("source")
+            pv = item.get("pvname")
+            rel = item.get("t_rel_s")
+            val = item.get("value")
+
+            line = (
+                f"[mon#{mon} {name}:{src}] "
+                f"{rel:9.3f}s pv={pv} value={val!r}"
+            )
+
+            self._emit(line, file_handle)
 
     def run(self) -> None:
-        try:
-            while not self._stop_event.is_set():
-                try:
-                    item = self._q.get(timeout=0.1)
-                except queue.Empty:
-                    continue
+        """ Thread entry point. """
 
-                if item is None:  # sentinel
-                    break
+        # print events to the terminal.
+        if self._out_path is None:
+            self._run_writer()
+            return
 
-                # line format
-                mon = item.get("monitor_id")
-                name = item.get("actuator")
-                src = item.get("source")
-                pv = item.get("pvname")
-                rel = item.get("t_rel_s")
-                val = item.get("value")
-                self._emit(f"[mon#{mon} {name}:{src}] {rel:9.3f}s pv={pv} value={val!r}")
-        finally:
-            self.close()
+        # --out was given - context manager closes it automatically on exit.
+        with open(
+            self._out_path,
+            "a",
+            encoding="utf-8",
+            buffering=1,
+        ) as file_handle:
+            self._run_writer(file_handle)
 
 
-# ----------------------------- monitor startup -----------------------------
 # TODO: Align actuator_runner monitor handling with SubscriptionManager.
 def _start_monitors(
     *,
@@ -206,70 +241,91 @@ def _start_monitors(
     args,
     raw_cfg: Dict[str, Any],
     actuators: Dict[str, AbstractActuator],
-    ev_q: "queue.Queue[dict]",
+    ev_q: queue.Queue[dict],
     t0: float,
     _inc_seen,
     _inc_dropped,
 ) -> Tuple[Optional[AbstractActuator], List[Tuple[str, Any]], List[dict]]:
+    """Start all monitor subscriptions requested on the command line."""
+
     provider: Optional[AbstractActuator] = None
     monitor_handles: List[Tuple[str, Any]] = []
-    monitor_specs: List[dict] = []
 
+    # no --monitor arguments were given.
     if not have_monitors:
-        return provider, monitor_handles, monitor_specs
+        return provider, monitor_handles
 
+    # provides the actual monitor subscriptions.
     provider = _pick_monitor_provider(actuators)
 
-    # We'll resolve PVs using the named actuator config, but subscribe via provider
-    acts_raw = raw_cfg.get("actuators") or {}
+    # resolve PV names.
+    actuators_raw = raw_cfg.get("actuators") or {}
 
-    for idx, spec_s in enumerate(args.monitor, start=1):
-        ms = _parse_monitor_spec(spec_s)
-        name = ms["name"]
-        src = ms["source"] or "pv"
-        pv_override = ms["pv"]
+    for monitor_id, spec_text in enumerate(args.monitor, start=1):
+        monitor_spec = _parse_monitor_spec(spec_text)
 
-        raw_act = acts_raw.get(name)
-        if not isinstance(raw_act, dict):
+        name = monitor_spec["name"]
+        source = monitor_spec["source"] or "pv"
+        pv_override = monitor_spec["pv"]
+
+        # First check whether the requested actuator actually exists.
+        if name not in actuators_raw:
             raise ValueError(f"--monitor refers to unknown actuator {name!r}")
 
-        act_cfg = ActuatorConfig.from_dict(raw_act)
-        pvname = pv_override if pv_override else _resolve_pv_for_source(act_cfg, ms["source"] or "rbv")
+        raw_actuator = actuators_raw[name]
 
-        monitor_id = idx
+        # An existing actuator entry must contain a configuration dictionary.
+        if not isinstance(raw_actuator, dict):
+            raise TypeError(f"Configuration for actuator {name!r} must be a dictionary")
 
-        def _mk_cb(_monitor_id: int, _name: str, _src: str, _pv: str):
+        actuator_config = ActuatorConfig.from_dict(raw_actuator)
+
+        # An explicitly supplied PV wins. Otherwise derive the PV from the actuator configuration.
+        if pv_override:
+            pvname = pv_override
+        else:
+            pvname = _resolve_pv_for_source( actuator_config, monitor_spec["source"] or "rbv")
+
+        def _mk_cb(_monitor_id: int, _name: str, _source: str, _pvname: str):
             def _cb(ev: PvEvent) -> None:
+                now = time.time()
+
                 payload = {
                     "monitor_id": _monitor_id,
                     "actuator": _name,
-                    "source": _src,
-                    "pvname": getattr(ev, "pvname", _pv),
+                    "source": _source,
+                    "pvname": getattr(ev, "pvname", _pvname),
                     "value": getattr(ev, "value", None),
-                    "t_abs_s": time.time(),
-                    "t_rel_s": time.time() - t0,
+                    "t_abs_s": now,
+                    "t_rel_s": now - t0,
                     "timestamp": getattr(ev, "timestamp", None),
                     "posixseconds": getattr(ev, "posixseconds", None),
                     "nanoseconds": getattr(ev, "nanoseconds", None),
                     "severity": getattr(ev, "severity", None),
                     "status": getattr(ev, "status", None),
-                    # raw may be large/non-serializable; include if present but safe via default=str
+                    # raw may be large or not JSON serializable.
+                    # The final JSON writer handles that with default=str.
                     "raw": getattr(ev, "raw", None),
                 }
+
                 try:
                     ev_q.put_nowait(payload)
                     _inc_seen()
                 except queue.Full:
                     _inc_dropped()
+
             return _cb
 
-        cb = _mk_cb(monitor_id, name, src, pvname)
-        handle = provider.add_monitor(pvname, user_callback=cb)
-        monitor_handles.append((pvname, handle))
-        monitor_specs.append({"monitor_id": monitor_id, "name": name, "source": src, "pvname": pvname})
+        callback = _mk_cb(monitor_id, name, source, pvname)
 
-    logging.info("Started %d monitors via %s", len(monitor_handles), type(provider).__name__)
-    return provider, monitor_handles, monitor_specs
+        handle = provider.add_monitor(pvname, user_callback=callback)
+
+        monitor_handles.append((pvname, handle))
+
+    logger.info("Started %d monitors via %s", len(monitor_handles), type(provider).__name__)
+
+    return provider, monitor_handles
+
 
 def _validate_cli_specs(
     parser: argparse.ArgumentParser,
@@ -373,7 +429,7 @@ def main() -> None:
     p.add_argument(
         "--log-level",
         type=int,
-        choices=range(0, 6),
+        choices=range(6),
         metavar="0-5",
         help="MBBO record level (0..5) mapped to python logging via scanlib helper",
     )
@@ -465,14 +521,14 @@ def main() -> None:
             try:
                 act.stop()
             except Exception:
-                logging.exception("Failed to stop actuator during Ctrl-C handling")
+                logger.exception("Failed to stop actuator during Ctrl-C handling")
 
     signal.signal(signal.SIGINT, _sigint)
 
     t0 = time.time()
 
     # Writer thread + queue
-    ev_q: "queue.Queue[dict]" = queue.Queue(maxsize=10000)
+    ev_q: queue.Queue[dict] = queue.Queue(maxsize=10000)
     writer = _EventWriter(ev_q, out_path=args.out, stop_event=stop_all)
     writer.start()
 
@@ -496,7 +552,7 @@ def main() -> None:
             return events_seen, dropped
 
     # Start monitors (if any)
-    provider, monitor_handles, monitor_specs = _start_monitors(
+    provider, monitor_handles = _start_monitors(
         have_monitors=have_monitors,
         args=args,
         raw_cfg=raw_cfg,
@@ -518,12 +574,14 @@ def main() -> None:
     futures: List[Future] = []
 
     # serialize commands per actuator to avoid overlapping for same device
-    per_act_lock: Dict[str, threading.Lock] = {k: threading.Lock() for k in actuators.keys()}
+    per_act_lock: Dict[str, threading.Lock] = {
+        name: threading.Lock()
+        for name in actuators
+    }
 
-    def _with_lock(name: str, fn, *a, **kw):
-        lock = per_act_lock[name]
-        with lock:
-            return fn(*a, **kw)
+    def _with_lock(name: str, fn, *args, **kwargs):
+        with per_act_lock[name]:
+            return fn(*args, **kwargs)
 
     max_workers = max(1, min(8, len(actuators)))  # keep it simple
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
@@ -594,35 +652,28 @@ def main() -> None:
                     try:
                         act.stop()
                     except Exception:
-                        pass
-
+                        logger.exception("Failed to stop actuator during shutdown")
             # Remove monitors
             if provider is not None:
-                for pvname, handle in monitor_handles:
+                for pvname, _handle in monitor_handles:
                     try:
                         provider.remove_monitor(pvname)
                     except Exception:
-                        pass
-                    try:
-                        if hasattr(handle, "close"):
-                            handle.close()
-                    except Exception:
-                        pass
+                        logger.exception(f"Failed to remove monitor {pvname} during shutdown")
 
-            # stop writer thread
+            # Stop writer thread.
             stop_all.set()
-            try:
-                ev_q.put_nowait(None)  # sentinel
-            except Exception:
-                pass
             writer.join(timeout=2.0)
 
-    seen, dr = _get_counts()
-    if dr:
-        logging.warning("Dropped %d monitor events (queue full).", dr)
+            if writer.is_alive():
+                logger.warning("Writer thread did not stop cleanly")            
 
-    logging.debug("Config origin: %s", origin)
-    print(f"Done. events_seen={seen} dropped={dr}")
+    seen, dropped = _get_counts()
+    if dropped:
+        logger.warning("Dropped %d monitor events (queue full).", dropped)
+
+    logger.debug("Config origin: %s", origin)
+    print(f"Done. events_seen={seen} dropped={dropped}")
 
 if __name__ == "__main__":
     main()

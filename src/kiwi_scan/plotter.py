@@ -2,13 +2,18 @@
 # SPDX-License-Identifier: MIT
 
 import logging
+
 import matplotlib
+
 matplotlib.use('TkAgg')  # Must come BEFORE importing pyplot, temporary workaround TODO: should not be hard coded here
+from pathlib import Path
+from typing import List, Optional, Union
+
 import matplotlib.pyplot as plt
 import numpy as np
-from typing import List, Optional, Union
-from pathlib import Path
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 class PlotData:
     """
@@ -35,7 +40,7 @@ class Plotter:
     """
     def __init__(
         self,
-        title: str = None,
+        title: Optional[str] = None,
         xlabel: str = "X",
         ylabel: str = "Y",
         title_fontsize: int = 12,
@@ -56,15 +61,15 @@ class Plotter:
         df: pd.DataFrame,
         y_columns: List[str],
         position_column: str,
-        labels: List[str] = None
+        labels: Optional[List[str]] = None
     ):
         if df is None or position_column not in df.columns:
-            logging.error("Invalid DataFrame or position column provided.")
+            logger.error("Invalid DataFrame or position column provided.")
             return
 
         for i, y_col in enumerate(y_columns):
             if y_col not in df.columns:
-                logging.warning(f"Column '{y_col}' not found in DataFrame.")
+                logger.warning(f"Column '{y_col}' not found in DataFrame.")
                 continue
             label = labels[i] if labels and i < len(labels) else y_col
             plot_data = PlotData(df[position_column], df[y_col], label=label)
@@ -115,7 +120,7 @@ class Plotter:
         out_path = Path(path)
         header = "# " + " ".join(header_labels)
         np.savetxt(out_path, arr, fmt=float_fmt, delimiter=" ", header=header, comments="")
-        logging.info(f"Exported space-delimited data to {out_path}")
+        logger.info(f"Exported space-delimited data to {out_path}")
         return out_path
 
     def export_each_series(
@@ -148,7 +153,7 @@ class Plotter:
                 header = "# " + (p.label or "series")
             np.savetxt(path, arr, fmt=float_fmt, delimiter=" ", header=header, comments="")
             paths.append(path)
-        logging.info(f"Exported {len(paths)} files to {out_dir}")
+        logger.info(f"Exported {len(paths)} files to {out_dir}")
         return paths
 
     # --- plotting ---------------------------------------------------------
@@ -164,11 +169,11 @@ class Plotter:
         If no plot data is present, logs a warning and returns.
         """
         if not self.plots:
-            logging.warning("No data available for plotting.")
+            logger.warning("No data available for plotting.")
             return
 
         if subplot:
-            logging.info("subplot")
+            logger.info("subplot")
             fig, axes = plt.subplots(len(self.plots), 1, figsize=(8, 3 * len(self.plots)))
             if len(self.plots) == 1:
                 axes = [axes]
@@ -183,26 +188,30 @@ class Plotter:
                 plt.show()
                 return
         
-        # --- multi-axis mode (shared X, several Y scales) ---
+        # multi-axis yy-plot: shared X, several Y scales
         if multi_axis:
             fig, ax0 = plt.subplots(figsize=(8, 5))
             axes = {0: ax0}
             # global color cycle across ALL axes
             color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
-            color_idx = 0
 
-            # At the moment: up to 3 axes (0: left, 1/2: right with offset)
-            for data in self.plots:
+            for color_idx, data in enumerate(self.plots):
                 ax = axes.get(data.axis)
                 if ax is None:
-                    # create new y-axis on the right
                     ax = ax0.twinx()
                     axes[data.axis] = ax
+
                 color = color_cycle[color_idx % len(color_cycle)]
-                ax.plot(data.x, data.y, marker='o', linestyle='-', label=data.label, color=color)
-                color_idx += 1
+                ax.plot(
+                    data.x,
+                    data.y,
+                    marker='o',
+                    linestyle='-',
+                    label=data.label,
+                    color=color,
+                )
             # Label axes
-            for idx, ax in axes.items():
+            for ax in axes.values():
                 ax.set_xlabel('X')
                 ax.grid(True, axis='y', alpha=0.3)
                 # Put legend on each axis
@@ -251,7 +260,7 @@ def plot_scan_data(
                 plotter.export_each_series(export_path, include_x=True)
         except ValueError as e:
             # If X don't match, fall back to per-series export in same directory as the file path
-            logging.warning(f"{e} Falling back to per-series export.")
+            logger.warning(f"{e} Falling back to per-series export.")
             if export_path.suffix:
                 plotter.export_each_series(export_path.parent, include_x=True)
             else:

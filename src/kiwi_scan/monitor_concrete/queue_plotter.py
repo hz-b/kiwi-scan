@@ -15,6 +15,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.monitor.row_format import MonitorRowFormatter
 
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PlotSpec:
@@ -54,7 +55,7 @@ class QueuePlotterMonitor(BaseMonitor):
     def __init__(self, parameters: Optional[Dict[str, Any]] = None):
         self.parameters = parameters or {}
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        self.queue: "queue.Queue[Dict[str, Any]]" = queue.Queue()
+        self.queue: queue.Queue[Dict[str, Any]] = queue.Queue()
         self.root: Optional[Any] = None  # Will be set in start() when GUI is available.
         self.running = False
         self._headless = False
@@ -81,7 +82,7 @@ class QueuePlotterMonitor(BaseMonitor):
         if raw is None:
             return {}
         if not isinstance(raw, dict):
-            raise ValueError("monitor.print must be a mapping or false")
+            raise TypeError("queue_plotter: monitor.print must be a mapping or false")
         return dict(raw)
 
     @staticmethod
@@ -103,9 +104,7 @@ class QueuePlotterMonitor(BaseMonitor):
         try:
             matplotlib.use('TkAgg')
         except ImportError:
-            logging.warning(
-                "TkAgg backend is unavailable; keeping matplotlib's current backend"
-            )
+            logger.warning("TkAgg backend is unavailable; keeping matplotlib's current backend")
         import matplotlib.pyplot as plt
         return plt
 
@@ -153,25 +152,19 @@ class QueuePlotterMonitor(BaseMonitor):
             self._tk = tk
             self._ttk = ttk
             self.root = tk.Tk()
-        except Exception as exc:
+        except Exception as exc: # noqa BLE001
             self._headless = True
             self.running = False
             self.root = None
             if not self._print_enabled:
-                self.logger.warning(
-                    "QueuePlotterMonitor could not start Tk GUI and monitor.print is disabled; "
-                    "enabling print fallback automatically"
-                )
+                self.logger.warning("QueuePlotterMonitor could not start Tk GUI and monitor.print is disabled; enabling print fallback automatically")
                 self._print_enabled = True
                 self._print_parameters = {}
                 self._row_formatter = MonitorRowFormatter({}, logger=self.logger)
                 self._value_formatter = self._row_formatter.value_formatter
                 self._row_formatter.start(raw_signal_names)
-            self.logger.warning(
-                "QueuePlotterMonitor could not start Tk GUI (%s); "
-                "live plotting is disabled and print output is used instead",
-                exc,
-            )
+            self.logger.warning( "QueuePlotterMonitor could not start Tk GUI (%s); "
+                "live plotting is disabled and print output is used instead", exc)
             return
 
         self.running = True
@@ -224,12 +217,12 @@ class QueuePlotterMonitor(BaseMonitor):
             return []
 
         if not isinstance(raw_specs, list):
-            raise ValueError("monitor.plots must be a list of plot specifications")
+            raise TypeError("monitor.plots must be a list of plot specifications")
 
         specs: List[PlotSpec] = []
         for idx, item in enumerate(raw_specs, start=1):
             if not isinstance(item, dict):
-                raise ValueError(f"monitor.plots[{idx}] must be a mapping")
+                raise TypeError(f"monitor.plots[{idx}] must be a mapping")
 
             x_name = str(item.get("x", "t"))
             if "y" not in item:
@@ -242,10 +235,9 @@ class QueuePlotterMonitor(BaseMonitor):
 
             missing = [name for name in [x_name] + y_names if name not in available]
             if missing:
-                raise ValueError(
-                    "Unknown queue plot channel(s) %s. Available channels are: %s"
-                    % (", ".join(repr(name) for name in missing), ", ".join(available))
-                )
+                unknown_channels = ", ".join(repr(name) for name in missing)
+                available_channels = ", ".join(available)
+                raise ValueError(f"Unknown queue plot channel(s): {unknown_channels}. Available channels are: {available_channels}")
 
             specs.append(
                 PlotSpec(
@@ -266,7 +258,7 @@ class QueuePlotterMonitor(BaseMonitor):
         elif isinstance(raw_y, (list, tuple)):
             names = [str(item) for item in raw_y]
         else:
-            raise ValueError("plot 'y' must be a channel name or a list of channel names")
+            raise TypeError("plot 'y' must be a channel name or a list of channel names")
 
         names = [name for name in names if name]
         if not names:
@@ -319,10 +311,7 @@ class QueuePlotterMonitor(BaseMonitor):
             self.logger.info("QueuePlotterMonitor loop skipped because no graphical display is available")
             return
 
-        logging.info(
-            "[%s] In monitor.loop(), driving Tkinter from this thread",
-            threading.current_thread().name,
-        )
+        self.logger.info("[%s] In monitor.loop(), driving Tkinter from this thread", threading.current_thread().name)
         plt = self._import_pyplot()
         tk = getattr(self, '_tk', None)
         if tk is None:
@@ -356,16 +345,18 @@ class QueuePlotterMonitor(BaseMonitor):
                 plt.pause(0.05)
         finally:
             plt.ioff()
+
             if fig is not None:
                 try:
                     plt.close(fig)
-                except Exception:
-                    pass
+                except Exception as exc:  # noqa: BLE001 - cleanup must not abort the scan
+                    self.logger.debug("Failed to close plot figure: %s", exc)
+
             if self.root is not None:
                 try:
                     self.root.destroy()
-                except self._tk.TclError:
-                    pass
+                except self._tk.TclError as exc:
+                    self.logger.debug("Failed to destroy Tk root window: %s", exc)
                 finally:
                     self.root = None
 

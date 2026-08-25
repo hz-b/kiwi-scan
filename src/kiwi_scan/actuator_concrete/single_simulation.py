@@ -1,14 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-import time
 import logging
 import threading
-from typing import Optional, Any
+import time
+from typing import Any, Optional
 
-from kiwi_scan.datamodels import ActuatorConfig
 from kiwi_scan.actuator.single import AbstractActuator
+from kiwi_scan.datamodels import ActuatorConfig
 
+logger = logging.getLogger(__name__)
 
 class SimulatedActuator(AbstractActuator):
     """
@@ -50,7 +51,7 @@ class SimulatedActuator(AbstractActuator):
 
     def set_velocity(self, velocity: float) -> None:
         self._velocity = float(velocity)
-        logging.info(f"[SIM] Velocity set to {self._velocity}")
+        logger.info(f"[SIM] Velocity set to {self._velocity}")
 
     def get_velocity(self) -> Optional[float]:
         return self._velocity
@@ -58,7 +59,7 @@ class SimulatedActuator(AbstractActuator):
     def move(self, position: float) -> None:
         """Issue a move: set command value, mark as moving."""
         
-        logging.info(f"[SIM] Commanded move to {position}")
+        logger.info(f"[SIM] Commanded move to {position}")
         self.cmdv = position
         self._moving = True
 
@@ -94,7 +95,7 @@ class SimulatedActuator(AbstractActuator):
 
     def jog(self, velocity: float, sync: bool = True) -> None:
         """Simulate a jog by a single step equal to velocity."""
-        logging.info(f"[SIM] Jog with velocity {velocity}")
+        logger.info(f"[SIM] Jog with velocity {velocity}")
         if velocity == 0:
             self.stop()
             return
@@ -138,22 +139,22 @@ class SimulatedActuator(AbstractActuator):
         distance = abs(position - self._rbv)
         # TODO: update _rbv
         sleep_time = distance / self._velocity if self._velocity > 0 else 0
-        logging.info(f"[SIM] Moving for {sleep_time:.3f}s")
+        logger.info(f"[SIM] Moving for {sleep_time:.3f}s")
         time.sleep(sleep_time)
         # Arrive at position
         self._rbv = position
         self._moving = False
         # Dwell if configured
         if self.config.dwell_time > 0:
-            logging.info(f"[SIM] Dwell for {self.config.dwell_time}s")
+            logger.info(f"[SIM] Dwell for {self.config.dwell_time}s")
             time.sleep(self.config.dwell_time)
-        logging.info(f"[SIM] Reached position {self._rbv}")
+        logger.info(f"[SIM] Reached position {self._rbv}")
 
     def stop(self) -> None:
         """Stop motion immediately."""
         if self._moving:
             self._moving = False
-            logging.info("[SIM] Motion stopped")
+            logger.info("[SIM] Motion stopped")
         else:
-            logging.debug("[SIM] Stop called, but actuator was not moving")
+            logger.debug("[SIM] Stop called, but actuator was not moving")
 

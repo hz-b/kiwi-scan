@@ -1,5 +1,7 @@
 import logging
 
+logger = logging.getLogger(__name__)
+
 class RangeExitDetector:
     def __init__(self, start, stop, eps=0.0, out_threshold=3):
         self.start = start
@@ -15,7 +17,7 @@ class RangeExitDetector:
 
     def _in_range(self, pos, start, stop):
         if pos is None or start is None or stop is None:
-            logging.debug(f"Could not detect range: {start}:{pos}:{stop}")
+            logger.debug(f"Could not detect range: {start}:{pos}:{stop}")
             return False
 
         return start <= pos <= stop if start <= stop else stop <= pos <= start
@@ -36,9 +38,9 @@ class RangeExitDetector:
         if self.in_range(pos):
             self.entered = True
             self.out_counter = 0
-            logging.debug("[RangeExitDetector] Primed inside range at pos=%s", pos)
+            logger.debug("[RangeExitDetector] Primed inside range at pos=%s", pos)
         else:
-            logging.debug("[RangeExitDetector] Prime position outside range: pos=%s", pos)
+            logger.debug("[RangeExitDetector] Prime position outside range: pos=%s", pos)
         return self.entered
 
     def reset(self):
@@ -48,7 +50,7 @@ class RangeExitDetector:
 
     def _past_end(self, pos):
         if pos is None:
-            logging.debug("Could not detect end crossing: pos is None")
+            logger.debug("Could not detect end crossing: pos is None")
             return False
 
         if self.forward:
@@ -74,7 +76,7 @@ class RangeExitDetector:
         # 3. Direction-aware exit condition
         if self._past_end(pos):
             self.out_counter += 1
-            logging.debug( "[RangeExitDetector] EXIT candidate pos=%s (counter=%d/%d)",
+            logger.debug( "[RangeExitDetector] EXIT candidate pos=%s (counter=%d/%d)",
                 pos, self.out_counter, self.out_threshold)
             if self.out_counter >= self.out_threshold:
                 return True

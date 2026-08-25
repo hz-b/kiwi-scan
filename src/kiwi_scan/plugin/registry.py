@@ -1,7 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
+from __future__ import annotations
 
-from typing import TypedDict, Dict, Any, Optional 
+from typing import TYPE_CHECKING, Any, Dict, Optional, TypedDict
+
+if TYPE_CHECKING:
+    from kiwi_scan.scan.common import BaseScan
 
 PLUGIN_REGISTRY = {}
 
@@ -20,8 +24,8 @@ def register_plugin(name=None):
     return decorator
 
 def create_plugin(
-        config: PluginConfig = None,
-        scan: Optional["BaseScan"] = None):
+        config: Optional[PluginConfig] = None,
+        scan: Optional[BaseScan] = None):
 
     plugin_type = config["type"]
     cls = PLUGIN_REGISTRY.get(plugin_type)

@@ -1,15 +1,15 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
+import logging
+import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional, Any, Callable, Dict, Mapping
-import threading
-import time
-import logging
+from typing import Any, Callable, Dict, Mapping, Optional
 
 from kiwi_scan.datamodels import ActuatorConfig
 
+logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class PvEvent:
@@ -36,7 +36,7 @@ class PvEvent:
 
 MonitorCallback = Callable[[PvEvent], None]
 
-
+# TODO: name property
 class AbstractActuator(ABC):
     """
     Defines the interface for an actuator.
@@ -124,58 +124,49 @@ class AbstractActuator(ABC):
                 cb(ev)
             except Exception:
                 # Keep it non-fatal: monitor callbacks must never kill control logic
-                logging.exception(f"Monitor callback failed for {pvname}")
+                logger.exception(f"Monitor callback failed for {pvname}")
 
         return ev
     @property
     @abstractmethod
     def pvname(self) -> str:
         """The primary PV name for the actuator."""
-        pass
 
     @property
     @abstractmethod
     def rbv(self) -> Optional[Any]:
         """Read-back value shortcut property."""
-        pass
 
     @rbv.setter
     @abstractmethod
     def rbv(self, value: Any) -> None:
         """Read-back value shortcut property setter."""
-        pass
 
     @property
     @abstractmethod
     def cmdv(self) -> Optional[Any]:
         """Commanded value shortcut property."""
-        pass
 
     @cmdv.setter
     @abstractmethod
     def cmdv(self, value: Any) -> None:
         """Commanded value shortcut property setter."""
-        pass
 
     @abstractmethod
     def set_velocity(self, velocity: float) -> None:
         """Set the actuator velocity (for move and jog)."""
-        pass
 
     @abstractmethod
     def get_velocity(self) -> Optional[float]:
         """Get the current actuator velocity."""
-        pass
 
     @abstractmethod
     def move(self, position: float) -> None:
         """Issue a move command without waiting."""
-        pass
 
     @abstractmethod
     def rel_move(self, delta: float) -> None:
         """Issue a *relative* move command without waiting (incremental move)."""
-        pass
 
     @abstractmethod
     def run_move(
@@ -185,7 +176,6 @@ class AbstractActuator(ABC):
         wait_startup: bool = False,
     ) -> None:
         """Move the actuator, optionally waiting for startup or completion."""
-        pass
 
     @abstractmethod
     def run_rel_move(
@@ -195,17 +185,14 @@ class AbstractActuator(ABC):
         wait_startup: bool = False,
     ) -> None:
         """Relative move, optionally waiting for startup or completion."""
-        pass
 
     @abstractmethod
     def jog(self, velocity: float, sync: bool = True) -> None:
         """Continuous jog at given velocity."""
-        pass
 
     @abstractmethod
     def is_ready(self) -> bool:
         """Return True if actuator is ready (not is_movingy())."""
-        pass
     
     def is_moving(self) -> bool:
         return not self.is_ready()
@@ -213,7 +200,6 @@ class AbstractActuator(ABC):
     @abstractmethod
     def is_in_position(self, target: float, in_position_band: float) -> bool:
         """Check if readback is within band of target."""
-        pass
 
     @abstractmethod
     def wait_for_startup(
@@ -221,14 +207,11 @@ class AbstractActuator(ABC):
         stop_event: Optional[threading.Event] = None,
     ) -> bool:
         """Block until actuator motion startup is observed."""
-        pass
 
     @abstractmethod
     def wait_until_done(self, position: float) -> None:
         """Block until actuator has reached target."""
-        pass
 
     @abstractmethod
     def stop(self) -> None:
         """Stop motion immediately."""
-        pass

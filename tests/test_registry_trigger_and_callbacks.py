@@ -1,14 +1,12 @@
 import os
 import sys
-import types
 import tempfile
 import textwrap
 import unittest
-import importlib.util
 from pathlib import Path
 from unittest.mock import patch
 
-import kiwi_scan.test_support as test_support
+from kiwi_scan import test_support
 
 # Install a tiny pyepics stub before importing kiwi_scan modules.
 if "epics" not in sys.modules:
@@ -16,12 +14,12 @@ if "epics" not in sys.modules:
 
 
 import kiwi_scan
+from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
 from kiwi_scan.datamodels import ActuatorConfig, ScanTriggers
 from kiwi_scan.plugin.base import ScanPlugin
 from kiwi_scan.plugin.registry import PLUGIN_REGISTRY, create_plugin, register_plugin
 from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
 from kiwi_scan.scan.trigger_manager import TriggerManager
-from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
 
 
 class _DemoPlugin(ScanPlugin):

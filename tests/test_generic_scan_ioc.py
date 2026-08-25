@@ -8,8 +8,8 @@ import math
 import os
 import sys
 import unittest
-from unittest.mock import patch
 from typing import Any, Dict, List, Optional
+from unittest.mock import patch
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 SRC = os.path.join(ROOT, "src")
@@ -17,7 +17,6 @@ if SRC not in sys.path:
     sys.path.insert(0, SRC)
 
 from kiwi_scan.datamodels import ActuatorConfig, ScanConfig, ScanDimension
-from kiwi_scan.ioc.generic_scan_ioc import GenericScanIOC
 from kiwi_scan.ioc import (
     DataPVSpec,
     ScanIOCController,
@@ -25,6 +24,7 @@ from kiwi_scan.ioc import (
     parse_data_pv_spec,
     parse_data_pv_specs,
 )
+from kiwi_scan.ioc.generic_scan_ioc import GenericScanIOC
 
 
 class FakeScan:
@@ -179,8 +179,8 @@ class TestScanIOCController(unittest.TestCase):
         return ScanConfig(
             actuators={
                 actuator: ActuatorConfig(
-                    pv="SIM:%s" % actuator.upper(),
-                    rb_pv="SIM:%s:RBV" % actuator.upper(),
+                    pv=f"SIM:{actuator.upper()}",
+                    rb_pv=f"SIM:{actuator.upper()}:RBV",
                     type="simulation",
                     dwell_time=0.0,
                 )
@@ -376,7 +376,7 @@ class DummyController:
         self.config_name = config_name
         if config_name == "alternate":
             self._dimension_defaults = ("theta", 3.0, 9.0, 7, 0.5)
-        self.message = "config selected: %s" % config_name
+        self.message = f"config selected: {config_name}"
 
     def get_scan_type(self):
         return self.scan_type
@@ -386,7 +386,7 @@ class DummyController:
         if scan_type == "missing":
             raise ValueError("unknown scan type: missing")
         self.scan_type = scan_type
-        self.message = "scan type selected: %s" % scan_type
+        self.message = f"scan type selected: {scan_type}"
 
     def get_manifest_file(self):
         return "/path/to/data/manifest_20260722_200610.yaml"

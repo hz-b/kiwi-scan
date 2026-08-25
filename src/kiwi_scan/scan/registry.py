@@ -7,7 +7,7 @@ import importlib.util
 import logging
 import os
 from pathlib import Path
-from typing import Callable, Dict, Optional, Set, List
+from typing import Callable, Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +23,7 @@ _LOADED_EXTERNAL_SCAN_FILES: Set[Path] = set()
 def register_scan_class(name: str, cls: type, *, replace: bool = False) -> None:
     existing = SCAN_REGISTRY.get(name)
     if existing is not None and existing is not cls and not replace:
-        raise ValueError(
-            f"Scan type '{name}' is already registered by {existing.__module__}.{existing.__name__}"
-        )
+        raise ValueError( f"Scan type '{name}' is already registered by {existing.__module__}.{existing.__name__}")
     SCAN_REGISTRY[name] = cls
 
 
@@ -52,6 +50,7 @@ def _register_builtin_scan_types() -> None:
     from kiwi_scan.scan_concrete.approach import ApproachMove
     from kiwi_scan.scan_concrete.cm import CMScan
     from kiwi_scan.scan_concrete.linear import LinearScan
+
     # from kiwi_scan.scan_concrete.monocm import MonoCMScan
     from kiwi_scan.scan_concrete.para import ParaScan
     from kiwi_scan.scan_concrete.poll import PollScan
@@ -71,11 +70,7 @@ def _import_external_scan_file(pyfile: Path, raise_on_error: bool = False) -> No
 
     if pyfile in _LOADED_EXTERNAL_SCAN_FILES:
         return
-
-    module_name = "kiwi_scan_ext_scan_{stem}_{suffix}".format(
-        stem=pyfile.stem,
-        suffix=abs(hash(str(pyfile))),
-    )
+    module_name = f"kiwi_scan_ext_scan_{pyfile.stem}_{abs(hash(str(pyfile)))}"
 
     try:
         spec = importlib.util.spec_from_file_location(module_name, str(pyfile))

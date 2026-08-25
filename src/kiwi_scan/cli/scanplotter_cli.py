@@ -14,6 +14,8 @@ _REQUIRED_SERIES_KEYS = {"column"}
 _AUTO_FILE_VALUES = {"", "auto", "manifest"}
 
 
+logger = logging.getLogger(__name__)
+
 def _series_usage() -> str:
     return "expected column=NAME[,file=PATH|auto,axis=N,label=TEXT,type=scan|meta]"
 
@@ -91,14 +93,8 @@ def _resolve_manifest_series(series: List[SeriesSpec], args: argparse.Namespace)
             scan_index=args.scan_index,
         )
         item.file = str(resolved)
-        logging.info(
-            "Resolved --series type=%s column=%s from manifest=%s scan-index=%s -> %s",
-            item.source_type,
-            item.column,
-            manifest_for_log,
-            args.scan_index,
-            resolved,
-        )
+        logger.info( "Resolved --series type=%s column=%s from manifest=%s scan-index=%s -> %s",
+            item.source_type, item.column, manifest_for_log, args.scan_index, resolved)
 
 
 def main():
@@ -174,10 +170,8 @@ def main():
         )
         print(f"PostMortemConfig {cfg}")
         plot_postmortem(cfg=cfg)
-    except (ValueError, FileNotFoundError, IndexError, OSError) as exc:
+    except (ValueError, FileNotFoundError, IndexError, OSError, KeyError) as exc:
         parser.error(str(exc))
-    except Exception as exc:
-        parser.error(f"Plotting failed: {exc}")
 
 
 if __name__ == "__main__":

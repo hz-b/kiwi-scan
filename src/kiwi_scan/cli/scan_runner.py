@@ -1,32 +1,32 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-import os
-import sys
 import argparse
 import difflib
+import logging
+import os
 import signal
-from typing import List, Dict
+import sys
+from typing import Dict, List
 
 import kiwi_scan
-from kiwi_scan.yaml_loader import (
-    parse_replacements,
-    get_replacements_help_and_required,
-    get_env_replacements,
-    yaml_loader,
-)
-from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
 from kiwi_scan.data.manifestwriter import ManifestWriter
+from kiwi_scan.datamodels import ScanConfig, ScanDimension
+from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
 from kiwi_scan.scan.tools import (
-    load_scan_configs,
     create_scan_with_config,
     get_scan_config_dir,
+    load_scan_configs,
     set_valid_logging_level,
 )
-from kiwi_scan.datamodels import ScanConfig, ScanDimension
+from kiwi_scan.yaml_loader import (
+    get_env_replacements,
+    get_replacements_help_and_required,
+    parse_replacements,
+    yaml_loader,
+)
 
-import logging 
-
+logger = logging.getLogger(__name__)
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s"
@@ -152,7 +152,7 @@ def main():
     pre_parser = argparse.ArgumentParser(add_help=False)
     pre_parser.add_argument("--newmanifest", nargs="?", const=True, default=None)
 
-    pre_args, remaining_argv = pre_parser.parse_known_args()
+    pre_args, _remaining_argv = pre_parser.parse_known_args()
 
     if pre_args.newmanifest is not None:
         if pre_args.newmanifest is True:
@@ -160,7 +160,7 @@ def main():
         else:
             path = ManifestWriter.newmanifest(pre_args.newmanifest)
 
-        logging.info("New manifest: %s", path)
+        logger.info("New manifest: %s", path)
 
         # If ONLY --newmanifest exit immediately
         if len(sys.argv) <= 2:
@@ -217,7 +217,7 @@ def main():
     parser.add_argument(
         "--log-level",
         type=int,
-        choices=range(0, 6),
+        choices=range(6),
         metavar="0-5",
         help="MBBO record level (0..5) to set log verbosity via scanlib helper"
     )
@@ -284,17 +284,17 @@ def main():
         parser.error(str(exc))
 
     # Debug output
-    logging.info(f"Scan Type: {args.scan_type}")
+    logger.info(f"Scan Type: {args.scan_type}")
     if args.config_file:
-        logging.info(f"Config File: {config_label}")
+        logger.info(f"Config File: {config_label}")
     else:
-        logging.info(f"Config: {config_label}")
-    logging.info(f"Replacements: {replacements}")
+        logger.info(f"Config: {config_label}")
+    logger.info(f"Replacements: {replacements}")
 
-    logging.info(f"Actuators: {actuators}")
-    logging.info(f"Scan Dimensions:")
+    logger.info(f"Actuators: {actuators}")
+    logger.info("Scan Dimensions:")
     for dim in scan_dimensions:
-        logging.info(
+        logger.info(
             f"  Actuator: {dim.actuator}, "
             f"Start: {dim.start}, "
             f"Stop: {dim.stop}, "
@@ -313,12 +313,12 @@ def main():
             data_dir=data_dir,
         )
     except Exception as exc:
-        logging.error("Failed to initialize scan: %s", exc)
-        logging.debug("Scan initialization traceback", exc_info=True)
+        logger.error("Failed to initialize scan: %s", exc)
+        logger.debug("Scan initialization traceback", exc_info=True)
         return 1
 
     if scan is None:
-        logging.error("Failed to initialize scan: scan factory returned None")
+        logger.error("Failed to initialize scan: scan factory returned None")
         return 1
 
     sigint_count = 0
@@ -344,19 +344,19 @@ def main():
         try:
             scan.stop()
         except Exception:
-            logging.exception("Failed to stop scan during Ctrl-C handling")
+            logger.exception("Failed to stop scan during Ctrl-C handling")
 
     previous_sigint_handler = signal.getsignal(signal.SIGINT)
     signal.signal(signal.SIGINT, _sigint)
     try:
         scan.execute()
     except Exception as exc:
-        logging.error("Scan failed: %s", exc)
-        logging.debug("Scan failure traceback", exc_info=True)
+        logger.error("Scan failed: %s", exc)
+        logger.debug("Scan failure traceback", exc_info=True)
         try:
             scan.stop()
         except Exception:
-            logging.exception("Failed to stop scan after error")
+            logger.exception("Failed to stop scan after error")
         return 1
     finally:
         signal.signal(signal.SIGINT, previous_sigint_handler)

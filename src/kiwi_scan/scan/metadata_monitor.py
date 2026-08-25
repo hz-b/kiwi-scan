@@ -1,13 +1,20 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
+from __future__ import annotations
 
 import logging
 import threading
 import time
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from queue import Queue, Full, Empty
-from typing import Dict, Any, List, Optional
+from queue import Empty, Full, Queue
+from typing import Any, Dict, List, Optional
+
+import numpy as np
+
 from kiwi_scan.epics_wrapper import EpicsPV as PV
+
+logger = logging.getLogger(__name__)
 
 class MetadataCAMonitor:
     """
@@ -27,7 +34,7 @@ class MetadataCAMonitor:
         self._pvspecs = pvs or []
         self._constants = dict(constants or {})
         self._outfile = outfile
-        self._q: "Queue[Dict[str, Any]]" = Queue(maxsize=queue_maxsize)
+        self._q: Queue[Dict[str, Any]] = Queue(maxsize=queue_maxsize)
         self._stop = threading.Event()
         self._writer_thread: Optional[threading.Thread] = None
         self._pvobjs: List[PV] = []
@@ -38,12 +45,12 @@ class MetadataCAMonitor:
     # ---------- public API ----------
     def start(self) -> None:
         if not self._pvspecs and not self._constants:
-            logging.info("MetadataCAMonitor: nothing to start (no PVs/constants).")
+            logger.info("MetadataCAMonitor: nothing to start (no PVs/constants).")
             return
 
         # 1) Write file header (constants + column names)
         self._write_header()
-        logging.debug("Metadata monitor header written")
+        logger.debug("Metadata monitor header written")
 
         # 2) Create PVs, install callbacks (events go to queue even before writer starts)
         self._pvobjs = []
@@ -53,13 +60,13 @@ class MetadataCAMonitor:
                 pv.add_callback(self._on_event)
                 self._pvobjs.append(pv)
             except ConnectionError as exc:
-                logging.warning(
+                logger.warning(
                     "MetadataCAMonitor: skipping unavailable PV %s: %s",
                     name,
                     exc,
                 )
             except Exception:
-                logging.exception(
+                logger.exception(
                     "MetadataCAMonitor: failed to subscribe %s",
                     name,
                 )
@@ -69,7 +76,7 @@ class MetadataCAMonitor:
         try:
             self._write_initial_snapshot_rows()
         except Exception:
-            logging.exception("MetadataCAMonitor: failed to write initial snapshot rows")
+            logger.exception("MetadataCAMonitor: failed to write initial snapshot rows")
 
         # 4) Start writer thread for subsequent monitor events
         self._stop.clear()
@@ -80,23 +87,19 @@ class MetadataCAMonitor:
         )
         self._writer_thread.start()
 
-        logging.info(
+        logger.info(
             "MetadataCAMonitor: started with %d PVs → %s",
             len(self._pvobjs),
             self._outfile,
         )
 
     def stop(self, join_timeout: float = 2.0) -> None:
-        # detach callbacks / close PVs (handle EpicsPV wrapper + raw pyepics.PV)
         for pv in self._pvobjs:
             try:
-                raw = getattr(pv, "_pv", pv)  # EpicsPV wrapper stores pyepics PV in ._pv
-                if hasattr(raw, "clear_callbacks"):
-                    raw.clear_callbacks()
-                if hasattr(raw, "disconnect"):
-                    raw.disconnect()
-            except Exception:
-                pass
+                pv.clear_callbacks()
+                pv.disconnect()
+            except Exception: # noqa BLE001
+                logger.debug(f"Failed to clear {pv}")
         self._pvobjs.clear()
 
         # stop writer
@@ -106,9 +109,9 @@ class MetadataCAMonitor:
             self._writer_thread = None
         dropped = self.get_drop_count()
         if dropped:
-            logging.warning( "MetadataCAMonitor: stopped with %d dropped queue event(s).", dropped)
+            logger.warning( "MetadataCAMonitor: stopped with %d dropped queue event(s).", dropped)
         else:
-            logging.debug("MetadataCAMonitor: stopped with no dropped queue events.")
+            logger.debug("MetadataCAMonitor: stopped with no dropped queue events.")
 
     def get_drop_count(self) -> int:
         """Return the number of monitor events dropped because the queue was full."""
@@ -134,8 +137,7 @@ class MetadataCAMonitor:
         with open(self._outfile, "w") as f:
             if self._constants:
                 f.write("# metadata_constants\n")
-                for k, v in self._constants.items():
-                    f.write(f"# {k}\t{v}\n")
+                f.writelines(f"# {k}\t{v}\n" for k, v in self._constants.items())
                 f.write("# --- metadata above; monitor data below ---\n")
             f.write("\t".join(cols) + "\n")
 
@@ -149,17 +151,14 @@ class MetadataCAMonitor:
 
         with open(self._outfile, "a", encoding="utf-8") as f:
             for pv in self._pvobjs:
-                pvname = getattr(pv, "pvname", None)
-                if not pvname:
-                    raw = getattr(pv, "_pv", None)
-                    pvname = getattr(raw, "pvname", None) if raw is not None else None
+                pvname = pv.pvname
                 pvname = pvname or "UNKNOWN"
 
                 md = None
                 try:
-                    if hasattr(pv, "get_with_metadata"):
-                        md = pv.get_with_metadata()
-                except Exception:
+                    md = pv.get_with_metadata()
+                except Exception: # noqa BLE001
+                    logger.debug(f"Faild to get_with_metadata() pv={pv.pvname}")
                     md = None
 
                 value = None
@@ -173,12 +172,7 @@ class MetadataCAMonitor:
                     sevr = md.get("severity")
                     stat = md.get("status")
                 else:
-                    # fallback: at least try to get a value
-                    try:
-                        if hasattr(pv, "get"):
-                            value = pv.get()
-                    except Exception:
-                        value = None
+                    value = None
 
                 row = [
                     datetime.now(tz=timezone.utc).isoformat(),
@@ -216,25 +210,23 @@ class MetadataCAMonitor:
                         self._last_drop_warning_monotonic = now
 
                 if warn:
-                    logging.warning(
+                    logger.warning(
                         "MetadataCAMonitor: queue full; dropped_events=%d "
                         "queue_size=%d queue_maxsize=%d",
                         dropped,
                         self._q.qsize(),
                         self._q.maxsize,
                     )
-        except Exception as e:
-            logging.error("MetadataCAMonitor: callback error: %s", e, exc_info=True)
+        except Exception:
+            logger.exception("MetadataCAMonitor: callback error")
 
     @staticmethod
     def _ts_to_iso(ts: Any) -> str:
         try:
-            if ts is None:
-                return ""
-            if isinstance(ts, (int, float)):
-                return datetime.fromtimestamp(float(ts), tz=timezone.utc).isoformat()
+            if ts is not None:
+                return datetime.fromtimestamp( float(ts), tz=timezone.utc,).isoformat()
             return str(ts)
-        except Exception:
+        except (TypeError, ValueError, OverflowError, OSError):
             return ""
 
     def _writer_loop(self) -> None:
@@ -257,39 +249,38 @@ class MetadataCAMonitor:
                 f.flush()
 
     @staticmethod
-    def _fmt_value(v: Any) -> str:
-        if isinstance(v, (int, float)):
-            return f"{float(v):.12e}"
+    def _fmt_scalar(value: Any) -> str:
+        if value is None:
+            return ""
 
-        if isinstance(v, (bytes, bytearray)):
-            try:
-                return v.decode("utf-8", "replace")
-            except Exception:
-                return repr(v)
+        if isinstance(value, (int, float)):
+            return f"{float(value):.12e}"
 
-        seq = None
-        try:
-            import numpy as np  # type: ignore
-            if isinstance(v, np.ndarray):
-                seq = v.tolist()
-        except Exception:
-            pass
+        return str(value)
 
-        if seq is None:
-            from collections.abc import Sequence
-            if isinstance(v, Sequence) and not isinstance(v, (str, bytes, bytearray)):
-                seq = list(v)
+    @classmethod
+    def _fmt_value(cls, value: Any) -> str:
+        if isinstance(value, (bytes, bytearray)):
+            return value.decode("utf-8", errors="replace")
 
-        if seq is not None:
-            parts = []
-            for item in seq:
-                if isinstance(item, (int, float)):
-                    parts.append(f"{float(item):.12e}")
-                else:
-                    parts.append(str(item))
-            return "[" + " ".join(parts) + "]"
+        if isinstance(value, np.ndarray):
+            # A zero-dimensional array contains one scalar value.
+            if value.ndim == 0:
+                return cls._fmt_scalar(value.item())
 
-        return "" if v is None else str(v)
+            values = value.tolist()
+
+        elif isinstance(value, Sequence) and not isinstance(
+            value,
+            (str, bytes, bytearray),
+        ):
+            values = value
+
+        else:
+            return cls._fmt_scalar(value)
+
+        formatted_values = (cls._fmt_scalar(item) for item in values)
+        return f"[{' '.join(formatted_values)}]"
 
     @staticmethod
     def _fmt_plain(v: Any) -> str:

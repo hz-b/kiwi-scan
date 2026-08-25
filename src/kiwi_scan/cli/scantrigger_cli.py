@@ -22,7 +22,6 @@ from kiwi_scan.yaml_loader import (
     yaml_loader,
 )
 
-
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
@@ -106,7 +105,7 @@ def main() -> None:
     parser.add_argument(
         "--log-level",
         type=int,
-        choices=range(0, 6),
+        choices=range(6),
         metavar="0-5",
         help="MBBO record level (0..5) mapped to Python logging",
     )
@@ -125,7 +124,7 @@ def main() -> None:
     except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
         parser.error(str(exc))
 
-    logging.info("Executed trigger phase %r from %s", args.phase, origin)
+    # logging.info("Executed trigger phase %r from %s", args.phase, origin)
 
 if __name__ == "__main__":
     main()

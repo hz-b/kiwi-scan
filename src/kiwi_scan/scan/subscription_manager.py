@@ -258,13 +258,10 @@ class SubscriptionManager:
             self._actuator_configs[actuator_name] = normalized
             return normalized
 
-        raise TypeError(
-            "Actuator config for '%s' must be dict or ActuatorConfig, got %s"
-            % (actuator_name, type(raw_config))
-        )
+        raise TypeError(f"Actuator config for '{actuator_name}' must be dict or ActuatorConfig, got {raw_config}")
 
     def resolve_pv(self, subscription: SubscriptionConfig) -> str:
-        """Resolve a subscription definition to the concrete PV name.
+        """ Resolve a subscription definition to the concrete PV name.
 
         Parameters
         ----------
@@ -285,9 +282,7 @@ class SubscriptionManager:
             return subscription.pv
 
         if not subscription.actuator:
-            raise ValueError(
-                f"Subscription '{subscription.name}' must define either 'pv' or 'actuator'"
-            )
+            raise ValueError(f"Subscription '{subscription.name}' must define either 'pv' or 'actuator'")
 
         config = self._get_actuator_config(subscription.actuator)
         source = (subscription.source or "rbv").lower()
@@ -300,24 +295,18 @@ class SubscriptionManager:
 
         if source == "status":
             if not config.status_pv:
-                raise ValueError(
-                    f"Subscription '{subscription.name}': actuator '{subscription.actuator}' has no status_pv"
-                )
+                raise ValueError(f"Subscription '{subscription.name}': actuator '{subscription.actuator}' has no status_pv")
             return config.status_pv
 
         if source == "stop":
             if not config.stop_pv:
-                raise ValueError(
-                    f"Subscription '{subscription.name}': actuator '{subscription.actuator}' has no stop_pv"
-                )
+                raise ValueError(f"Subscription '{subscription.name}': actuator '{subscription.actuator}' has no stop_pv")
             return config.stop_pv
 
         if source == "velocity":
             return config.get_velocity_pv or config.velocity_pv or config.cmdvel_pv or config.pv
 
-        raise ValueError(
-            f"Subscription '{subscription.name}': unsupported source '{subscription.source}'"
-        )
+        raise ValueError(f"Subscription '{subscription.name}': unsupported source '{subscription.source}'")
 
     # ------------------------------------------------------------------
     # Start helpers

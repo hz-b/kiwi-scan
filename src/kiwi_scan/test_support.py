@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from types import ModuleType, SimpleNamespace
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional
+
 
 class FakeRawPV:
     """Minimal raw-PV stub used behind fake EpicsPV-like wrappers."""
@@ -29,7 +30,7 @@ class FakePV:
       * TriggerManager: trigger PV
     """
 
-    instances: List["FakePV"] = []
+    instances: ClassVar[List[FakePV]] = []
     next_index: int = 1
     callback_mode: str = "list"  # "list" or "dict"
     track_instances: bool = False
@@ -147,7 +148,7 @@ def make_fake_epics_pv_class():
     """EpicsPV fake for SubscriptionManager tests."""
 
     class FakeEpicsPV(FakePV):
-        instances: List[FakePV] = []
+        instances: ClassVar[List[FakePV]] = []
         track_instances = True
         callback_mode = "list"
         use_raw_pv = False
@@ -160,7 +161,7 @@ def make_fake_monitor_pv_class(*, start_index: int = 100):
     """Monitor-capable fake for actuator tests."""
 
     class FakeMonitorPV(FakePV):
-        instances: List[FakePV] = []
+        instances: ClassVar[List[FakePV]] = []
         next_index = start_index
         track_instances = False
         callback_mode = "dict"
@@ -175,7 +176,7 @@ def make_fake_trigger_pv_class():
     """Trigger fake that only records put() calls."""
 
     class FakeTriggerPV(FakePV):
-        instances: List[FakePV] = []
+        instances: ClassVar[List[FakePV]] = []
         track_instances = False
         callback_mode = "list"
         use_raw_pv = False

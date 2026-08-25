@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: MIT
 
 import logging
-from dataclasses import dataclass, field, fields, replace, is_dataclass, asdict
-from typing import List, Dict, Optional, Union, Any
-import yaml
+from dataclasses import dataclass, field, fields
+from typing import Any, Dict, List, Optional, Union
+
+logger = logging.getLogger(__name__)
 
 def filter_known_fields(cls, data: Dict[str, Any]) -> Dict[str, Any]:
     """Filter out unknown fields from a dict for a given dataclass."""
@@ -197,13 +198,12 @@ class ScanTriggers:
 class SubscriptionConfig:
     name: str
     role: str
-
     # exactly one of these must be set
     pv: Optional[str] = None
     actuator: Optional[str] = None
-
     # used only when actuator is set
     source: Optional[str] = None
+    timeout: Optional[float] = None
 
     @staticmethod
     def _is_configured(value: Optional[str]) -> bool:
@@ -246,6 +246,18 @@ class SubscriptionConfig:
             raise ValueError("Subscription entry missing, required: "
                 + ", ".join(missing)
             )
+        # timeout is optional. When present, accept numbers and numeric strings.
+        raw_timeout = data.get("timeout")
+
+        if raw_timeout is None:
+            timeout = None
+        else:
+            try:
+                timeout = float(raw_timeout)
+            except (TypeError, ValueError) as exc:
+                raise ValueError( f"timeout must be a number, got {raw_timeout!r}") from exc
+            if timeout < 0:
+                raise ValueError("timeout must be >= 0")
 
         config = cls(
             name=data["name"],
@@ -253,6 +265,7 @@ class SubscriptionConfig:
             pv=data.get("pv"),
             actuator=data.get("actuator"),
             source=data.get("source"),
+            timeout=timeout,
         )
         config.validate()
         return config
@@ -272,7 +285,7 @@ class MonitorConfig:
         if data is None:
             return cls()
         if not isinstance(data, dict):
-            logging.error(f"monitor config must be a mapping, got {type(data)}")
+            logger.error("monitor config must be a mapping, got %s", type(data))
             return cls()
         # The monitor type remains the top-level ScanConfig.monitor_type.
         # The preferred YAML layout is:
@@ -323,7 +336,7 @@ class ScanConfig:
         """ Validate and normalize configuration via API """
         subscriptions_raw = self.subscriptions or []
         if not isinstance(subscriptions_raw, list):
-            raise ValueError("'subscriptions' must be a list of mappings")
+            raise TypeError("'subscriptions' must be a list of mappings")
 
         validated_subscriptions: List[SubscriptionConfig] = []
         for index, subscription in enumerate(subscriptions_raw):
@@ -346,8 +359,7 @@ class ScanConfig:
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "ScanConfig":
         known_keys = {f.name for f in fields(cls)}
-        logging.debug(f"Creating ScanConfig from dict, known_keys = {known_keys}")
-        
+        logger.debug("Creating ScanConfig from dict, known_keys = %r", known_keys)
         actuators = {
             name: ActuatorConfig.from_dict(cfg)
             for name, cfg in config_dict.get("actuators", {}).items()
@@ -361,7 +373,7 @@ class ScanConfig:
             return [ScanDimension.from_dict(d) for d in dims if isinstance(d, dict)]
 
         triggers_raw = config_dict.get("triggers", None)
-        # logging.info(f"TRIGGERS_RAW:{triggers_raw}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
+        # logger.info(f"TRIGGERS_RAW:{triggers_raw}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         triggers = ScanTriggers.from_dict(triggers_raw) if triggers_raw else None
 
         # Parse and validate subscriptions
@@ -369,7 +381,7 @@ class ScanConfig:
         if subscriptions_raw is None:
             subscriptions_raw = []
         if not isinstance(subscriptions_raw, list):
-            raise ValueError("'subscriptions' must be a list of mappings")
+            raise TypeError("'subscriptions' must be a list of mappings")
 
         subs = []
         for index, sub_data in enumerate(subscriptions_raw):
@@ -385,12 +397,11 @@ class ScanConfig:
                 "manifest_mode must be one of: full, small, off "
                 f"(got {config_dict.get('manifest_mode')!r})"
             )
-        logging.debug(f"manifest_mode: {manifest_mode}")
-        # Log unknown keys
-        for key in config_dict:
+        logger.debug("manifest_mode: %s", manifest_mode)
+        # Log unknown configuration keys
+        for key, value in config_dict.items():
             if key not in known_keys:
-                logging.debug(f"Unknown key in ScanConfig YAML: {key} → {config_dict[key]}")
-
+                logger.debug("Unknown key in ScanConfig YAML: %s → %r", key, value)
         return cls(
             actuators=actuators,
             detector_pvs=config_dict.get("detector_pvs", []),

@@ -5,10 +5,11 @@ import logging
 from typing import Dict, List
 
 from kiwi_scan.actuator.single import PvEvent
-from kiwi_scan.datamodels import ScanConfig
+from kiwi_scan.datamodels import ScanConfig, SubscriptionConfig
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.stats_collector import StatsCollector
 
+logger = logging.getLogger(__name__)
 
 class LinearScan(BaseScan):
     """
@@ -19,7 +20,7 @@ class LinearScan(BaseScan):
 
         if not self.scan_dimensions:
             raise ValueError("LinearScan requires at least one ScanDimension")
-        logging.debug(f"Creating scan data points from scan dimensions: {self.scan_dimensions}")
+        logger.debug(f"Creating scan data points from scan dimensions: {self.scan_dimensions}")
         # build one linear positions array per actuator
         self.positions: Dict[str, List[float]] = {}
         for name in self.cfg.actuators:
@@ -56,22 +57,11 @@ class LinearScan(BaseScan):
         )
         self.add_column_provider(self.stats_collector)
 
-    def _on_stat_event(self, ev: PvEvent, subscription=None) -> None:
+    def _on_stat_event(self, ev: PvEvent, subscription: SubscriptionConfig=None) -> None:
         """Record stat events and feed the per-subscription StatsCollector."""
 
-        self.stats_collector.update(
-            ev,
-            subscription,
-            collect=bool(getattr(self, "_daq_is_on", False)),
-        )
-
-        logging.debug(
-            "[stat] %s=%r daq=%s sub=%s",
-            ev.pvname,
-            ev.value,
-            getattr(self, "_daq_is_on", False),
-            getattr(subscription, "name", None),
-        )
+        self.stats_collector.update(ev, subscription, collect=self._daq_is_on)
+        logger.debug("[stat] {ev.pvname}={ev.value}, daq on: {self._daq_is_on}, {subscription.name}")
 
     def execute(self):
         self._execute_standard(self.positions)

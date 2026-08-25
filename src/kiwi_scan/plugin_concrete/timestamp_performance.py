@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from kiwi_scan.plugin.base import ScanPlugin
 from kiwi_scan.plugin.registry import register_plugin
+from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.tools import timestamp_to_seconds
 
 
@@ -29,7 +30,7 @@ class TimestampPerformancePlugin(ScanPlugin):
         self,
         name: str,
         parameters: Optional[Dict[str, Any]] = None,
-        scan: Optional["BaseScan"] = None,
+        scan: Optional[BaseScan] = None,
     ) -> None:
         super().__init__(name=name, parameters=parameters, scan=scan)
 

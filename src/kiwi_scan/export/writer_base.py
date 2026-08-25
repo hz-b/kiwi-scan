@@ -33,7 +33,7 @@ def register_writer(name: str, factory: Callable[..., ExportWriter]) -> None:
     if not normalized:
         raise ValueError("writer name must not be empty")
     if normalized in _WRITER_FACTORIES:
-        raise ValueError("export writer %r is already registered" % normalized)
+        raise ValueError(f"export writer {normalized!r} is already registered")
     _WRITER_FACTORIES[normalized] = factory
     logger.debug("Registered export writer name=%s factory=%r", normalized, factory)
 
@@ -52,7 +52,7 @@ def get_writer(name: str, **kwargs) -> ExportWriter:
         factory = _WRITER_FACTORIES[normalized]
     except KeyError as exc:
         known = ", ".join(available_writers()) or "<none>"
-        raise ValueError("Unknown export format %r. Available formats: %s" % (name, known)) from exc
+        raise ValueError(f"Unknown export format {name!r}. Available formats: {known}") from exc
     logger.debug("Creating export writer name=%s kwargs=%s", normalized, sorted(kwargs.keys()))
     writer = factory(**kwargs)
     logger.debug("Created export writer instance type=%s", type(writer).__name__)

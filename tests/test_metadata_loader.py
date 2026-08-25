@@ -1,10 +1,10 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin fuer Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-import importlib.util
 import tempfile
-from pathlib import Path
 import unittest
+from pathlib import Path
+
 from kiwi_scan.data.metadata_loader import parse_metadata_file
 
 

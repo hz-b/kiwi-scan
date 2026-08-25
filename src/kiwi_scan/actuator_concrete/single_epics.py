@@ -322,9 +322,9 @@ class EpicsActuator(AbstractActuator):
             return 
         try:
             target = float(cur) + float(delta)
-        except Exception as exc:
-            logger.error(f"Failed to compute absolute target from rbv={cur!r} and delta={delta!r}: {exc}")
-            return 
+        except (TypeError, ValueError) as exc:
+            logger.error("Failed to compute absolute target from rbv=%r and delta=%r: %s", cur, delta, exc)
+            return        
         logger.info(f"[{self.pvname}] rel-move fallback: rbv={cur} delta={delta} -> target={target}")
         self._issue_move(target)
 
@@ -357,7 +357,7 @@ class EpicsActuator(AbstractActuator):
                     else:
                         self.wait_for_startup_and_done()
                         self.dwell()
-                except Exception:
+                except Exception:  # noqa: BLE001   - communication may fail temporarily
                     self.wait_for_startup_and_done()
                     self.dwell()
             elif wait_startup:

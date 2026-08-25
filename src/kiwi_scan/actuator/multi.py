@@ -1,20 +1,13 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-from typing import Sequence, Optional, Any
-import time
-from kiwi_scan.actuator.single import AbstractActuator
-from kiwi_scan.datamodels import ActuatorConfig
-
-import logging
 import threading
 import time
-from typing import Sequence, Optional, Any
+from typing import Any, Optional, Sequence
 
-import numpy as np
 from kiwi_scan.actuator.single import AbstractActuator
 from kiwi_scan.datamodels import ActuatorConfig
-from kiwi_scan.epics_wrapper import EpicsPV
+
 
 class MultiActuator(AbstractActuator):
     """

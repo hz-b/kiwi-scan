@@ -25,7 +25,7 @@ class Mean:
     n: float = 0.0
     _mean: float = 0.0
 
-    def update(self, x: float, w: float = 1.0) -> "Mean":
+    def update(self, x: float, w: float = 1.0) -> Mean:
         w = float(w)
         if w < 0.0:
             raise ValueError("w must be non-negative")
@@ -38,7 +38,7 @@ class Mean:
         self.n = total
         return self
 
-    def revert(self, x: float, w: float = 1.0) -> "Mean":
+    def revert(self, x: float, w: float = 1.0) -> Mean:
         w = float(w)
         if w < 0.0:
             raise ValueError("w must be non-negative")
@@ -58,7 +58,7 @@ class Mean:
         self.n = remaining
         return self
 
-    def update_many(self, values: Iterable[float]) -> "Mean":
+    def update_many(self, values: Iterable[float]) -> Mean:
         for value in values:
             self.update(value)
         return self
@@ -88,7 +88,7 @@ class Var:
     def n(self) -> float:
         return self.mean.n
 
-    def update(self, x: float, w: float = 1.0) -> "Var":
+    def update(self, x: float, w: float = 1.0) -> Var:
         w = float(w)
         if w < 0.0:
             raise ValueError("w must be non-negative")
@@ -108,7 +108,7 @@ class Var:
 
         return self
 
-    def revert(self, x: float, w: float = 1.0) -> "Var":
+    def revert(self, x: float, w: float = 1.0) -> Var:
         w = float(w)
         if w < 0.0:
             raise ValueError("w must be non-negative")
@@ -133,7 +133,7 @@ class Var:
 
         return self
 
-    def update_many(self, values: Iterable[float]) -> "Var":
+    def update_many(self, values: Iterable[float]) -> Var:
         for value in values:
             self.update(value)
         return self

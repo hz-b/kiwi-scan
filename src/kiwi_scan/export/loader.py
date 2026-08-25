@@ -6,11 +6,12 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Union
+from typing import Any, Optional, Sequence, Union
 
 from kiwi_scan.data.loader import DataLoader
 from kiwi_scan.data.manifestwriter import ManifestResolver
 from kiwi_scan.data.metadata_loader import parse_metadata_file
+
 from .model import ExportBundle, ExportScan
 
 logger = logging.getLogger(__name__)
@@ -128,7 +129,7 @@ def _load_scan_dataframe(data_file: Path, data_dir: Optional[Path] = None):
     # called. DataLoader otherwise logs pandas' EmptyDataError and returns None,
     # which is indistinguishable from other load failures at this level.
     if not _contains_non_comment_content(data_file):
-        raise EmptyScanDataError("Scan data file is empty: %s" % data_file)
+        raise EmptyScanDataError(f"Scan data file is empty: {data_file}")
 
     loader = DataLoader(
         str(data_file),
@@ -136,9 +137,9 @@ def _load_scan_dataframe(data_file: Path, data_dir: Optional[Path] = None):
     )
     df = loader.load_data()
     if df is None:
-        raise FileNotFoundError("Could not load scan data file: %s" % data_file)
+        raise FileNotFoundError(f"Could not load scan data file: {data_file}")
     if df.empty:
-        raise EmptyScanDataError("Scan data file contains no data rows: %s" % data_file)
+        raise EmptyScanDataError(f"Scan data file contains no data rows: {data_file}")
     logger.debug("Loaded scan dataframe rows=%d columns=%d from %s", len(df), len(df.columns), data_file)
     return df
 
@@ -171,7 +172,7 @@ def load_export_bundle_from_scan_file(
         data_path, metadata_file, scan_id, scan_type, include_metadata,
     )
     if not data_path.is_file():
-        raise FileNotFoundError("Scan data file not found: %s" % data_path)
+        raise FileNotFoundError(f"Scan data file not found: {data_path}")
 
     meta_path = Path(metadata_file).expanduser() if metadata_file else None
     df = _load_scan_dataframe(data_path, data_path.parent)
@@ -210,7 +211,7 @@ def load_export_bundle_from_manifest(
     manifest_data = ManifestResolver.load_manifest(manifest_path)
     scans_raw = manifest_data.get("scans") or []
     if not isinstance(scans_raw, list):
-        raise ValueError("Manifest %s has invalid 'scans' section; expected a list" % manifest_path)
+        raise TypeError(f"Manifest {manifest_path} has invalid 'scans' section; expected a list")
 
     logger.debug("Manifest contains %d raw scan entries", len(scans_raw))
     export_scans = []
@@ -237,7 +238,7 @@ def load_export_bundle_from_manifest(
         )
 
         if data_path is None or not data_path.exists():
-            message = "Manifest scan %r refers to missing data file: %s" % (
+            message = "Manifest scan {!r} refers to missing data file: {}".format(
                 entry.get("id", index),
                 data_path,
             )
@@ -265,7 +266,7 @@ def load_export_bundle_from_manifest(
         )
         export_scans.append(
             ExportScan(
-                scan_id=entry.get("id") or "scan_%d" % index,
+                scan_id=entry.get("id") or f"scan_{index}",
                 scan_type=entry.get("scan_type"),
                 data_file=data_path,
                 metadata_file=metadata_path,

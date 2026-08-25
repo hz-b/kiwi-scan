@@ -1,16 +1,17 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
+import logging
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 import pandas as pd
-import logging
 
 from kiwi_scan.data.loader import DataLoader
-from kiwi_scan.data.metadata_loader import parse_metadata_file, MetadataFile
+from kiwi_scan.data.metadata_loader import parse_metadata_file
 from kiwi_scan.plotter import Plotter
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class SeriesSpec:
@@ -53,7 +54,7 @@ def plot_postmortem(cfg: PostMortemConfig) -> None:
                 raise ValueError(f"For meta series, x_column '{cfg.x_column}' must be the index (e.g. TS-ISO8601)")
 
             if s.column not in df.columns:
-                logging.warning("PV '%s' not found in metadata file %s", s.column, s.file)
+                logger.warning("PV '%s' not found in metadata file %s", s.column, s.file)
                 continue
 
             x = df.index
@@ -65,7 +66,7 @@ def plot_postmortem(cfg: PostMortemConfig) -> None:
             if df is None:
                 continue
             if cfg.x_column not in df.columns or s.column not in df.columns:
-                logging.warning("Columns '%s' or '%s' not found in scan file %s", cfg.x_column, s.column, s.file)
+                logger.warning("Columns '%s' or '%s' not found in scan file %s", cfg.x_column, s.column, s.file)
                 continue
             x = df[cfg.x_column]
             y = df[s.column]

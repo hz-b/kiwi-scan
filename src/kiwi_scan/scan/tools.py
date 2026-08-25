@@ -3,17 +3,19 @@
 
 import logging
 import os
-import threading
-import yaml
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional
+
+import yaml
+
 import kiwi_scan
-from kiwi_scan.yaml_loader import yaml_loader
-from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.datamodels import ScanConfig
-from kiwi_scan.monitor.factory import create_monitor
+from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
+from kiwi_scan.yaml_loader import yaml_loader
+
+logger = logging.getLogger(__name__)
 
 def is_valid_logging_level(level):
     """Check if the given integer is a valid logging level."""
@@ -32,10 +34,10 @@ def set_valid_logging_level(level):
 
     scaled_level = level * 10
     if is_valid_logging_level(scaled_level):
-        logging.getLogger().setLevel(scaled_level)  # Set logging level using the scaled value
-        logging.info(f"Logging level set to {logging.getLevelName(scaled_level)}")
+        logging.getLogger().setLevel(scaled_level)  # Set logger level using the scaled value
+        logger.info(f"Logging level set to {logging.getLevelName(scaled_level)}")
     else:
-        logging.error(f"Invalid logging level ({level})!")
+        logger.error(f"Invalid logging level ({level})!")
 
 def get_kiwi_config_dir_from_environ():
     """
@@ -90,19 +92,19 @@ def load_scan_configs(config_dir, replacements):
 def create_scan_with_config(
     scantype: str,
     config: ScanConfig,
-    data_dir: str = None) -> Optional[BaseScan]:
+    data_dir: Optional[str] = None) -> Optional[BaseScan]:
 
     """
     Scan factory
     """
-    logging.debug("Updated ScanConfig: %s", yaml.safe_dump(asdict(config), sort_keys=False))
+    logger.debug("Updated ScanConfig: %s", yaml.safe_dump(asdict(config), sort_keys=False))
 
     load_all_scan_types()
 
     try:
         scan_class = SCAN_REGISTRY[scantype]
     except KeyError:
-        logging.error(
+        logger.error(
             "Unknown scan type '%s'. Available scan types: %s",
             scantype,
             ", ".join(sorted(SCAN_REGISTRY.keys())),
@@ -111,8 +113,8 @@ def create_scan_with_config(
 
     try:
         scan = scan_class(config, data_dir)
-    except Exception as e:
-        logging.error(f"Failed to create scan object [{scantype}]: {e}")
+    except Exception as e: # noqa: BLE001
+        logger.error(f"Failed to create scan object [{scantype}]: {e}")
         return None
 
     return scan
@@ -120,9 +122,9 @@ def create_scan_with_config(
 def scan_with_config(
     scantype: str,
     config: ScanConfig,
-    data_dir: str = None) -> Optional[BaseScan]:
+    data_dir: Optional[str] = None) -> Optional[BaseScan]:
 
-    logging.debug(f"Scan_with_config: {config}")
+    logger.debug(f"Scan_with_config: {config}")
     scan = create_scan_with_config(scantype, config, data_dir)
     if scan:
         scan.execute()

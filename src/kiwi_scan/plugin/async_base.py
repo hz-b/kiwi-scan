@@ -3,13 +3,14 @@
 
 from __future__ import annotations
 
+import sys
 import threading
 import time
-import sys
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Dict, List, Optional
 
 from kiwi_scan.plugin.base import ScanPlugin
+from kiwi_scan.scan.common import BaseScan
 
 
 class AsyncScanPlugin(ScanPlugin):
@@ -27,7 +28,7 @@ class AsyncScanPlugin(ScanPlugin):
         self,
         name: str,
         parameters: Optional[Dict[str, Any]] = None,
-        scan: Optional["BaseScan"] = None,
+        scan: Optional[BaseScan] = None,
     ):
         super().__init__(name=name, parameters=parameters, scan=scan)
 

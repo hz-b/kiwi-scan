@@ -3,11 +3,12 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Dict, Tuple, Optional, List, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MetadataFile:
@@ -117,7 +118,7 @@ def parse_metadata_file(path: str) -> Optional[MetadataFile]:
         constants = _parse_constants(header_lines)
 
         if not body_lines:
-            logging.error("No monitor data in metadata file %s", path)
+            logger.error("No monitor data in metadata file %s", path)
             return None
 
         # Let pandas read the TSV from the body lines
@@ -143,7 +144,7 @@ def parse_metadata_file(path: str) -> Optional[MetadataFile]:
         if {"TS-ISO8601", "PV", "VALUE"} <= set(df_raw.columns):
             df_pivot = df_raw.pivot(index="TS-ISO8601", columns="PV", values="VALUE")
         else:
-            logging.warning("Metadata file %s does not have expected TS-ISO8601 / PV / VALUE columns", path)
+            logger.warning("Metadata file %s does not have expected TS-ISO8601 / PV / VALUE columns", path)
             df_pivot = df_raw.copy()
 
         # Sort by time
@@ -151,7 +152,7 @@ def parse_metadata_file(path: str) -> Optional[MetadataFile]:
 
         return MetadataFile(path=path, constants=constants, df_raw=df_raw, df_pivot=df_pivot)
 
-    except Exception as exc:
-        logging.exception("Failed to parse metadata file %s: %s", path, exc)
+    except Exception:
+        logger.exception(f"Failed to parse metadata file {path}")
         return None
 

@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: MIT
 
 import logging
+
 from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor_concrete.print import PrintMonitor
+
+logger = logging.getLogger(__name__)
+
 # 
 # Import plotting monitor lazily so tkinter/matplotlib are not
 # imported at module import time for headless or non-plotting use.
@@ -26,23 +30,23 @@ MONITOR_TYPES = {
 
 def create_monitor(config: ScanConfig):
     monitor_type = config.monitor_type
-    logging.debug("Creating monitor from scan config: monitor_type=%r", monitor_type)
+    logger.debug("Creating monitor from scan config: monitor_type=%r", monitor_type)
 
     if monitor_type is None:
-        logging.debug("No monitor_type configured; no monitor will be created")
+        logger.debug("No monitor_type configured; no monitor will be created")
         return None
 
     factory = MONITOR_TYPES.get(monitor_type)
     if factory is None:
-        logging.info("Unknown monitor type: %r", monitor_type)
+        logger.info("Unknown monitor type: %r", monitor_type)
         return None
 
     monitor_config = getattr(config, "monitor", None)
     parameters = getattr(monitor_config, "parameters", {}) or {}
     if set(parameters.keys()) == {"parameters"} and isinstance(parameters.get("parameters"), dict):
-        logging.debug("Unwrapping nested monitor parameters block: %r", parameters)
+        logger.debug("Unwrapping nested monitor parameters block: %r", parameters)
         parameters = parameters["parameters"]
-    logging.debug(
+    logger.debug(
         "Instantiating monitor type=%r with parameters=%r",
         monitor_type,
         parameters,

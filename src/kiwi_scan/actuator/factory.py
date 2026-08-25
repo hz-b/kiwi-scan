@@ -1,13 +1,12 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-from typing import Any, Dict, Mapping, Optional, Type, Union
+from typing import Any, ClassVar, Dict, Mapping, Optional, Type, Union
 
-from kiwi_scan.datamodels import ActuatorConfig
+from kiwi_scan.actuator.single import AbstractActuator
 from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
 from kiwi_scan.actuator_concrete.single_simulation import SimulatedActuator
-from kiwi_scan.actuator.single import AbstractActuator
-
+from kiwi_scan.datamodels import ActuatorConfig
 
 ActuatorConfigLike = Union[ActuatorConfig, Mapping[str, Any]]
 
@@ -24,7 +23,7 @@ class ActuatorFactory:
         actuator = ActuatorFactory.create(config)
     """
     # Registry mapping type keys to actuator classes
-    _registry: Dict[str, Type[AbstractActuator]] = {
+    _registry: ClassVar[Dict[str, Type[AbstractActuator]]] = {
         'epics': EpicsActuator,
         'sim': SimulatedActuator,
     }

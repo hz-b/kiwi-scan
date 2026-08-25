@@ -3,24 +3,21 @@
 
 from abc import ABC, abstractmethod
 
+
 class BaseMonitor(ABC):
     @abstractmethod
     def start(self, signal_names, headers=None):
         """Handle a new data point."""
-        pass
     
     @abstractmethod
     def update(self, vals):
         """Handle a new data point."""
-        pass
 
     @abstractmethod
     def loop(self):
         """Handle data in main thread."""
-        pass
 
     @abstractmethod
     def close(self):
         """Handle cleanup (e.g., closing the plot window)."""
-        pass
 

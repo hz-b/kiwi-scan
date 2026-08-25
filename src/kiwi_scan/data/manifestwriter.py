@@ -2,19 +2,21 @@
 # SPDX-License-Identifier: MIT
 
 from __future__ import annotations
-from dataclasses import asdict, is_dataclass, dataclass
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Union
-from importlib.metadata import version, PackageNotFoundError
+
+import getpass
+import io
+import logging
 import os
 import socket
-import io
 import tarfile
-import getpass
+from dataclasses import asdict, dataclass, is_dataclass
+from datetime import datetime, timezone
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Union
+
 import yaml
-import logging
-    
+
 logger = logging.getLogger(__name__)
 
 def get_package_version(package_name: str = "kiwi-scan") -> str:
@@ -89,7 +91,7 @@ class ManifestWriter:
         return header
     
     @classmethod
-    def from_active(cls) -> Optional["ManifestWriter"]:
+    def from_active(cls) -> Optional[ManifestWriter]:
         """
         Return a writer for the currently active manifest.
 
@@ -493,11 +495,11 @@ class ManifestResolver:
         self.logger.debug(f"Using manifest data directory: {self.data_dir}")
 
     @classmethod
-    def from_env(cls) -> "ManifestResolver":
+    def from_env(cls) -> ManifestResolver:
         return cls(os.environ.get(cls.ENV_DATA_DIR))
 
     @classmethod
-    def from_manifest_file(cls, manifest_file: str) -> "ManifestResolver":
+    def from_manifest_file(cls, manifest_file: str) -> ManifestResolver:
         """Create a resolver using an explicit manifest's parent as fallback dir."""
         return cls(str(Path(manifest_file).expanduser().parent))
 

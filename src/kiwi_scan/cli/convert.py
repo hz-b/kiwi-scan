@@ -17,7 +17,6 @@ from kiwi_scan.export import (
     load_export_bundle_from_manifest,
     load_export_bundle_from_scan_file,
 )
-
 from kiwi_scan.scan.tools import set_valid_logging_level
 
 logger = logging.getLogger(__name__)
@@ -90,7 +89,7 @@ def _build_parser(prog: str) -> argparse.ArgumentParser:
     parser.add_argument(
         "--log-level",
         type=int,
-        choices=range(0, 6),
+        choices=range(6),
         metavar="0-5",
         help="MBBO record level (0..5) to set log verbosity via scanlib helper"
     )
@@ -144,12 +143,12 @@ def _exit_on_error(
 ) -> None:
     """ Exit gracefully with debug output. """
     if unexpected:
-        logger.debug("Unexpected conversion failure", exc_info=True)
-        description = "%s: %s" % (type(exc).__name__, _error_text(exc))
+        logger.debug("Unexpected conversion failure")
+        description = f"{type(exc).__name__}: {_error_text(exc)}"
     else:
         description = _error_text(exc)
 
-    parser.exit(status, "%s: error: %s\n" % (prog, description))
+    parser.exit(status, f"{prog}: error: {description}\n")
 
 def main(argv: Optional[List[str]] = None, *, prog: str = "kiwi_convert") -> int:
     parser = _build_parser(prog)
@@ -164,7 +163,7 @@ def main(argv: Optional[List[str]] = None, *, prog: str = "kiwi_convert") -> int
         out_path = writer.write(bundle, Path(args.out))
     except (FileNotFoundError, ValueError, OSError) as exc:
         _exit_on_error(parser, prog, exc, status=2)
-    except Exception as exc:
+    except Exception as exc:  # noqa BLE001
         _exit_on_error(parser, prog, exc, status=1, unexpected=True)
 
 

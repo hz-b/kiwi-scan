@@ -3,8 +3,11 @@
 
 import logging
 import os
-import pandas as pd
 from typing import Optional
+
+import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 def get_kiwi_data_dir_from_environ():
     """
@@ -40,10 +43,10 @@ def resolve_data_dir(base_dir: Optional[str], relative_dir: str) -> str:
         candidate = os.path.join(base_dir, relative_dir)
         os.makedirs(candidate, exist_ok=True)
         return candidate
-    logging.info(f"Path {candidate} does not exist")
+    logger.info(f"Path {candidate} does not exist")
     fallback = get_scan_data_dir(relative_dir)
     if not os.path.isdir(fallback):
-        logging.error(f"ERROR: Directory '{fallback}' does not exist.")
+        logger.error(f"ERROR: Directory '{fallback}' does not exist.")
         return "."
 
     return fallback
@@ -61,13 +64,13 @@ class DataLoader:
         if not os.path.exists(file_to_load) and self.data_dir:
             alt_path = os.path.join(self.data_dir, os.path.basename(self.file_path))
             if os.path.exists(alt_path):
-                logging.debug(f"File not found at {self.file_path}. Using manifest directory: {alt_path}")
+                logger.debug(f"File not found at {self.file_path}. Using manifest directory: {alt_path}")
                 file_to_load = alt_path
             else:
-                logging.error(f"File not found at {self.file_path} or in manifest directory: {alt_path}")
+                logger.error(f"File not found at {self.file_path} or in manifest directory: {alt_path}")
                 return None
         elif not os.path.exists(file_to_load):
-            logging.error(f"File not found at {self.file_path} and no manifest directory provided.")
+            logger.error(f"File not found at {self.file_path} and no manifest directory provided.")
             return None
 
         try:
@@ -90,6 +93,6 @@ class DataLoader:
             return df
 
         except Exception as e:
-            logging.error(f"Error loading {file_to_load}: {e}")
+            logger.error(f"Error loading {file_to_load}: {e}")
             return None
 

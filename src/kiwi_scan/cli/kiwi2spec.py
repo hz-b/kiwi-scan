@@ -3,11 +3,10 @@
 
 """Convenience CLI wrapper for SPEC export."""
 
-from kiwi_scan.cli.convert import main as convert_main
-
 import sys
 from typing import List, Optional
 
+from kiwi_scan.cli.convert import main as convert_main
 
 
 def main(argv: Optional[List[str]] = None) -> int:

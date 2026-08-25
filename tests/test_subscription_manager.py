@@ -1,21 +1,15 @@
-import importlib.util
-import sys
-import types
 import unittest
-from pathlib import Path
 from unittest.mock import patch
 
-
-from kiwi_scan.datamodels import ActuatorConfig, SubscriptionConfig
-from kiwi_scan.actuator.single import PvEvent
 import kiwi_scan.scan.subscription_manager as subscription_manager_module
+from kiwi_scan.actuator.single import PvEvent
+from kiwi_scan.datamodels import ActuatorConfig, SubscriptionConfig
 from kiwi_scan.scan.subscription_manager import SubscriptionManager
 from kiwi_scan.test_support import (
     FakeMonitorProvider,
     FakeNoMonitorBackend,
     make_fake_epics_pv_class,
 )
-
 
 FakeEpicsPV = make_fake_epics_pv_class()
 

@@ -4,10 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import logging
 from typing import List, Optional
 
-from kiwi_scan.data.manifestwriter import ManifestArchiveDeleter, ManifestResolver, ManifestWriter
+from kiwi_scan.data.manifestwriter import (
+    ManifestArchiveDeleter,
+    ManifestResolver,
+    ManifestWriter,
+)
 from kiwi_scan.scan.tools import set_valid_logging_level
 
 

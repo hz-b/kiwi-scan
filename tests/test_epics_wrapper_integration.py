@@ -1,12 +1,11 @@
 import os
 import time
 import unittest
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List
 
 import yaml
 
 from kiwi_scan.epics_wrapper import EpicsPV
-
 
 MONO_YAML = r"""
 actuators:
@@ -116,8 +115,8 @@ class TestEpicsPVIntegration(unittest.TestCase):
         try:
             pv = EpicsPV(probe, timeout=cls.TIMEOUT, connection_timeout=cls.CONN_TIMEOUT, auto_monitor=True)
             pv.check_pv()
-        except Exception as e:
-            raise unittest.SkipTest(f"EPICS not reachable / PV did not connect: {probe} ({e})")
+        except ConnectionError as exc:
+            raise unittest.SkipTest(f"EPICS not reachable / PV did not connect: {probe} ({exc})") from exc
 
     def test_connect_and_check_pvs(self):
         """All configured read PVs should connect and pass check_pv()."""

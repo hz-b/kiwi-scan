@@ -15,18 +15,16 @@ scan point via ScanPlugin.get_values().
 """
 
 import time
-import logging
-import os
-from typing import Dict, Any, Optional, List
+from typing import Any, Dict, List, Optional
 
 from epics import PV
 
-from kiwi_scan.plugin.base import ScanPlugin
-from kiwi_scan.plugin.registry import register_plugin, PluginConfig 
-from kiwi_scan.epics_wrapper import EpicsPV
-from kiwi_scan.actuator.single import AbstractActuator
 from kiwi_scan.actuator.factory import create_actuator
 from kiwi_scan.datamodels import ActuatorConfig
+from kiwi_scan.plugin.base import ScanPlugin
+from kiwi_scan.plugin.registry import register_plugin
+from kiwi_scan.scan.common import BaseScan
+
 
 def _gain_source(gain_spec):
     """
@@ -55,30 +53,13 @@ class JogPIDPlugin(ScanPlugin):
     ):
         super().__init__(name, parameters, scan)
         
-
-        scan_config = self.scan.cfg
         # ---------- Logging -------------------------------------------------
-        log_level = (
-            self.parameters.get("log_level")
-            or getattr(scan_config, "logging_level", logging.INFO)
-        )
-        log_file = os.path.join(
-            self.log_dir, self.parameters.get("log_file", "jogpid_plugin.txt")
-        )
-        self.logger.setLevel(log_level)
-
-        if not self.logger.handlers:
-            hdlr = logging.FileHandler(log_file)
-            hdlr.setFormatter(
-                logging.Formatter(
-                    "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-                )
-            )
-            self.logger.addHandler(hdlr)
+        self.DEFAULT_LOG_FILE = "JogPIDPlugin.log"
+        self._init_logging()
 
         # ---------- Mandatory Actuator ---------------------------------------
         try:
-            logging.info(f"{self.parameters['actuator']}")
+            self.logger.info(f"{self.parameters['actuator']}")
             self.actuator = create_actuator(ActuatorConfig.from_dict(self.parameters["actuator"]))
         except KeyError as missing:
             raise ValueError(f"JogPIDPlugin: missing parameter {missing!s}")
@@ -96,9 +77,7 @@ class JogPIDPlugin(ScanPlugin):
         self.prev_time   = None
         self.prev_set_time = None
 
-        self.logger.debug(
-            "JogPIDPlugin initialised with parameters: %s", self.parameters
-        )
+        self.logger.debug("JogPIDPlugin initialised with parameters: %s", self.parameters)
 
     # ------------------------------------------------------------------ API
     def get_headers(self, timestamps: bool) -> List[str]:
@@ -115,11 +94,11 @@ class JogPIDPlugin(ScanPlugin):
             position  = self.actuator.rbv 
             velocity = self.actuator.get_velocity() or 0.0
             target    = float(pos)
-        except Exception as e:
+        except Exception as e: # noqa BLE001
             self.logger.error("PV read failed @ point %s: %s", idx, e)
             return [float("nan")]
 
-        logging.info(f"pos: {pos}, target: {target}")
+        self.logger.info(f"pos: {pos}, target: {target}")
         # Convert gain PVs to numeric if necessary --------------------------
         def g(val):
             return val.get() if hasattr(val, "get") else val

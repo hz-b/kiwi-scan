@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-import logging
-from kiwi_scan.scan.common import BaseScan
+from typing import Dict, List
+
 from kiwi_scan.datamodels import ScanConfig
-from typing import List, Dict
+from kiwi_scan.scan.common import BaseScan
+
 
 class ApproachMove(BaseScan):
     """
@@ -40,7 +41,7 @@ class ApproachMove(BaseScan):
             if dim is None:
                 raise ValueError(f"No ScanDimension for actuator '{name}'")
             if dim.steps == 1:
-                raise ValueError(f"ScanDimension steps must not be 1")
+                raise ValueError("ScanDimension steps must not be 1")
             # generate that axis’ series:  progression experimentally determined
             self.positions[name] = self.generate_series(dim.start, dim.stop, dim.steps, 0.096)
 

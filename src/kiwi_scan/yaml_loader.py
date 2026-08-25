@@ -2,16 +2,20 @@
 # SPDX-License-Identifier: MIT
 
 # TODO: Replace with scheduler version to enable template support in this module
-import os, yaml, re
 import logging
-from typing import Dict, Any, List
+import os
+import re
+from typing import Any, Dict, List, Optional
 
+import yaml
+
+logger = logging.getLogger(__name__)
 _token_re = re.compile(r'\$\{([^}]+)\}')
 
 def _expand_tokens(raw: str, repl: Dict[str, str]) -> str:
     return _token_re.sub(lambda m: repl.get(m.group(1), m.group(0)), raw)
 
-def yaml_loader(path: str, replacements: Dict[str,str] = None) -> Dict[str,Any]:
+def yaml_loader(path: str, replacements: Optional[Dict[str, str]] = None) -> Dict[str,Any]:
     if not os.path.isfile(path):
         raise FileNotFoundError(path)
     with open(path) as f:
@@ -63,9 +67,9 @@ def list_required_replacements(config_dir, filenames):
                 matches = placeholder_pattern.findall(content)
                 replacements.update(matches)
         except FileNotFoundError:
-            logging.error(f"Warning: File not found: {filepath}")
-        except Exception as e:
-            logging.error(f"Error reading {filepath}: {e}")
+            logger.error("Warning: File not found: %s", filepath)
+        except (OSError, UnicodeError, yaml.YAMLError) as exc:
+            logger.error("Error reading %s: %s", filepath, exc)
 
     return sorted(replacements)
 

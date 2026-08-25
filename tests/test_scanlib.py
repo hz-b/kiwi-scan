@@ -1,26 +1,15 @@
+import math
+import subprocess
 import sys
 import tempfile
-import venv
-from pathlib import Path
-import subprocess
-import time
-import math
-import logging
-import pdb
 import unittest
-from unittest import TestCase
-from unittest.mock import patch
+import venv
 from datetime import datetime, timezone
-from kiwi_scan.tools import timestamp_to_seconds
-from kiwi_scan.scan_concrete.linear import LinearScan
-from kiwi_scan.scan_concrete.approach import ApproachMove
-from kiwi_scan.scan_concrete.cm import CMScan
-from kiwi_scan.scan_concrete.poll import PollScan
-from kiwi_scan.scan_concrete.para import ParaScan
-from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
+from pathlib import Path
+from unittest.mock import patch
+
 from kiwi_scan.actuator_concrete.single_simulation import SimulatedActuator
 from kiwi_scan.actuator_concrete.undulator import UndulatorViaCAN
-
 from kiwi_scan.datamodels import (
     ActuatorConfig,
     JogConfig,
@@ -28,6 +17,13 @@ from kiwi_scan.datamodels import (
     ScanDimension,
     SubscriptionConfig,
 )
+from kiwi_scan.scan_concrete.approach import ApproachMove
+from kiwi_scan.scan_concrete.cm import CMScan
+from kiwi_scan.scan_concrete.linear import LinearScan
+from kiwi_scan.scan_concrete.para import ParaScan
+from kiwi_scan.scan_concrete.poll import PollScan
+from kiwi_scan.tools import timestamp_to_seconds
+
 
 class TestKiwiScanInstall(unittest.TestCase):
     def test_clean_install_in_temp_venv(self):
@@ -46,6 +42,7 @@ class TestKiwiScanInstall(unittest.TestCase):
                 [str(python), "-c", "import kiwi_scan; print('OK')"],
                 capture_output=True,
                 text=True,
+                check=False,
             )
             self.assertEqual(result.returncode, 0)
             self.assertIn("OK", result.stdout)
@@ -87,6 +84,7 @@ output_file: scan_results.txt
                 capture_output=True,
                 text=True,
                 cwd=tmp_path,
+                check=False,
             )
 
             self.assertEqual(result.returncode, 0, msg=result.stderr)
@@ -122,6 +120,7 @@ subscriptions:
                 capture_output=True,
                 text=True,
                 cwd=tmp_path,
+                check=False,
             )
 
             self.assertEqual(result.returncode, 2)
@@ -489,7 +488,6 @@ class TestApproachMove(unittest.TestCase):
         self.assertEqual(n, 1)
         # And that our scan object sees the same
         self.assertEqual(len(self.approach.cfg.actuators), n)        # self.assertEqual(result, expected_value)
-        pass
 
 class TestAdditionalScanTypesAndScanTools(unittest.TestCase):
 

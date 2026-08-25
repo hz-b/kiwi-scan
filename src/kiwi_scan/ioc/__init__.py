@@ -7,7 +7,12 @@
 # Data classes and helpers can be directly imported at once
 
 from .controller import ScanIOCController, default_config_dir
-from .datamodels import DataPVSpec, ScanIOCStatus, parse_data_pv_spec, parse_data_pv_specs
+from .datamodels import (
+    DataPVSpec,
+    ScanIOCStatus,
+    parse_data_pv_spec,
+    parse_data_pv_specs,
+)
 from .factory import GenericScanIOCOptions, create_controller, create_ioc, run_ioc
 
 __all__ = [

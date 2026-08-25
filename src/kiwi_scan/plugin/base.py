@@ -1,16 +1,18 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
 import logging
-import time
 import os
+import time
 import weakref
+from abc import ABC, abstractmethod
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 
-from kiwi_scan.plugin.registry import PluginConfig
+from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.data.loader import get_kiwi_data_dir_from_environ
-from kiwi_scan.actuator.single import PvEvent 
+from kiwi_scan.scan.common import BaseScan
+
 
 def wrap_values(values: List[Any]) -> List[Dict[str, Any]]:
     """
@@ -53,13 +55,12 @@ class ScanPlugin(ABC):
             current_file_dir = os.path.dirname(os.path.abspath(__file__))
             self.log_dir =  os.path.normpath(os.path.join(current_file_dir, '..', '..', '..', plugin_log_dir))
         # Store reference to BaseScan from scan.base preventing reference cycles
-        self.scan: Optional["BaseScan"] = (
+        self.scan: Optional[BaseScan] = (
             weakref.proxy(scan) if scan is not None else None
         )
 
     def _init_logging(self) -> None:
         """Configure plugin-specific file logging."""
-        cfg = getattr(self.scan, "cfg", None)
         level = self.parameters.get("log_level", logging.WARNING)
         self.logger.setLevel(level)
         #self.logger.info(f"Set logging level to {level}, {self.parameters}")
@@ -112,12 +113,10 @@ class ScanPlugin(ABC):
         """
         Subclasses must return a list of column header strings.
         """
-        pass
     
     @abstractmethod
     def get_values(self, idx: int, pos: Dict[str, Any]) -> List[Any]:
         """Return additional data at each scan point. Data must match header."""
-        pass
     
     def on_scan_point(self, idx: int, pos: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -137,7 +136,6 @@ class ScanPlugin(ABC):
         threads, executors, files, sockets, or other resources can override this
         hook.
         """
-        pass
 
     def on_monitor(self, ev: PvEvent) -> None:
         """
@@ -151,9 +149,8 @@ class ScanPlugin(ABC):
         ts = ev.timestamp
         if ts is not None:
             try:
-                from datetime import datetime, timezone
                 ts_str = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-            except Exception:
+            except Exception: # noqa BLE001
                 ts_str = str(ts)
         else:
             ts_str = "n/a"

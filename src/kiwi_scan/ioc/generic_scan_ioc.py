@@ -131,7 +131,7 @@ def _load_softioc_module() -> Any:
 
 # ------------------ GenericScanIOC
 
-class GenericScanIOC():
+class GenericScanIOC:
     def __init__(
         self,
         *,
@@ -495,7 +495,7 @@ class GenericScanIOC():
         try:
             path = self.controller.create_new_manifest()
             logger.info("New manifest selected through IOC: %s", path)
-        except Exception as exc:
+        except Exception as exc: # noqa BLE001
             logger.warning("New manifest request rejected: %s", exc)
             self.controller.set_message(exc)
         finally:
@@ -534,7 +534,7 @@ class GenericScanIOC():
         try:
             self.controller.set_config_name(requested)
             self._publish_dimension_defaults()
-        except Exception as exc:
+        except Exception as exc: # noqa BLE001
             logger.warning("Rejected IOC config selection %r: %s", requested, exc)
             self.controller.message = str(exc)
         finally:
@@ -547,7 +547,7 @@ class GenericScanIOC():
         logger.info("ScanType record update value=%r", requested)
         try:
             self.controller.set_scan_type(requested)
-        except Exception as exc:
+        except Exception as exc: # noqa BLE001
             logger.warning("Rejected IOC scan type %r: %s", requested, exc)
             self.controller.message = str(exc)
         finally:
@@ -577,8 +577,8 @@ class GenericScanIOC():
         logger.info("Running IOC scan in executor")
         try:
             await loop.run_in_executor(None, self.controller.execute_current_scan)
-        except Exception as exc:
-            logger.exception("Scan execution failed: %s", exc)
+        except Exception:
+            logger.exception("Scan execution failed: %s")
         finally:
             logger.info("IOC scan task finished; publishing final state")
             self.publish_once()

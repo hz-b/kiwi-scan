@@ -56,7 +56,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies] 
-dev = [ "pytest", "caproto[complete]", "jinja2", "pylint" ]
+dev = [ "pytest", "caproto[complete]", "jinja2", "pylint", "ruff", "bandit" ]
 ioc = [ "softioc", "p4p" ]
 
 [project.urls]
@@ -90,6 +90,33 @@ ignore = [
     "UP006",  # Dict/List/etc. -> built-in generics (Python 3.9+)
     "UP045",  # Optional[X] -> X | None (Python 3.10+)
     "FA100",  # Do not require future annotations for typing simplification
+]
+
+[tool.pylint.main]
+py-version = "3.11"
+
+[tool.pylint.messages_control]
+disable = [
+    "all",
+]
+
+enable = [
+    ## Serious correctness problems
+    "E",
+    "F",
+
+    ## API/inheritance problems
+    "arguments-differ",
+
+    ## Maintainability particularly relevant to generated code
+    #"too-many-locals",
+    #"too-many-statements",
+    #"too-many-branches",
+    #"too-many-return-statements",
+    #"duplicate-code",
+
+    ## Keep suppressions clean
+    "useless-suppression",
 ]
 
 [tool.setuptools_scm]

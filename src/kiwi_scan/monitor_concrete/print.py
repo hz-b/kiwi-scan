@@ -55,7 +55,7 @@ class PrintMonitor(BaseMonitor):
         if raw is None:
             return {}
         if not isinstance(raw, dict):
-            raise ValueError("monitor.print must be a mapping or false")
+            raise TypeError("monitor.print must be a mapping or false")
         return dict(raw)
 
     def start(self, signal_names: Iterable[str], headers: Optional[Iterable[str]] = None) -> None:
@@ -84,7 +84,6 @@ class PrintMonitor(BaseMonitor):
 
     def loop(self) -> None:
         self.logger.debug("PrintMonitor loop(): no background loop required")
-        return
 
     def close(self) -> None:
         self.logger.debug( "Closing PrintMonitor after writing %d rows", self._formatter.rows_written)

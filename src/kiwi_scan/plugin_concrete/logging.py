@@ -3,26 +3,31 @@
 
 from __future__ import annotations
 
-import logging
 import math
-import os
 import time
-from typing import Dict, Any, Optional, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
-from kiwi_scan.actuator.single import PvEvent, AbstractActuator
-from kiwi_scan.epics_wrapper import EpicsPV, has_alarm, alarm_info, severity_name, severity_rank
+from kiwi_scan.actuator.single import AbstractActuator, PvEvent
+from kiwi_scan.epics_wrapper import (
+    EpicsPV,
+    alarm_info,
+    has_alarm,
+    severity_name,
+    severity_rank,
+)
 from kiwi_scan.plugin.base import ScanPlugin
 from kiwi_scan.plugin.registry import register_plugin
+from kiwi_scan.scan.common import BaseScan
 
 
 @register_plugin("LoggingPlugin")
 class LoggingPlugin(ScanPlugin):
-
+    """ Production diagnositcs, failures must not abort the scan """
     def __init__(
         self,
         name: str,
         parameters: Optional[Dict[str, Any]] = None,
-        scan: Optional["BaseScan"] = None,
+        scan: Optional[BaseScan] = None,
     ):
         # ------------------  defaults --------------------
         super().__init__(name, parameters, scan)
@@ -39,7 +44,7 @@ class LoggingPlugin(ScanPlugin):
         for pvname in p.get("alarm_log", []):
             try:
                 self.monitored_pvs[pvname] = EpicsPV(pvname)
-            except Exception as exc:
+            except Exception as exc: # noqa: BLE001  
                 self.logger.error("Failed to create alarm PV '%s': %s", pvname, exc)
 
         # ------------------ point timing -------------------
@@ -89,7 +94,7 @@ class LoggingPlugin(ScanPlugin):
                     else:
                         state = 0
 
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self.logger.error("[%s] Failed to read PV '%s': %s", idx, name, exc)
                 state = 4
                 severity = None
@@ -118,7 +123,8 @@ class LoggingPlugin(ScanPlugin):
         """Return actuator names for actuator trace columns."""
         try:
             actuators = self.scan.get_actuators() if self.scan is not None else {}
-        except Exception:
+        except Exception: # noqa: BLE001
+            self.logger.debug("Failed to get actuators for actuator trace")
             actuators = {}
 
         if configured is None:
@@ -184,7 +190,8 @@ class LoggingPlugin(ScanPlugin):
         """
         try:
             actuator = self.scan.get_actuator(actuator_name)
-        except Exception:
+        except Exception:  # noqa: BLE001
+            self.logger.debug(f"Failed to get actuator {actuator_name} for ready-state decoding")
             return None
 
         cfg = getattr(actuator, "config", None)
@@ -230,13 +237,8 @@ class LoggingPlugin(ScanPlugin):
             actuator = self.scan.get_actuator(actuator_name)
             self.logger.debug(f"Get {key}")
             value = self._read_actuator_value(actuator, source)
-        except Exception as exc:
-            self.logger.warning(
-                "Failed to read actuator trace value %s:%s: %s",
-                actuator_name,
-                source,
-                exc,
-            )
+        except Exception: # noqa: BLE001
+            self.logger.warning(f"Failed to read actuator trace value {actuator_name}:{source}")
             return None
 
         self._last_events[key] = {
@@ -279,7 +281,8 @@ class LoggingPlugin(ScanPlugin):
             if ready is None:
                 try:
                     ready = bool(self.scan.get_actuator(name).is_ready())
-                except Exception:
+                except Exception:  # noqa: BLE001
+                    self.logger.debug(f"Failed to read ready state for actuator {name}")
                     ready = None
 
             previous_ready = self._last_ready_state.get(name)

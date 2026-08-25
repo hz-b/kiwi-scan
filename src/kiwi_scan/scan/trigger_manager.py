@@ -9,6 +9,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 from kiwi_scan.datamodels import ScanTriggers, TriggerAction
 from kiwi_scan.epics_wrapper import EpicsPV
 
+logger = logging.getLogger(__name__)
 
 @dataclass
 class PreparedTriggerAction:
@@ -44,7 +45,7 @@ class TriggerManager:
         phases = cls._detect_phases(triggers)
         manager = cls(phases=phases)
         if triggers is None:
-            logging.info("No triggers configured.")
+            logger.info("No triggers configured.")
             return manager
 
         for phase in phases:
@@ -59,7 +60,7 @@ class TriggerManager:
         if triggers is None:
             return phases
 
-        for phase in vars(triggers).keys():
+        for phase in vars(triggers):
             if phase not in phases:
                 phases.append(phase)
         return tuple(phases)
@@ -70,19 +71,19 @@ class TriggerManager:
         for action in actions:
             pvname = getattr(action, "pv", None)
             if not pvname:
-                logging.warning("Trigger action missing 'pv' in phase %s: %r", phase, action)
+                logger.warning("Trigger action missing 'pv' in phase %s: %r", phase, action)
                 continue
 
             value = TriggerManager._normalize_value(getattr(action, "value", 0))
             delay = float(getattr(action, "delay", 0.0) or 0.0)
             try:
                 pv = EpicsPV(pvname, timeout=1.0, queueing_delay=0.01)
-            except Exception as exc:
-                logging.error("Failed to init trigger PV '%s' (phase=%s): %s", pvname, phase, exc)
+            except Exception: # noqa BLE001
+                logger.error(f"Failed to init trigger PV {pvname}, phase {phase}")
                 continue
 
             prepared.append(PreparedTriggerAction(pv=pv, value=value, delay=delay))
-            logging.debug(
+            logger.debug(
                 "Initialized trigger PV %s (phase=%s, value=%r, delay=%.3f)",
                 pvname,
                 phase,
@@ -100,7 +101,7 @@ class TriggerManager:
         if callable(tolist):
             try:
                 return tolist()
-            except Exception:
+            except Exception: # noqa BLE001   - fails arbitrary 
                 return value
 
         if isinstance(value, str):
@@ -112,26 +113,26 @@ class TriggerManager:
                 parts = inner.replace(",", " ").split()
                 try:
                     return [float(part) for part in parts]
-                except Exception:
+                except ValueError:
                     return value
         return value
 
     def fire(self, phase: str) -> None:
         if phase not in self._actions_by_phase:
-            logging.warning("Unknown trigger phase: %s", phase)
+            logger.warning("Unknown trigger phase: %s", phase)
             return
 
-        logging.debug("************ FIRE TRIGGERS (%s) ************", phase)
+        logger.debug("************ FIRE TRIGGERS (%s) ************", phase)
         for action in self._actions_by_phase.get(phase, []):
             ok = action.pv.put(action.value)
             if not ok:
-                logging.error(
+                logger.error(
                     "Failed to write trigger PV %s value %r",
                     action.pv.pvname,
                     action.value,
                 )
             else:
-                logging.debug(
+                logger.debug(
                     "Wrote trigger PV %s value %r",
                     action.pv.pvname,
                     action.value,

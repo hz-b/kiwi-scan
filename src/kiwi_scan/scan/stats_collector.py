@@ -3,16 +3,26 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import logging
 import math
 import re
 import threading
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
+from dataclasses import dataclass
+from typing import (
+    Any,
+    Callable,
+    ClassVar,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Sequence,
+    Tuple,
+)
 
-from kiwi_scan.tools import Mean, Var
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import SubscriptionConfig
+from kiwi_scan.tools import Mean, Var
 
 # StatsCollector and helpers
 logger = logging.getLogger(__name__)
@@ -111,9 +121,15 @@ class StatsCollector:
         Output fields.  The supported field names are ``mean``, ``std``,
         ``min``, ``max``, and ``nsamples``.
     """
+    DEFAULT_FIELDS: ClassVar[Tuple[str, ...]] = (
+        "mean",
+        "std",
+        "min",
+        "max",
+        "nsamples",
+    )
 
-    DEFAULT_FIELDS: Tuple[str, ...] = ("mean", "std", "min", "max", "nsamples")
-    FIELD_SUFFIXES: Dict[str, str] = {
+    FIELD_SUFFIXES: ClassVar[Dict[str, str]] = {
         "mean": "Mean",
         "std": "Std",
         "min": "Min",
@@ -179,8 +195,7 @@ class StatsCollector:
             logger.error("Unsupported StatsCollector field(s): %s; supported fields are: %s",
                 unknown, sorted(StatsCollector.FIELD_SUFFIXES))
             raise ValueError(
-                "Unsupported stats field(s): %s. Supported fields are: %s"
-                % (", ".join(unknown), ", ".join(StatsCollector.FIELD_SUFFIXES))
+                "Unsupported stats field(s): {}. Supported fields are: {}".format(", ".join(unknown), ", ".join(StatsCollector.FIELD_SUFFIXES))
             )
         return result
 
@@ -212,11 +227,12 @@ class StatsCollector:
     def _unique_prefix(self, prefix: str) -> str:
         if prefix not in self._state_by_prefix:
             return prefix
-
-        idx = 2
-        while "%s%d" % (prefix, idx) in self._state_by_prefix:
-            idx += 1
-        return "%s%d" % (prefix, idx)
+        index = 2
+        candidate = f"{prefix}{index}"
+        while candidate in self._state_by_prefix:
+            index += 1
+            candidate = f"{prefix}{index}"
+        return candidate
 
     def has_columns(self) -> bool:
         return bool(self._ordered_prefixes)
@@ -249,7 +265,7 @@ class StatsCollector:
             return
 
         try:
-            raw_value = getattr(event, "value")
+            raw_value = event.value
             value = float(raw_value)
         except (AttributeError, TypeError, ValueError):
             logger.debug("Ignoring non-numeric stats event for subscription %r pv=%r: %r",

@@ -9,13 +9,12 @@ import os
 from typing import Any, List, Optional, Sequence
 
 import kiwi_scan
-from kiwi_scan.yaml_loader import get_env_replacements, parse_replacements
-from kiwi_scan.scan.tools import load_scan_configs
-from kiwi_scan.scan.registry import get_available_scan_types, load_all_scan_types
-from kiwi_scan.scan.tools import set_valid_logging_level
 from kiwi_scan.ioc.controller import default_config_dir
 from kiwi_scan.ioc.datamodels import parse_data_pv_specs
 from kiwi_scan.ioc.factory import GenericScanIOCOptions, run_ioc
+from kiwi_scan.scan.registry import get_available_scan_types, load_all_scan_types
+from kiwi_scan.scan.tools import load_scan_configs, set_valid_logging_level
+from kiwi_scan.yaml_loader import get_env_replacements, parse_replacements
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     cfg_names = _safe_config_names(default_dir)
     cfg_help = "Preset config name from KIWI_SCAN_CONFIG_DIR"
     if cfg_names:
-        cfg_help += " (available: %s)" % ", ".join(cfg_names)
+        cfg_help += " (available: {})".format(", ".join(cfg_names))
     cfg_group.add_argument("--config", dest="config_name", help=cfg_help)
     cfg_group.add_argument("--config-file", help="Explicit YAML config file")
 
@@ -86,7 +85,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--log-level",
         type=int,
-        choices=range(0, 6),
+        choices=range(6),
         metavar="0-5",
         default=3,
         help=(

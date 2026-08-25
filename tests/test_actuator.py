@@ -8,9 +8,10 @@ from kiwi_scan.actuator.factory import create_actuator
 from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
 from kiwi_scan.actuator_concrete.single_simulation import SimulatedActuator
 from kiwi_scan.datamodels import ActuatorConfig
-from kiwi_scan.yaml_loader import yaml_loader
+
 # import kiwi_scan.test_support as test_support
 from kiwi_scan.test_support import make_fake_monitor_pv_class
+from kiwi_scan.yaml_loader import yaml_loader
 
 
 class TestSimulatedActuatorMonitor(unittest.TestCase):

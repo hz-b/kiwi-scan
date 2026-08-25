@@ -2,10 +2,12 @@
 # SPDX-License-Identifier: MIT
 
 from abc import ABC, abstractmethod
-from typing import Any, List, Dict, Optional, Union
+from typing import Any, Dict, List, Optional
+
 from kiwi_scan.actuator.single import AbstractActuator
-from kiwi_scan.datamodels import ScanConfig, ScanDimension
+from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor.base import BaseMonitor
+
 
 class ScanABC(ABC):
     """
@@ -21,32 +23,26 @@ class ScanABC(ABC):
     @abstractmethod
     def __init__(self, config: ScanConfig, data_dir=None):
         """Initialize scan with configuration."""
-        pass
 
     @abstractmethod
     def scan(self, positions: Dict[str, List[Any]], monitor: Optional[BaseMonitor] = None):
         """Perform the scan for the given positions."""
-        pass
 
     @abstractmethod
     def load_data(self):
         """Load and return the scan data from output file."""
-        pass
 
     @abstractmethod
     def get_output_file(self) -> str:
         """Return the current output file path, or None until a file is created."""
-        pass
 
     @abstractmethod
     def set_data_writing_enabled(self, enabled: bool) -> None:
         """Enable or disable scan data and metadata writing at runtime."""
-        pass
 
     @abstractmethod
     def get_data_writing_enabled(self) -> bool:
         """Checks if scan data and metadata writing is currently enabled."""
-        pass
 
     @property
     @abstractmethod

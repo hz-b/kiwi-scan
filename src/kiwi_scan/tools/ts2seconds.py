@@ -1,10 +1,11 @@
 # SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin für Materialien und Energie GmbH
 # SPDX-License-Identifier: MIT
 
-from datetime import datetime, timezone
 import math
 import numbers
+from datetime import datetime, timezone
 from typing import Any, Optional
+
 
 def timestamp_to_seconds(value: Any) -> Optional[float]:
     """ 

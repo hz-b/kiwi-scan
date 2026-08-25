@@ -80,14 +80,13 @@ class MonitorValueFormatter:
 
 
 class MonitorRowFormatter:
-    """Shared row writer for monitor stdout streams.
+    """ 
+    Row writer for monitor stdout streams.
 
-    Parameters mirror ``PrintMonitor`` so another monitor, for example the live
-    queue plotter, can produce exactly the same stdout stream without copying
-    formatting code.
+    Text monitor and queue plotter monitor produce exactly the same stdout stream.
     """
 
-    SUPPORTED_FORMATS = {"tsv", "csv", "json"}
+    SUPPORTED_FORMATS = frozenset({"tsv", "csv", "json"})
     DEFAULT_FORMAT = "tsv"
 
     def __init__(

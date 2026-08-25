@@ -119,15 +119,15 @@ def parse_data_pv_spec(spec: str) -> DataPVSpec:
     if not isinstance(spec, str) or not spec.strip():
         raise ValueError("data PV spec must not be empty")
     if "=" not in spec:
-        raise ValueError("data PV spec must be LOCAL=KEY[:TYPE], got %r" % spec)
+        raise ValueError(f"data PV spec must be LOCAL=KEY[:TYPE], got {spec!r}")
 
     local, rhs = spec.split("=", 1)
     local = local.strip()
     rhs = rhs.strip()
     if not local:
-        raise ValueError("data PV spec %r has an empty LOCAL name" % spec)
+        raise ValueError(f"data PV spec {spec!r} has an empty LOCAL name")
     if not rhs:
-        raise ValueError("data PV spec %r has an empty KEY" % spec)
+        raise ValueError(f"data PV spec {spec!r} has an empty KEY")
 
     key = rhs
     value_type = "float"
