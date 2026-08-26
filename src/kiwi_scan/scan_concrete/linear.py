@@ -57,11 +57,11 @@ class LinearScan(BaseScan):
         )
         self.add_column_provider(self.stats_collector)
 
-    def _on_stat_event(self, ev: PvEvent, subscription: SubscriptionConfig=None) -> None:
+    def _on_stat_event(self, ev: PvEvent, subscription: SubscriptionConfig) -> None:
         """Record stat events and feed the per-subscription StatsCollector."""
 
         self.stats_collector.update(ev, subscription, collect=self._daq_is_on)
-        logger.debug("[stat] {ev.pvname}={ev.value}, daq on: {self._daq_is_on}, {subscription.name}")
+        logger.debug("[stat] %s=%r daq=%s sub=%s", ev.pvname, ev.value, self._daq_is_on, subscription.name)
 
     def execute(self):
         self._execute_standard(self.positions)

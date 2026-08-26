@@ -3,9 +3,7 @@
 
 from __future__ import annotations
 
-import inspect
 import logging
-from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
 
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
@@ -14,25 +12,8 @@ from kiwi_scan.epics_wrapper import EpicsPV
 
 logger = logging.getLogger(__name__)
 
-RoleHandler = Callable[..., None]
+RoleHandler = Callable[[PvEvent, SubscriptionConfig], None]
 ActuatorConfigLike = Union[ActuatorConfig, Dict[str, Any]]
-
-
-@dataclass(frozen=True)
-class RoleBinding:
-    """Describe how a subscription role should be dispatched.
-
-    Attributes
-    ----------
-    handler:
-        Callback registered for the role.
-    accepts_subscription:
-        ``True`` when the handler accepts both ``(event, subscription)``.
-        ``False`` when it only accepts ``(event,)``.
-    """
-
-    handler: RoleHandler
-    accepts_subscription: bool
 
 
 class SubscriptionManager:
@@ -74,7 +55,7 @@ class SubscriptionManager:
         self._actuator_configs: Dict[str, ActuatorConfigLike] = dict(actuator_configs or {})
         self._actuators: Dict[str, AbstractActuator] = dict(actuators or {})
 
-        self._role_bindings: Dict[str, RoleBinding] = {}
+        self._role_handlers: Dict[str, RoleHandler] = {}
 
         self._provider: Optional[AbstractActuator] = None
         self._handles_by_name: Dict[str, Any] = {}
@@ -86,15 +67,15 @@ class SubscriptionManager:
     # ------------------------------------------------------------------
 
     def register_role(self, role: str, handler: RoleHandler) -> None:
-        """Register the callback used for one subscription role.
+        """Register the ``(event, subscription)`` callback for one role.
 
         Parameters
         ----------
         role:
             Logical role name such as ``heartbeat`` or ``stop``.
         handler:
-            Callback that receives a :class:`PvEvent`. The handler may accept
-            either ``handler(event)`` or ``handler(event, subscription)``.
+            Callback with the required signature
+            ``handler(event, subscription)``.
 
         Raises
         ------
@@ -108,21 +89,12 @@ class SubscriptionManager:
         if not callable(handler):
             raise TypeError(f"handler for role '{role}' must be callable")
 
-        binding = RoleBinding(
-            handler=handler,
-            accepts_subscription=self._handler_accepts_subscription(handler),
-        )
-
-        previous = self._role_bindings.get(role)
-        if previous is not None and not self._same_handler(previous.handler, handler):
+        previous = self._role_handlers.get(role)
+        if previous is not None and not self._same_handler(previous, handler):
             logger.warning("Replacing subscription role handler for role '%s'", role)
 
-        self._role_bindings[role] = binding
-        logger.debug(
-            "Registered subscription role '%s' (accepts_subscription=%s)",
-            role,
-            binding.accepts_subscription,
-        )
+        self._role_handlers[role] = handler
+        logger.debug("Registered subscription role '%s'", role)
 
     @staticmethod
     def _same_handler(lhs: RoleHandler, rhs: RoleHandler) -> bool:
@@ -140,33 +112,6 @@ class SubscriptionManager:
 
         return False
 
-    @staticmethod
-    def _handler_accepts_subscription(handler: RoleHandler) -> bool:
-        """Detect whether a handler supports ``(event, subscription)``.
-
-        The scan code historically used both signatures. This helper allows the
-        manager to keep both forms working without forcing callers to adapt.
-        """
-        try:
-            params = list(inspect.signature(handler).parameters.values())
-        except (TypeError, ValueError):
-            return True
-
-        positional_count = 0
-        for param in params:
-            if param.kind in (
-                inspect.Parameter.VAR_POSITIONAL,
-                inspect.Parameter.VAR_KEYWORD,
-            ):
-                return True
-            if param.kind in (
-                inspect.Parameter.POSITIONAL_ONLY,
-                inspect.Parameter.POSITIONAL_OR_KEYWORD,
-            ):
-                positional_count += 1
-
-        return positional_count >= 2
-
     def _dispatch_role_event(
         self,
         role: str,
@@ -174,8 +119,8 @@ class SubscriptionManager:
         subscription: SubscriptionConfig,
     ) -> None:
         """Dispatch one subscription event to the registered role handler."""
-        binding = self._role_bindings.get(role)
-        if binding is None:
+        handler = self._role_handlers.get(role)
+        if handler is None:
             logger.debug(
                 "No handler registered for subscription role '%s' (subscription '%s')",
                 role,
@@ -183,10 +128,7 @@ class SubscriptionManager:
             )
             return
 
-        if binding.accepts_subscription:
-            binding.handler(event, subscription)
-        else:
-            binding.handler(event)
+        handler(event, subscription)
 
     # ------------------------------------------------------------------
     # PV and provider resolution

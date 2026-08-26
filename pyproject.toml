@@ -113,7 +113,7 @@ enable = [
     #"too-many-statements",
     #"too-many-branches",
     #"too-many-return-statements",
-    #"duplicate-code",
+    "duplicate-code",
 
     ## Keep suppressions clean
     "useless-suppression",

@@ -16,13 +16,18 @@ from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from kiwi_scan.actuator.factory import create_actuator
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
 from kiwi_scan.data.loader import DataLoader, resolve_data_dir
 from kiwi_scan.data.manifestwriter import ManifestWriter
-from kiwi_scan.datamodels import ActuatorConfig, ScanConfig, ScanDimension
+from kiwi_scan.datamodels import (
+    ActuatorConfig,
+    ScanConfig,
+    ScanDimension,
+    SubscriptionConfig,
+)
 from kiwi_scan.epics_wrapper import EpicsPV, ensure_ca_context
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.monitor.factory import create_monitor
@@ -242,7 +247,11 @@ class BaseScan(ScanABC):
 
     # -------------------- subscription/callback integration --------------------
 
-    def register_subscription_role(self, role: str, handler) -> None:
+    def register_subscription_role(
+        self,
+        role: str,
+        handler: Callable[[PvEvent, SubscriptionConfig], None],
+    ) -> None:
         self.subscription_manager.register_role(role, handler)
 
     def _start_subscriptions(self) -> None:
@@ -1383,18 +1392,18 @@ class BaseScan(ScanABC):
     
     # -------------------- role callback default handlers --------------------
     
-    def _on_status_event(self, ev: PvEvent, subscription=None) -> None:
+    def _on_status_event(self, ev: PvEvent, _subscription: SubscriptionConfig) -> None:
         self._last_status = ev
         logger.debug("[status] %s=%r", ev.pvname, ev.value)
 
-    def _on_heartbeat_event(self, ev: PvEvent, subscription=None) -> None:
+    def _on_heartbeat_event(self, ev: PvEvent, _subscription: SubscriptionConfig) -> None:
         self._last_heartbeat = ev
         with self._tick_cond:
             self._tick_seq += 1
             self._tick_cond.notify_all()
         logger.debug("[heartbeat] %s=%r (seq=%d)", ev.pvname, ev.value, self._tick_seq)
     
-    def _on_stop_event(self, ev: PvEvent, subscription=None) -> None:
+    def _on_stop_event(self, ev: PvEvent, _subscription: SubscriptionConfig) -> None:
         """
         Immediate stop trigger. Stops actuators best-effort and wakes the loop.
         """
@@ -1441,7 +1450,7 @@ class BaseScan(ScanABC):
 
             return self._tick_seq != start_seq
 
-    def _on_trigger_event(self, ev: PvEvent, subscription=None) -> None:
+    def _on_trigger_event(self, ev: PvEvent, _subscription: SubscriptionConfig) -> None:
         # Return immediately; do not call put() here
         self._trigger_q.put(ev)
 
@@ -1453,12 +1462,37 @@ class BaseScan(ScanABC):
             except Exception:
                 logger.exception(f"WORKER: Failed to fire monitor triggers (ev = {ev})")
 
-    def _on_plugin_event(self, ev: PvEvent, subscription=None) -> None:
+    def _on_plugin_event(self, ev: PvEvent, _subscription: SubscriptionConfig) -> None:
         """
         If the PV emits a value, plugins are triggered.
         PvEvent data provided for the plugin hook.
         """
         self._plugin_q.put(ev)
+    
+    def _on_sync_event(self, ev: PvEvent, subscription: SubscriptionConfig) -> None:
+        """
+        Record sync events for the SyncController. 
+        The primary actuator RBV-style sync source updates self._position if defined as sync source.
+        Example config yaml:
+            subscriptions:
+              - name: energy_sync
+                role: sync
+                actuator: energy
+                source: rbv
+                timeout: 1.0
+        """
+        self._last_sync = ev
+        self.sync_controller.note_event(subscription.name)
+
+        if self._is_position_sync_subscription(subscription):
+            try:
+                self._position = float(ev.value)
+            except (TypeError, ValueError):
+                self._position = ev.value
+            self._position_sync_subscription_set = True
+
+        logger.debug("[sync] %s=%r -> _position=%r (source=%r, sub=%s)", ev.pvname, ev.value, self._position, ev.source, subscription.name)
+
 
     def _plugin_worker_loop(self) -> None:
         while not self._plugin_worker_stop.is_set():

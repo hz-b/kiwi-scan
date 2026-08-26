@@ -4,7 +4,6 @@
 import logging
 import time
 
-from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.scan.common import BaseScan
@@ -44,30 +43,6 @@ class PollScan(BaseScan):
         self._maxindex = 0
         if self.scan_dimensions:
             self._maxindex = self.scan_dimensions[0].steps
-
-    def _on_sync_event(self, ev: PvEvent, subscription=None) -> None:
-        """
-        Record sync events for the SyncController. Only the primary actuator
-        RBV-style sync source updates self._position.
-        """
-        self._last_sync = ev
-        self.sync_controller.note_event(getattr(subscription, "name", None))
-
-        if self._is_position_sync_subscription(subscription):
-            try:
-                self._position = float(ev.value)
-            except (TypeError, ValueError):
-                self._position = ev.value
-            self._position_sync_subscription_set = True
-
-        logger.debug(
-            "[sync] %s=%r -> _position=%r (source=%r, sub=%s)",
-            ev.pvname,
-            ev.value,
-            self._position,
-            ev.source,
-            getattr(subscription, "name", None),
-        )
 
     def scan(self, positions, monitor: BaseMonitor = None):
         """

@@ -103,8 +103,8 @@ class TestSubscriptionManager(unittest.TestCase):
             actuators={"motor": FakeNoMonitorBackend()},
         )
 
-        def on_stop(event):
-            received.append(event)
+        def on_stop(event, subscription):
+            received.append((event, subscription))
 
         manager.register_role("stop", on_stop)
 
@@ -122,10 +122,13 @@ class TestSubscriptionManager(unittest.TestCase):
             handle.callbacks[0](value=1, timestamp=123.0)
 
             self.assertEqual(len(received), 1)
-            self.assertEqual(received[0].pvname, "SYS:STOP")
-            self.assertEqual(received[0].value, 1)
-            self.assertEqual(received[0].timestamp, 123.0)
-            self.assertEqual(received[0].source, "epics_monitor")
+            event, subscription = received[0]
+            self.assertEqual(event.pvname, "SYS:STOP")
+            self.assertEqual(event.value, 1)
+            self.assertEqual(event.timestamp, 123.0)
+            self.assertEqual(event.source, "epics_monitor")
+            self.assertEqual(subscription.name, "stop_sub")
+            self.assertEqual(subscription.role, "stop")
 
             manager.stop()
 

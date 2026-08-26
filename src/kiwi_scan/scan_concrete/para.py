@@ -16,7 +16,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from kiwi_scan.actuator.single import PvEvent
-from kiwi_scan.datamodels import ScanConfig
+from kiwi_scan.datamodels import ScanConfig, SubscriptionConfig
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.range_exit_detector import RangeExitDetector
@@ -78,7 +78,7 @@ class ParaScan(BaseScan):
 
         self._last_position_snapshot: Dict[str, Any] = {}
 
-    def _on_stat_event(self, ev: PvEvent, subscription=None) -> None:
+    def _on_stat_event(self, ev: PvEvent, subscription: SubscriptionConfig) -> None:
         """Record stat events and feed the per-subscription StatsCollector."""
 
         self.stats_collector.update(
@@ -92,7 +92,7 @@ class ParaScan(BaseScan):
             ev.pvname,
             ev.value,
             getattr(self, "_daq_is_on", False),
-            getattr(subscription, "name", None),
+            subscription.name,
         )
 
     @staticmethod

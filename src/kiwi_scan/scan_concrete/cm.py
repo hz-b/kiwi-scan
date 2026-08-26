@@ -3,7 +3,6 @@
 
 import logging
 
-from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.scan.common import BaseScan
@@ -67,40 +66,6 @@ class CMScan(BaseScan):
                 cleanup()
         except Exception:
             logger.exception("Error during CM scan cleanup step '%s'", label)
-
-    """ ----------- sync event handler -----------------------
-        Example config yaml:
-            subscriptions:
-              - name: energy_sync
-                role: sync
-                actuator: energy
-                source: rbv
-                timeout: 1.0
-    """
-    def _on_sync_event(self, ev: PvEvent, subscription=None) -> None:
-        """
-        Record sync events for the SyncController. 
-        The primary actuator RBV-style sync source updates self._position if defined as sync source.
-        """
-        self._last_sync = ev
-        self.sync_controller.note_event(getattr(subscription, "name", None))
-
-        # Only the primary actuator rbv-style sync should update scan position.
-        if self._is_position_sync_subscription(subscription):
-            try:
-                self._position = float(ev.value)
-            except (TypeError, ValueError):
-                self._position = ev.value
-            self._position_sync_subscription_set = True
-
-        logger.debug(
-            "[sync] %s=%r -> _position=%r (source=%r, sub=%s)",
-            ev.pvname,
-            ev.value,
-            self._position,
-            ev.source,
-            getattr(subscription, "name", None),
-        )
 
     def run_daq(self, monitor: BaseMonitor = None):
         """

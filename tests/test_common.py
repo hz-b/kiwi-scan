@@ -19,6 +19,7 @@ if "epics" not in sys.modules:
     sys.modules["epics"] = test_support.make_fake_epics_module()
 
 from kiwi_scan.actuator.single import PvEvent
+from kiwi_scan.datamodels import SubscriptionConfig
 from kiwi_scan.scan.common import BaseScan
 
 
@@ -82,20 +83,34 @@ class TestBaseScanConfigurationHelpers(unittest.TestCase):
         scan = DummyScan()
         scan.scan_dimensions = [SimpleNamespace(actuator="energy")]
 
-        self.assertTrue(scan._is_position_sync_subscription(None))
         self.assertTrue(
             scan._is_position_sync_subscription(
-                SimpleNamespace(actuator="energy", source="RBV")
+                SubscriptionConfig(
+                    name="energy_sync",
+                    role="sync",
+                    actuator="energy",
+                    source="RBV",
+                )
             )
         )
         self.assertFalse(
             scan._is_position_sync_subscription(
-                SimpleNamespace(actuator="energy", source="setpoint")
+                SubscriptionConfig(
+                    name="energy_setpoint",
+                    role="sync",
+                    actuator="energy",
+                    source="setpoint",
+                )
             )
         )
         self.assertFalse(
             scan._is_position_sync_subscription(
-                SimpleNamespace(actuator="other", source="rbv")
+                SubscriptionConfig(
+                    name="other_sync",
+                    role="sync",
+                    actuator="other",
+                    source="rbv",
+                )
             )
         )
 
@@ -644,17 +659,45 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan._trigger_q = MagicMock()
         scan._plugin_q = MagicMock()
         event = PvEvent("TEST:PV", 5.0)
+        subscription = SubscriptionConfig(
+            name="test_subscription",
+            role="status",
+            pv="TEST:PV",
+        )
 
-        scan._on_status_event(event)
-        scan._on_heartbeat_event(event)
-        scan._on_trigger_event(event)
-        scan._on_plugin_event(event)
+        scan._on_status_event(event, subscription)
+        scan._on_heartbeat_event(event, subscription)
+        scan._on_trigger_event(event, subscription)
+        scan._on_plugin_event(event, subscription)
 
         self.assertIs(scan._last_status, event)
         self.assertIs(scan._last_heartbeat, event)
         self.assertEqual(scan._tick_seq, 1)
         scan._trigger_q.put.assert_called_once_with(event)
         scan._plugin_q.put.assert_called_once_with(event)
+
+    def test_sync_event_updates_controller_and_position(self):
+        scan = DummyScan()
+        scan.scan_dimensions = [SimpleNamespace(actuator="energy")]
+        scan.sync_controller = MagicMock()
+        scan._last_sync = None
+        scan._position = None
+        scan._position_sync_subscription_set = False
+
+        event = PvEvent("ENERGY:RBV", "12.5")
+        subscription = SubscriptionConfig(
+            name="energy_sync",
+            role="sync",
+            actuator="energy",
+            source="rbv",
+        )
+
+        scan._on_sync_event(event, subscription)
+
+        self.assertIs(scan._last_sync, event)
+        scan.sync_controller.note_event.assert_called_once_with("energy_sync")
+        self.assertEqual(scan._position, 12.5)
+        self.assertTrue(scan._position_sync_subscription_set)
 
     def test_trigger_worker_fires_monitor_triggers(self):
         scan = DummyScan()
@@ -704,14 +747,19 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         actuator = MagicMock()
         scan.actuators = {"energy": actuator}
         event = PvEvent("TEST:STOP", 1)
+        subscription = SubscriptionConfig(
+            name="stop_subscription",
+            role="stop",
+            pv="TEST:STOP",
+        )
 
         scan.busyflag = False
-        scan._on_stop_event(event)
+        scan._on_stop_event(event, subscription)
         self.assertFalse(scan._stop_requested.is_set())
         actuator.stop.assert_not_called()
 
         scan.busyflag = True
-        scan._on_stop_event(event)
+        scan._on_stop_event(event, subscription)
         self.assertTrue(scan._stop_requested.is_set())
         scan.sync_controller.wake.assert_called_once_with()
         actuator.stop.assert_called_once_with()
