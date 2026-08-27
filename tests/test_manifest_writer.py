@@ -2,11 +2,13 @@ import os
 import tarfile
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
 import yaml
 
+import kiwi_scan.data.manifestwriter as manifestwriter_module
 from kiwi_scan.data.manifestwriter import (
     ManifestArchiveDeleter,
     ManifestResolver,
@@ -320,6 +322,90 @@ class TestManifestWriter(unittest.TestCase):
             self.assertIn(missing_meta.resolve(), plan.missing_files)
             self.assertNotIn(missing_meta.resolve(), plan.files_to_delete)
             self.assertIn(data_path.resolve(), plan.files_to_delete)
+
+    def test_delete_plans_in_same_second_get_different_bundle_names(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            manifest_path = data_dir / "manifest.yaml"
+            data_path = data_dir / "scan.txt"
+            data_path.write_text("scan\n", encoding="utf-8")
+            manifest_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "manifest": {"created_at": "2026-05-01T10:00:00+02:00"},
+                        "scans": [
+                            {
+                                "id": "scan_1",
+                                "created_at": "2026-05-01T10:01:00+02:00",
+                                "data_file": "scan.txt",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resolver = ManifestResolver(str(data_dir))
+            values = iter(
+                [
+                    datetime(2026, 8, 27, 7, 0, 0, 100, tzinfo=timezone.utc),
+                    datetime(2026, 8, 27, 7, 0, 0, 200, tzinfo=timezone.utc),
+                ]
+            )
+
+            class FakeDatetime(datetime):
+                @classmethod
+                def now(cls, tz=None):
+                    value = next(values)
+                    return value if tz is not None else value.replace(tzinfo=None)
+
+            with patch.object(manifestwriter_module, "datetime", FakeDatetime):
+                first = resolver.plan_delete_bundle([manifest_path], bundle_dir=data_dir)
+                second = resolver.plan_delete_bundle([manifest_path], bundle_dir=data_dir)
+
+            self.assertNotEqual(first.bundle_file, second.bundle_file)
+            self.assertEqual(
+                first.bundle_file.name,
+                "kiwi-scan-delete_20260827_070000_000100.tar.gz",
+            )
+            self.assertEqual(
+                second.bundle_file.name,
+                "kiwi-scan-delete_20260827_070000_000200.tar.gz",
+            )
+
+    def test_archive_deleter_refuses_to_overwrite_existing_bundle(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            data_dir = Path(tmpdir)
+            manifest_path = data_dir / "manifest.yaml"
+            data_path = data_dir / "scan.txt"
+            data_path.write_text("scan\n", encoding="utf-8")
+            manifest_path.write_text(
+                yaml.safe_dump(
+                    {
+                        "manifest": {"created_at": "2026-05-01T10:00:00+02:00"},
+                        "scans": [
+                            {
+                                "id": "scan_1",
+                                "created_at": "2026-05-01T10:01:00+02:00",
+                                "data_file": "scan.txt",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            resolver = ManifestResolver(str(data_dir))
+            plan = resolver.plan_delete_bundle([manifest_path], bundle_dir=data_dir)
+            original_bundle = b"existing recovery archive\n"
+            plan.bundle_file.write_bytes(original_bundle)
+
+            with self.assertRaisesRegex(FileExistsError, "refusing to overwrite"):
+                ManifestArchiveDeleter.archive_and_delete(plan)
+
+            self.assertEqual(plan.bundle_file.read_bytes(), original_bundle)
+            self.assertTrue(manifest_path.exists())
+            self.assertTrue(data_path.exists())
 
     def test_archive_deleter_creates_bundle_and_deletes_only_archived_files(self):
         with tempfile.TemporaryDirectory() as tmpdir:

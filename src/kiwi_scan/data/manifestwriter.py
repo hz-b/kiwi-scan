@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence
+from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
 import yaml
 
@@ -374,62 +374,36 @@ class ManifestDeleteResult:
 
 
 class ManifestArchiveDeleter:
-    """Archive files from a :class:`ManifestDeletePlan` and delete them safely."""
+    """ Archive files from a :class:`ManifestDeletePlan` and delete them safely. """
 
     logger = logger
 
     @classmethod
-    def archive_and_delete(
+    def _create_delete_bundle(
         cls,
-        plan: ManifestDeletePlan,
-        *,
-        dry_run: bool = False,
-    ) -> ManifestDeleteResult:
-        """Archive all planned files and then delete the archived files.
-
-        No file is deleted unless it was present in the plan and the archive
-        was successfully created. Missing and skipped files are reported, but
-        are not fatal.
+        bundle: Path,
+        files_to_archive: Iterable[Path],
+    ) -> Tuple[List[Path], List[Path]]:
         """
-        cls.logger.debug(
-            "Archive/delete requested: files=%d missing=%d skipped=%d bundle=%s dry_run=%s",
-            len(plan.files_to_archive),
-            len(plan.missing_files),
-            len(plan.skipped_files),
-            plan.bundle_file,
-            dry_run,
-        )
-
-        if dry_run:
-            cls.logger.info("Dry-run archive/delete plan for %d file(s)", len(plan.files_to_archive))
-            return ManifestDeleteResult(
-                bundle_file=plan.bundle_file,
-                archived_files=[],
-                deleted_files=[],
-                missing_files=list(plan.missing_files),
-                skipped_files=list(plan.skipped_files),
-                failed_files=[],
-                dry_run=True,
-            )
-
-        if not plan.files_to_archive:
-            raise ValueError("No existing regular files to archive and delete")
-
-        bundle = plan.bundle_file.expanduser()
-        bundle.parent.mkdir(parents=True, exist_ok=True)
-
+        Create and verify a recovery bundle for the requested files.
+        """
         archived_files: List[Path] = []
         failed_files: List[Path] = []
 
         cls.logger.info("Creating delete bundle: %s", bundle)
-        with tarfile.open(bundle, "w:gz") as tar:
+        try:
+            tar_context = tarfile.open(bundle, "x:gz") # noqa: SIM115 - Keep archive creation outside for exclusive check
+        except FileExistsError as exc:
+            raise FileExistsError(f"Delete bundle already exists; refusing to overwrite recovery archive: {bundle}") from exc
+
+        with tar_context as tar:
             restore_map = {
                 "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "bundle_file": str(bundle),
                 "files": [],
             }
 
-            for index, path in enumerate(plan.files_to_archive):
+            for index, path in enumerate(files_to_archive):
                 full = path.expanduser().resolve(strict=False)
                 if not full.is_file():
                     cls.logger.warning("Skipping non-file during archive: %s", full)
@@ -456,7 +430,17 @@ class ManifestArchiveDeleter:
         if not bundle.is_file() or bundle.stat().st_size <= 0:
             raise OSError(f"Delete bundle was not created correctly: {bundle}")
 
+        return archived_files, failed_files
+
+    @classmethod
+    def _delete_archived_files(
+        cls,
+        archived_files: Iterable[Path],
+    ) -> Tuple[List[Path], List[Path]]:
+        """Delete files that were successfully stored in the recovery bundle."""
         deleted_files: List[Path] = []
+        failed_files: List[Path] = []
+
         for path in archived_files:
             try:
                 cls.logger.debug("Deleting archived file: %s", path)
@@ -466,13 +450,49 @@ class ManifestArchiveDeleter:
                 cls.logger.exception("Failed to delete archived file: %s", path)
                 failed_files.append(path)
 
-        cls.logger.info(
-            "Archive/delete complete: archived=%d deleted=%d failed=%d bundle=%s",
-            len(archived_files),
-            len(deleted_files),
-            len(failed_files),
+        return deleted_files, failed_files
+
+    @classmethod
+    def archive_and_delete(
+        cls,
+        plan: ManifestDeletePlan,
+        *,
+        dry_run: bool = False,
+    ) -> ManifestDeleteResult:
+        """
+        Archive all planned files and then delete the archived files.
+        No file is deleted unless it was present in the plan and the recovery bundle was successfully created and verified. 
+        """
+        cls.logger.debug("Archive/delete requested: files=%d missing=%d skipped=%d bundle=%s dry_run=%s",
+            len(plan.files_to_archive), len(plan.missing_files), len(plan.skipped_files), plan.bundle_file, dry_run)
+
+        if dry_run:
+            cls.logger.info("Dry-run archive/delete plan for %d file(s)", len(plan.files_to_archive))
+            return ManifestDeleteResult(
+                bundle_file=plan.bundle_file,
+                archived_files=[],
+                deleted_files=[],
+                missing_files=list(plan.missing_files),
+                skipped_files=list(plan.skipped_files),
+                failed_files=[],
+                dry_run=True,
+            )
+
+        if not plan.files_to_archive:
+            raise ValueError("No existing regular files to archive and delete")
+
+        bundle = plan.bundle_file.expanduser()
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+
+        archived_files, archive_failures = cls._create_delete_bundle(
             bundle,
+            plan.files_to_archive,
         )
+        deleted_files, delete_failures = cls._delete_archived_files(archived_files)
+        failed_files = archive_failures + delete_failures
+
+        cls.logger.info("Archive/delete complete: archived=%d deleted=%d failed=%d bundle=%s",
+            len(archived_files), len(deleted_files), len(failed_files), bundle)
         return ManifestDeleteResult(
             bundle_file=bundle,
             archived_files=archived_files,
@@ -726,38 +746,19 @@ class ManifestResolver:
 
         self.logger.debug("Completed manifest file iteration with %d unique file(s)", len(seen))
 
-    def plan_delete_bundle(
-        self,
-        manifest_files: Optional[Iterable[str | Path]] = None,
-        *,
-        include_meta: bool = False,
-        include_manifest: bool = True,
-        bundle_dir: str | Path = "/tmp",
-        bundle_prefix: str = "kiwi-scan-delete",
-    ) -> ManifestDeletePlan:
-        """Build a side-effect-free plan to archive and delete manifest files.
-
-        Args:
-            manifest_files: Explicit manifest files. If omitted, all manifests
-                discovered by this resolver are used.
-            include_meta: Include metadata sidecar files referenced by scans.
-            include_manifest: Include the manifest YAML files themselves. This
-                defaults to ``True`` because this method is intended for deletion.
-            bundle_dir: Directory where the archive bundle should be created.
-            bundle_prefix: Prefix for the generated archive filename.
-
-        Returns:
-            A :class:`ManifestDeletePlan` containing existing regular files to
-            archive/delete, missing references, skipped non-file paths, and the
-            target bundle path.
-        """
+    def _resolve_delete_manifests( self, manifest_files: Optional[Iterable[str | Path]]) -> List[Path]:
+        """ Resolve and validate manifests selected for archive/delete. """
         if manifest_files is None:
             selected_manifests = self.list_manifests()
         else:
-            selected_manifests = [Path(p).expanduser() for p in manifest_files]
+            selected_manifests = [Path(path).expanduser() for path in manifest_files]
 
         if not selected_manifests:
-            location = self.data_dir if self.data_dir is not None else f"{self.ENV_DATA_DIR} is not set"
+            location = (
+                self.data_dir
+                if self.data_dir is not None
+                else f"{self.ENV_DATA_DIR} is not set"
+            )
             raise FileNotFoundError(f"No manifest files selected from {location}")
 
         manifest_paths: List[Path] = []
@@ -767,13 +768,16 @@ class ManifestResolver:
                 raise FileNotFoundError(f"Manifest file not found: {full}")
             manifest_paths.append(full)
 
-        self.logger.debug(
-            "Planning archive/delete for %d manifest(s), include_meta=%s include_manifest=%s",
-            len(manifest_paths),
-            include_meta,
-            include_manifest,
-        )
+        return manifest_paths
 
+    def _collect_delete_candidates(
+        self,
+        manifest_paths: Iterable[Path],
+        *,
+        include_meta: bool,
+        include_manifest: bool,
+    ) -> Tuple[List[Path], List[Path], List[Path]]:
+        """ Classify referenced paths for a planned archive/delete operation. """
         seen = set()
         files_to_archive: List[Path] = []
         missing_files: List[Path] = []
@@ -782,16 +786,19 @@ class ManifestResolver:
         def add_candidate(path: Optional[Path]) -> None:
             if path is None:
                 return
+
             full = path.expanduser().resolve(strict=False)
             if full in seen:
                 self.logger.debug("Skipping duplicate delete candidate: %s", full)
                 return
+
             seen.add(full)
 
             if not full.exists():
                 self.logger.debug("Delete candidate is missing: %s", full)
                 missing_files.append(full)
                 return
+
             if not full.is_file():
                 self.logger.warning("Delete candidate is not a regular file: %s", full)
                 skipped_files.append(full)
@@ -801,24 +808,54 @@ class ManifestResolver:
             files_to_archive.append(full)
 
         for manifest in manifest_paths:
-            add_candidate(manifest if include_manifest else None)
-            refs = self.list_scan_refs(str(manifest))
-            for ref in refs:
+            if include_manifest:
+                add_candidate(manifest)
+
+            for ref in self.list_scan_refs(str(manifest)):
                 add_candidate(ref.data_file)
                 if include_meta:
                     add_candidate(ref.metadata_file)
 
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-        bundle_path = Path(bundle_dir).expanduser() / f"{bundle_prefix}_{timestamp}.tar.gz"
+        return files_to_archive, missing_files, skipped_files
 
-        self.logger.info(
-            "Delete plan: manifests=%d files=%d missing=%d skipped=%d bundle=%s",
-            len(manifest_paths),
-            len(files_to_archive),
-            len(missing_files),
-            len(skipped_files),
-            bundle_path,
+    def plan_delete_bundle(
+        self,
+        manifest_files: Optional[Iterable[str | Path]] = None,
+        *,
+        include_meta: bool = False,
+        include_manifest: bool = True,
+        bundle_dir: str | Path = "/tmp",
+        bundle_prefix: str = "kiwi-scan-delete",
+    ) -> ManifestDeletePlan:
+        """ Build a plan to archive and delete manifest files.
+
+        Args:
+            manifest_files: Explicit manifest files. If omitted, all manifests discovered by this resolver are used.
+            include_meta: Include metadata sidecar files referenced by scans.
+            include_manifest: Include the manifest YAML files themselves.
+            bundle_dir: Directory where the archive bundle should be created.
+            bundle_prefix: Prefix for the generated archive filename.
+
+        Returns:
+            A :class:`ManifestDeletePlan` containing existing regular files to archive/delete, 
+            missing references, skipped pathes, and the target bundle path.
+        """
+        manifest_paths = self._resolve_delete_manifests(manifest_files)
+
+        self.logger.debug("Planning archive/delete for %d manifest(s), include_meta=%s include_manifest=%s",
+            len(manifest_paths), include_meta, include_manifest)
+
+        files_to_archive, missing_files, skipped_files = self._collect_delete_candidates(
+            manifest_paths,
+            include_meta=include_meta,
+            include_manifest=include_manifest,
         )
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S_%f")
+        bundle_path = (Path(bundle_dir).expanduser() / f"{bundle_prefix}_{timestamp}.tar.gz")
+
+        self.logger.info("Delete plan: manifests=%d files=%d missing=%d skipped=%d bundle=%s",
+            len(manifest_paths), len(files_to_archive), len(missing_files), len(skipped_files), bundle_path)
 
         return ManifestDeletePlan(
             manifest_files=manifest_paths,
@@ -836,7 +873,7 @@ class ManifestResolver:
         manifest_index: int = 0,
         scan_index: int = 0,
     ) -> Path:
-        """Select one scan or metadata file from a manifest entry."""
+        """ Select one scan or metadata file from a manifest entry."""
         source_type = source_type.lower()
         if source_type not in {"scan", "meta"}:
             raise ValueError("source type must be 'scan' or 'meta'")
@@ -856,9 +893,7 @@ class ManifestResolver:
             scan_label = ref.scan_id or f"index {scan_index}"
             raise ValueError(f"Manifest scan {scan_label!r} has no {field_name} reference")
         if not selected.exists():
-            raise FileNotFoundError(
-                f"Manifest scan {ref.scan_id or scan_index!r} refers to missing {field_name}: {selected}"
-            )
+            raise FileNotFoundError(f"Manifest scan {ref.scan_id or scan_index!r} refers to missing {field_name}: {selected}")
         return selected
 
     @staticmethod
