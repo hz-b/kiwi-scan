@@ -10,7 +10,6 @@ from unittest.mock import Mock, call, patch
 import pandas as pd
 
 from kiwi_scan.data.manifestwriter import parse_manifest_datetime
-
 from kiwi_scan.export.loader import (
     EmptyScanDataError,
     _contains_non_comment_content,

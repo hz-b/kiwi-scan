@@ -311,13 +311,19 @@ class SpecWriter(ExportWriter):
             return str(int(value))
 
         if isinstance(value, numbers.Real):
-            number = float(value)
-            if math.isnan(number):
-                return "nan"
-            if math.isinf(number):
-                return "inf" if number > 0 else "-inf"
-            return f"{number:.{self.precision}g}"
+            return self._format_real(float(value))
 
+        return self._format_text(value)
+
+    def _format_real(self, number: float) -> str:
+        if math.isnan(number):
+            return "nan"
+        if math.isinf(number):
+            return "inf" if number > 0 else "-inf"
+        return f"{number:.{self.precision}g}"
+
+    @staticmethod
+    def _format_text(value: Any) -> str:
         text = str(value).strip()
         if not text:
             return "."
