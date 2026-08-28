@@ -44,11 +44,87 @@ class PollScan(BaseScan):
         if self.scan_dimensions:
             self._maxindex = self.scan_dimensions[0].steps
 
+    @staticmethod
+    def _wait_for_motion_start(actuator) -> None:
+        """Wait until the externally commanded actuator begins moving."""
+        while not actuator.is_moving():
+            logger.debug("Wait for actuator to start")
+            time.sleep(0.05)
+
+    def _scan_stop_requested(self) -> bool:
+        """Return whether an event or the configured stop PV ended the scan."""
+        if self._stop_requested.is_set():
+            logger.debug("Stop event set")
+            return True
+        if self.get_stop_pv() != 1:
+            return False
+        logger.debug("Stop PV set")
+        return True
+
+    def _wait_for_scan_cycle(self) -> bool:
+        """Arm and wait for one synchronized acquisition cycle."""
+        self._arm_sync_controller()
+        if self._stop_requested.is_set():
+            logger.debug("Stop event set")
+            return False
+
+        self._wait_for_sync(stop_event=self._stop_requested)
+        if self._stop_requested.is_set():
+            logger.debug("Stop event set")
+            return False
+        return True
+
+    def _read_daq_position(self, actuator):
+        """Return the synchronized position, polling RBV as a fallback."""
+        if self._position_sync_subscription_set:
+            return self._position
+
+        position = actuator.rbv
+        self._position = position
+        return position
+
+    def _acquire_poll_point(
+        self,
+        index: int,
+        position,
+        monitor: BaseMonitor = None,
+    ) -> None:
+        """Acquire and publish one polling scan point."""
+        self._fire_triggers("on_point")
+        values = self.read_detectors()
+        self.update_current_row_cache(
+            idx=index,
+            pos=position,
+            values=values,
+        )
+        self._fire_triggers("after_point")
+
+        plugin_values = self._collect_plugin_point_data(index, position)
+        values = values + plugin_values
+        self.save_to_file(position, values, self.include_timestamps)
+
+        if monitor is not None:
+            monitor.update(values)
+
+    def _cleanup_scan(self, monitor: BaseMonitor = None) -> None:
+        """Release polling-scan resources using its established semantics."""
+        self._stop_metadata_monitor()
+        if monitor is not None:
+            monitor.close()
+        try:
+            self._clear_subscriptions()
+        except Exception:
+            logger.exception("Error clearing scan subscriptions")
+        self._fire_triggers("after")
+        self.busyflag = False
+
     def scan(self, positions, monitor: BaseMonitor = None):
         """
         Poll detector values.
         Now synchronized by heartbeat events when available, with poll timeout fallback.
         """
+
+        del positions
 
         self.write_header_to_output_file()
         index = 0
@@ -62,9 +138,7 @@ class PollScan(BaseScan):
             eps=0.001,
             out_threshold=6,
         )
-        while not first_actuator.is_moving():
-            logger.debug("Wait for actuator to start")
-            time.sleep(0.05)
+        self._wait_for_motion_start(first_actuator)
 
         self._stop_requested.clear()
         try:
@@ -72,95 +146,41 @@ class PollScan(BaseScan):
             self.busyflag = True
             self._position_sync_subscription_set = False
             while True:
-                if self._stop_requested.is_set():
-                    logger.debug("Stop event set")
-                    break
-                if self.get_stop_pv() == 1:
-                    logger.debug("Stop PV set")
+                if self._scan_stop_requested():
                     break
 
-                # Start a new sync cycle, then wait for heartbeat and all
-                # configured sync-role subscriptions.
-                self._arm_sync_controller()
-
-                if self._stop_requested.is_set():
-                    logger.debug("Stop event set")
+                if not self._wait_for_scan_cycle():
                     break
 
-                self._wait_for_sync(stop_event=self._stop_requested)
-
-                if self._stop_requested.is_set():
-                    logger.debug("Stop event set")
-                    break
-
-                # Prefer subscribed position if sync role is configured, else read rbv
-                pos = self._position
-                if not self._position_sync_subscription_set:
-                    pos = first_actuator.rbv
-                    self._position = pos
-                    self._position_sync_subscription_set = False
-                if pos == None:
+                position = self._read_daq_position(first_actuator)
+                if position is None:
                     continue
-
-                current_position = pos
                 
-                range_exit_detected = range_exit.update(pos) 
+                range_exit_detected = range_exit.update(position)
                 first_actuator_ready = first_actuator.is_ready() 
                 if range_exit_detected and first_actuator_ready and self._start != self._stop:
-                    logger.info("Scan termination detected at pos=%s", pos)
+                    logger.info(
+                        "Scan termination detected at pos=%s",
+                        position,
+                    )
                     break
                 if first_actuator_ready:
                     continue
 
-                self._fire_triggers("on_point")
-                # logger.debug("Read detectors")
-                vals = self.read_detectors()
-                self.update_current_row_cache(
-                    idx=index,
-                    pos=current_position,
-                    values=vals,
-                )
-                self._fire_triggers("after_point")
-                # plugin data
-                plugin_data = []
-                for plugin in self.plugins:
-                    data = plugin.on_scan_point(index, current_position)
-                    plugin_data += data
-                    self.extend_current_row_cache(plugin.get_headers(False), data)
-
-                vals = vals + plugin_data
-                self.save_to_file(current_position, vals, self.include_timestamps)
-
-                # >>> Notify monitor/plotter
-                if monitor is not None:
-                    monitor.update(vals)
-
+                self._acquire_poll_point(index, position, monitor)
                 index += 1
-                logger.debug("Poll %d @ pos=%r", index, current_position)
+                logger.debug("Poll %d @ pos=%r", index, position)
 
                 # refresh from actuator rbv if no sync subscription is used
                 # (keeps range check honest for non-subscribed setups)
                 if self._last_sync is None:
-                    current_position = first_actuator.rbv
-                    self._position = current_position
+                    self._position = first_actuator.rbv
                 
                 if self._maxindex > 0 and index >= self._maxindex:
                     super().stop()
                     break
-
-                
         finally:
-            self._stop_metadata_monitor()
-            if monitor is not None:
-                monitor.close()
-            # IMPORTANT: PollScan doesn't use BaseScan.scan(), so we must clean up subscriptions here.
-            try:
-                self._clear_subscriptions()
-            except Exception:
-                logger.exception("Error clearing scan subscriptions")
-
-            self._fire_triggers("after")
-            self.busyflag = False
+            self._cleanup_scan(monitor)
 
     def execute(self) -> None:
         self._execute_standard(None) 

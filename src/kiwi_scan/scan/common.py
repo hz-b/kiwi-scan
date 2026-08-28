@@ -16,7 +16,7 @@ from collections import defaultdict
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 from kiwi_scan.actuator.factory import create_actuator
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
@@ -71,7 +71,7 @@ class BaseScan(ScanABC):
         self._validate_and_filter_actuators()
 
         self.plugins = [create_plugin(plugin_config, self) for plugin_config in self.cfg.plugin_configs]
-        logger.debug(f"Plugin Configs: {self.cfg.plugin_configs}")
+        logger.debug("Plugin Configs: %s", self.cfg.plugin_configs)
 
         # Perform config cleanup
         self._validate_and_filter_actuators()
@@ -82,7 +82,7 @@ class BaseScan(ScanABC):
         self.trigger_manager = TriggerManager.from_config(self.cfg.triggers)
         # Prepare I/O
         self.data_dir = os.path.abspath(resolve_data_dir(data_dir, config.data_dir))
-        logger.info(f"Data directory: {self.data_dir}")
+        logger.info("Data directory: %s", self.data_dir)
 
         self._data_writer_lock = threading.RLock()
         self._requested_output_file = config.output_file
@@ -839,6 +839,74 @@ class BaseScan(ScanABC):
 
         return row_values
 
+    def _last_point_data_headers(self) -> Tuple[List[str], Set[str]]:
+        """Return ordered value headers and the detector-header set.
+
+        Detector names are also returned as a set because timestamp-prefix
+        selection runs once for every acquired value in this hot path.
+        """
+        data_headers = [
+            pv.pvname for pv in getattr(self, "detector_pvs", [])
+        ]
+        detector_names = set(data_headers)
+        for plugin in getattr(self, "plugins", []) or []:
+            try:
+                data_headers.extend(plugin.get_headers(False))
+            except Exception:  # noqa: BLE001
+                logger.error(
+                    "Failed to get headers from plugin %s",
+                    getattr(plugin, "name", plugin),
+                )
+
+        return data_headers, detector_names
+
+    @staticmethod
+    def _resolve_last_point_header(
+        index: int,
+        item: Any,
+        data_headers: List[str],
+    ) -> Optional[str]:
+        """Resolve the configured or metadata-provided header for one value."""
+        header = data_headers[index] if index < len(data_headers) else None
+        if header or not isinstance(item, dict):
+            return header
+        return item.get("pvname") or item.get("name")
+
+    @staticmethod
+    def _last_point_timestamp_header(
+        header: str,
+        detector_names: Set[str],
+    ) -> str:
+        prefix = "TS-ISO8601-" if header in detector_names else "TS-"
+        return prefix + header
+
+    def _cache_last_point_item(
+        self,
+        last: Dict[str, Any],
+        index: int,
+        header: Optional[str],
+        item: Any,
+    ) -> None:
+        """Store one acquired item under its resolved or fallback header."""
+        if not header:
+            last[f"col{index}"] = item
+            return
+
+        last[header] = item
+
+    def _cache_last_point_timestamp(
+        self,
+        last: Dict[str, Any],
+        header: str,
+        item: Dict[str, Any],
+        detector_names: Set[str],
+    ) -> None:
+        """Store the timestamp associated with one metadata-bearing value."""
+        timestamp_header = self._last_point_timestamp_header(
+            header,
+            detector_names,
+        )
+        last[timestamp_header] = self._timestamp_to_iso(item.get("timestamp"))
 
     def _update_last_point_cache(
         self,
@@ -866,45 +934,22 @@ class BaseScan(ScanABC):
             self._update_data_column_provider_cache(last, include_timestamps)
         last["TS-ISO8601"] = line_ts_iso
 
-        # Build ordered data headers (one per dict in values)
-        data_headers: List[str] = []
-        detector_names = [ pv.pvname for pv in getattr(self, "detector_pvs", []) ]
-        data_headers += detector_names
-
-        for plugin in getattr(self, "plugins", []) or []:
-            try:
-                data_headers += plugin.get_headers(False)
-            except Exception:  # noqa: BLE001
-                logger.error("Failed to get headers from plugin %s", getattr(plugin, "name", plugin))
-
-        # Map each acquired dict to its header; fallback to pvname inside dict if present
-        for i, item in enumerate(values or []):
-            header: Optional[str] = data_headers[i] if i < len(data_headers) else None
-
-            if isinstance(item, dict):
-                header = header or item.get("pvname") or item.get("name")
-                if header:
-                    last[header] = item
-                    if include_timestamps:
-                        ts = item.get("timestamp")
-                        if ts is None:
-                            if header in detector_names:
-                                last["TS-ISO8601-" + header] = ""
-                            else:
-                                last["TS-" + header] = ""
-                        else:
-                            iso = datetime.fromtimestamp(float(ts)).astimezone().isoformat()
-                            if header in detector_names:
-                                last["TS-ISO8601-" + header] = iso
-                            else:
-                                last["TS-" + header] = iso
-                else:
-                    last[f"col{i}"] = item
-            else:
-                if header:
-                    last[header] = item
-                else:
-                    last[f"col{i}"] = item
+        data_headers, detector_names = self._last_point_data_headers()
+        for index, item in enumerate(values or []):
+            header = self._resolve_last_point_header(index, item, data_headers)
+            self._cache_last_point_item(
+                last,
+                index,
+                header,
+                item,
+            )
+            if include_timestamps and header and isinstance(item, dict):
+                self._cache_last_point_timestamp(
+                    last,
+                    header,
+                    item,
+                    detector_names,
+                )
 
         self._last_point = last
 
@@ -1047,6 +1092,19 @@ class BaseScan(ScanABC):
         except Exception:
             logger.exception("Error during scan cleanup step '%s'", label)
 
+    def _collect_plugin_point_data(
+        self,
+        index: int,
+        position: Any,
+    ) -> List[Any]:
+        """Run point plugins and expose each result to subsequent plugins."""
+        plugin_values: List[Any] = []
+        for plugin in self.plugins:
+            data = plugin.on_scan_point(index, position)
+            plugin_values.extend(data)
+            self.extend_current_row_cache(plugin.get_headers(False), data)
+        return plugin_values
+
     def _move_scan_step(
         self,
         positions: Dict[str, List[Any]],
@@ -1103,12 +1161,8 @@ class BaseScan(ScanABC):
             values=values,
         )
 
-        plugin_values = []
         with self._time_block("plugins", idx=index):
-            for plugin in self.plugins:
-                data = plugin.on_scan_point(index, position)
-                plugin_values += data
-                self.extend_current_row_cache(plugin.get_headers(False), data)
+            plugin_values = self._collect_plugin_point_data(index, position)
 
         values = values + plugin_values
         with self._time_block("write:data", idx=index):
@@ -1514,7 +1568,10 @@ class BaseScan(ScanABC):
             try:
                 self._fire_triggers("monitor")
             except Exception:
-                logger.exception(f"WORKER: Failed to fire monitor triggers (ev = {ev})")
+                logger.exception(
+                    "WORKER: Failed to fire monitor triggers (ev=%s)",
+                    ev,
+                )
 
     def _on_plugin_event(self, ev: PvEvent, _subscription: SubscriptionConfig) -> None:
         """

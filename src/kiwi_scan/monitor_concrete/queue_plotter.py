@@ -10,7 +10,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.monitor.row_format import MonitorRowFormatter
@@ -313,52 +313,69 @@ class QueuePlotterMonitor(BaseMonitor):
 
         self.logger.info("[%s] In monitor.loop(), driving Tkinter from this thread", threading.current_thread().name)
         plt = self._import_pyplot()
-        tk = getattr(self, '_tk', None)
-        if tk is None:
-            tk, _ttk = self._import_tk()
-            self._tk = tk
+        self._ensure_tk()
         plt.ion()
+
         fig = None
         try:
-            if self.plot_specs:
-                fig, axes = plt.subplots(
-                    len(self.plot_specs),
-                    1,
-                    figsize=(8, max(4, 3 * len(self.plot_specs))),
-                    squeeze=False,
-                )
-                axes_list = [row[0] for row in axes]
-            else:
-                fig, ax = plt.subplots(figsize=(8, 4))
-                axes_list = [ax]
-
-            while self.running or not self.queue.empty():
-                self._drain_queue()
-                self._update_tk()
-
-                if self.plot_specs:
-                    self._draw_plots(axes_list, fig)
-                else:
-                    axes_list[0].set_title("No live plots configured")
-                    fig.canvas.draw_idle()
-
-                plt.pause(0.05)
+            fig, axes = self._create_plot_canvas(plt)
+            self._run_plot_loop(plt, fig, axes)
         finally:
-            plt.ioff()
+            self._cleanup_gui(plt, fig)
 
-            if fig is not None:
-                try:
-                    plt.close(fig)
-                except Exception as exc:  # noqa: BLE001 - cleanup must not abort the scan
-                    self.logger.debug("Failed to close plot figure: %s", exc)
+    def _ensure_tk(self) -> None:
+        """Ensure the Tk module needed for GUI error handling is available."""
+        if getattr(self, "_tk", None) is not None:
+            return
 
-            if self.root is not None:
-                try:
-                    self.root.destroy()
-                except self._tk.TclError as exc:
-                    self.logger.debug("Failed to destroy Tk root window: %s", exc)
-                finally:
-                    self.root = None
+        tk, _ttk = self._import_tk()
+        self._tk = tk
+
+    def _create_plot_canvas(self, plt: Any) -> Tuple[Any, List[Any]]:
+        """Create the figure and axes required by the configured plots."""
+        if self.plot_specs:
+            fig, axes = plt.subplots(
+                len(self.plot_specs),
+                1,
+                figsize=(8, max(4, 3 * len(self.plot_specs))),
+                squeeze=False,
+            )
+            return fig, [row[0] for row in axes]
+
+        fig, ax = plt.subplots(figsize=(8, 4))
+        return fig, [ax]
+
+    def _run_plot_loop(self, plt: Any, fig: Any, axes: Sequence[Any]) -> None:
+        """Process queued points and refresh the live plots until stopped."""
+        while self.running or not self.queue.empty():
+            self._drain_queue()
+            self._update_tk()
+
+            if self.plot_specs:
+                self._draw_plots(axes, fig)
+            else:
+                axes[0].set_title("No live plots configured")
+                fig.canvas.draw_idle()
+
+            plt.pause(0.05)
+
+    def _cleanup_gui(self, plt: Any, fig: Any) -> None:
+        """Release Matplotlib and Tk resources without aborting the scan."""
+        plt.ioff()
+
+        if fig is not None:
+            try:
+                plt.close(fig)
+            except Exception as exc:  # noqa: BLE001 - cleanup must not abort the scan
+                self.logger.debug("Failed to close plot figure: %s", exc)
+
+        if self.root is not None:
+            try:
+                self.root.destroy()
+            except self._tk.TclError as exc:
+                self.logger.debug("Failed to destroy Tk root window: %s", exc)
+            finally:
+                self.root = None
 
     def _drain_queue(self) -> None:
         try:

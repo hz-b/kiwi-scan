@@ -110,9 +110,9 @@ enable = [
 
     ## Enable for maintainablility checks by cathegory
     "too-many-locals",
+    "too-many-statements",
+    "too-many-branches",
     ## FIXME
-    #"too-many-statements",
-    #"too-many-branches",
     #"too-many-return-statements",
     #"duplicate-code",
 

@@ -50,14 +50,82 @@ class CMScan(BaseScan):
 
             try:
                 actuator.set_velocity(orig_vel)
-                logger.info(f"Restored velocity for actuator {name} to {orig_vel}")
-            except Exception as e: # noqa BLE001
-                logger.error(f"Failed to restore velocity for actuator {name}: {e}")
+                logger.info(
+                    "Restored velocity for actuator %s to %s",
+                    name,
+                    orig_vel,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.error(
+                    "Failed to restore velocity for actuator %s: %s",
+                    name,
+                    exc,
+                )
 
     def stop(self) -> None:
         """Request CM scan stop and restore original actuator velocities."""
         super().stop()
         self._restore_original_velocities()
+
+    def _daq_stop_requested(self, index: int) -> bool:
+        """Return whether an event or the configured stop PV ended DAQ."""
+        if self._stop_requested.is_set():
+            return True
+
+        with self._time_block("stop:poll", idx=index):
+            stop_pv_value = self.get_stop_pv()
+        if stop_pv_value != 1:
+            return False
+
+        super().stop()
+        return True
+
+    def _read_daq_position(self):
+        """Return the synchronized position, polling RBV as a fallback."""
+        if self._position_sync_subscription_set:
+            return self._position
+
+        position = self.first_actuator.rbv
+        self._position = position
+        return position
+
+    def _acquire_daq_point(
+        self,
+        index: int,
+        position,
+        monitor: BaseMonitor = None,
+    ) -> None:
+        """Acquire, process, persist, and publish one continuous-motion point."""
+        with self._time_block("daq:point", idx=index):
+            with self._time_block("triggers:on_point", idx=index):
+                self._fire_triggers("on_point")
+
+            with self._time_block("read_detectors", idx=index):
+                values = self.read_detectors()
+            self.update_current_row_cache(
+                idx=index,
+                pos=position,
+                values=values,
+            )
+
+            with self._time_block("plugins", idx=index):
+                plugin_values = self._collect_plugin_point_data(
+                    index,
+                    position,
+                )
+            values = values + plugin_values
+
+            with self._time_block("write:data", idx=index):
+                monitor_values = self.save_to_file(
+                    position,
+                    values,
+                    self.include_timestamps,
+                )
+
+            with self._time_block("monitor:update", idx=index):
+                if monitor is not None:
+                    logger.debug("Monitor values: %s", monitor_values)
+                    monitor.update(monitor_values)
 
     def run_daq(self, monitor: BaseMonitor = None):
         """
@@ -81,24 +149,18 @@ class CMScan(BaseScan):
         )
         while True:
             logger.debug("run_daq: Entered cm scan loop")
-            if self._stop_requested.is_set():
+            if self._daq_stop_requested(index):
                 break
-            with self._time_block("stop:poll", idx=index):
-                stop_pv_value = self.get_stop_pv()
-            if stop_pv_value == 1:
-                super().stop()
-                break
+
             # heartbeat-driven tick plus all configured sync-role updates
             self._arm_sync_controller()
-            # self._wait_for_tick_or_timeout(self.sampletime)
             if self._stop_requested.is_set():
                 break
+
             with self._time_block("triggers:after_point", idx=index):
                 self._fire_triggers("after_point")
-            # --------------------------------------- block scan task
             with self._time_block("sync:wait", idx=index):
                 self._wait_for_sync(stop_event=self._stop_requested)
-            # ---------------------------------------
             if self._stop_requested.is_set():
                 break
 
@@ -111,11 +173,8 @@ class CMScan(BaseScan):
             # subscription. Poll the actuator RBV only when no such event has
             # been received.
             with self._time_block("position:read", idx=index):
-                if self._position_sync_subscription_set:
-                    pos = self._position
-                else:
-                    pos = self.first_actuator.rbv
-                    self._position = pos
+                pos = self._read_daq_position()
+
             with self._time_block("range:update", idx=index):
                 scan_finished = range_exit.update(pos)
             if scan_finished:
@@ -123,36 +182,119 @@ class CMScan(BaseScan):
                 break
             if not range_exit.entered:
                 continue
-            with self._time_block("daq:point", idx=index):
-                with self._time_block("triggers:on_point", idx=index):
-                    self._fire_triggers("on_point")
-                with self._time_block("read_detectors", idx=index):
-                    vals = self.read_detectors()
-                self.update_current_row_cache(idx=index, pos=pos, values=vals)
 
-                plugin_data = []
-                with self._time_block("plugins", idx=index):
-                    for plugin in self.plugins:
-                        data = plugin.on_scan_point(index, pos)
-                        plugin_data += data
-                        self.extend_current_row_cache(plugin.get_headers(False), data)
-                vals = vals + plugin_data
-
-                with self._time_block("write:data", idx=index):
-                    monitor_values = self.save_to_file(
-                        pos,
-                        vals,
-                        self.include_timestamps,
-                    )
-                # >>> Notify monitor/plotter
-                with self._time_block("monitor:update", idx=index):
-                    if monitor is not None:
-                        logger.debug("Monitor values: %s", monitor_values)
-                        monitor.update(monitor_values)
+            self._acquire_daq_point(index, pos, monitor)
             index += 1
             if self._maxindex > 0 and index >= self._maxindex:
                 super().stop()
                 break
+
+    def _move_to_start_positions(self) -> None:
+        """Move each scan actuator to its backlash-adjusted start position."""
+        with self._time_block("move:to_start"):
+            for dim in self.scan_dimensions:
+                name = dim.actuator
+                actuator = self.actuators[name]
+                backlash = (
+                    -actuator.backlash
+                    if dim.stop > dim.start
+                    else actuator.backlash
+                )
+                overshoot = dim.start + backlash
+                logger.info(
+                    "overshoot=%s, bdist=%s, backlash=%s",
+                    overshoot,
+                    backlash,
+                    actuator.backlash,
+                )
+                try:
+                    actuator.run_move(overshoot, sync=True)
+                    logger.info(
+                        "Started actuator '%s' moving to %s",
+                        name,
+                        dim.start,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to move actuator '%s': %s",
+                        name,
+                        exc,
+                    )
+
+    def _store_original_velocities(self) -> None:
+        """Read actuator velocities for best-effort restoration after the scan."""
+        with self._time_block("velocity:read"):
+            for name, actuator in self.actuators.items():
+                try:
+                    velocity = actuator.get_velocity()
+                    if velocity is None:
+                        logger.warning(
+                            "Could not read original velocity for actuator "
+                            "'%s'; velocity restore will be skipped",
+                            name,
+                        )
+                        continue
+                    self._original_velocities[name] = velocity
+                    logger.info(
+                        "Stored velocity for actuator '%s': %s",
+                        name,
+                        velocity,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "Could not read velocity for actuator '%s': %s",
+                        name,
+                        exc,
+                    )
+
+    def _start_continuous_motion(self) -> None:
+        """Apply configured velocities and start all continuous moves."""
+        with self._time_block("move:start"):
+            for dim in self.scan_dimensions:
+                name = dim.actuator
+                actuator = self.actuators[name]
+                try:
+                    actuator.set_velocity(dim.velocity)
+                    logger.info(
+                        "Set velocity of actuator '%s' to %s",
+                        name,
+                        dim.velocity,
+                    )
+                    actuator.run_move(
+                        dim.stop,
+                        sync=False,
+                        wait_startup=True,
+                    )
+                    logger.info(
+                        "Started actuator '%s' moving to %s",
+                        name,
+                        dim.stop,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.error(
+                        "Failed to configure/startup actuator '%s': %s",
+                        name,
+                        exc,
+                    )
+
+    def _cleanup_scan(self, monitor: BaseMonitor = None) -> None:
+        """Release scan resources without allowing one failure to block others."""
+        self._run_cleanup_step(
+            "velocity:restore",
+            self._restore_original_velocities,
+        )
+        self._run_cleanup_step("plugins:stop", self._end_plugins)
+        self._run_cleanup_step("plugins:close", self._close_plugins)
+        self._run_cleanup_step("metadata:stop", self._stop_metadata_monitor)
+        self._run_cleanup_step("subscriptions:stop", self._stop_subscriptions)
+        if monitor is not None:
+            self._run_cleanup_step("monitor:close", monitor.close)
+        self._run_cleanup_step(
+            "triggers:after",
+            lambda: self._fire_triggers("after"),
+        )
+        self.busyflag = False
+        self._run_cleanup_step("performance:report", self._perf_report)
 
     # ---------------- cm scan logic --------------------
     def scan(self, positions, monitor: BaseMonitor = None):
@@ -163,71 +305,27 @@ class CMScan(BaseScan):
         4) Run DAQ while 1st actuator is within range
         5) Restore original velocities
         """
+        del positions
+
         self.busyflag = True
         try:
             with self._time_block("plugins:start"):
                 self._start_plugins()
-            # 1) Move each actuator to start position
-            with self._time_block("move:to_start"):
-                for dim in self.scan_dimensions:
-                    name = dim.actuator
-                    actuator = self.actuators[name]
-                    bdist = -actuator.backlash if dim.stop > dim.start else actuator.backlash
-                    overshoot = dim.start + bdist
-                    logger.info(f"overshoot={overshoot}, bdist={bdist}, backlash={actuator.backlash}")
-                    try:
-                        actuator.run_move(overshoot, sync=True)
-                        logger.info(f"Started actuator '{name}' moving to {dim.start}")
-                    except Exception as e: # noqa BLE001
-                        logger.warning(f"Failed to move actuator '{name}': {e}")
-            # 2) Store all original velocities
-            with self._time_block("velocity:read"):
-                for name, actuator in self.actuators.items():
-                    try:
-                        vel = actuator.get_velocity()
-                        if vel is None:
-                            logger.warning("Could not read original velocity for actuator '%s'; velocity restore will be skipped", name)
-                            continue
-                        self._original_velocities[name] = vel
-                        logger.info(f"Stored velocity for actuator '{name}': {vel}")
-                    except Exception as e: # noqa BLE001
-                        logger.warning(f"Could not read velocity for actuator '{name}': {e}")
+            self._move_to_start_positions()
+            self._store_original_velocities()
 
-            # 3) Set target velocities and start each actuator
-            # start CA monitors BEFORE motion begins
             with self._time_block("metadata:start"):
                 self._start_metadata_monitor()
             with self._time_block("triggers:before"):
                 self._fire_triggers("before")
-            with self._time_block("move:start"):
-                for dim in self.scan_dimensions:
-                    name = dim.actuator
-                    actuator = self.actuators[name]
-                    try:
-                        actuator.set_velocity(dim.velocity)
-                        logger.info(f"Set velocity of actuator '{name}' to {dim.velocity}")
-                        actuator.run_move(dim.stop, sync=False, wait_startup=True)
-                        logger.info(f"Started actuator '{name}' moving to {dim.stop}")
-                    except Exception as e: # noqa BLE001
-                        logger.error(f"Failed to configure/startup actuator '{name}': {e}")
+            self._start_continuous_motion()
+
             with self._time_block("subscriptions:start"):
                 self._start_subscriptions()
-
-            # 4) DAQ loop on primary actuator
             with self._time_block("daq:run"):
                 self.run_daq(monitor)
         finally:
-            # A failure in one (independant) cleanup step must not leave the remaining scan resources active.
-            self._run_cleanup_step("velocity:restore", self._restore_original_velocities)
-            self._run_cleanup_step("plugins:stop", self._end_plugins)
-            self._run_cleanup_step("plugins:close", self._close_plugins)
-            self._run_cleanup_step("metadata:stop", self._stop_metadata_monitor)
-            self._run_cleanup_step("subscriptions:stop", self._stop_subscriptions)
-            if monitor is not None:
-                self._run_cleanup_step("monitor:close", monitor.close)
-            self._run_cleanup_step( "triggers:after", lambda: self._fire_triggers("after")) # expects no argument
-            self.busyflag = False
-            self._run_cleanup_step("performance:report", self._perf_report)
+            self._cleanup_scan(monitor)
 
     def execute(self):
         self._execute_standard(None)

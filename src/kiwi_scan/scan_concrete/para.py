@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import ScanConfig, SubscriptionConfig
@@ -212,6 +212,71 @@ class ParaScan(BaseScan):
             # not configure sync-role subscriptions.
             self._wait_for_tick_or_timeout(self.sampletime)
 
+    def _scan_stop_requested(self) -> bool:
+        """Return whether an event or the configured stop PV ended the scan."""
+        if self._stop_requested.is_set():
+            logger.debug("Stop event set")
+            return True
+        if self.get_stop_pv() != 1:
+            return False
+        logger.info("Stop PV triggered—aborting para scan.")
+        return True
+
+    def _snapshot_is_acquirable(
+        self,
+        snapshot: Dict[str, Any],
+        tolerances: Dict[str, float],
+    ) -> bool:
+        """Return whether a ready snapshot represents a new external step."""
+        if not self._all_actuators_ready():
+            logger.debug(
+                "Actuators in range but not ready yet: %s",
+                snapshot,
+            )
+            return False
+
+        if self._position_changed(
+            snapshot,
+            self._last_position_snapshot,
+            tolerances,
+        ):
+            return True
+
+        logger.debug(
+            "Skipping duplicate ready position snapshot: %s",
+            snapshot,
+        )
+        return False
+
+    def _wait_for_external_motion(self) -> bool:
+        """Wait for the next external step, returning False when stopped."""
+        while not self._stop_requested.is_set():
+            if self.get_stop_pv() == 1:
+                logger.info("Stop PV triggered—aborting para scan.")
+                self._stop_requested.set()
+                return False
+            if self._any_actuator_moving():
+                logger.debug("External para step startup detected")
+                return True
+            self._wait_cycle()
+        return False
+
+    def _cleanup_scan(self, monitor: Optional[BaseMonitor]) -> None:
+        """Release passive-scan resources using its established semantics."""
+        self._daq_is_on = False
+        self._stop_metadata_monitor()
+        if monitor is not None:
+            monitor.close()
+        try:
+            self._stop_subscriptions()
+        except Exception:
+            logger.exception("Error stopping scan subscriptions")
+        try:
+            self._fire_triggers("after")
+        finally:
+            self.busyflag = False
+            self._perf_report()
+
     def _acquire_point(
         self,
         index: int,
@@ -254,12 +319,11 @@ class ParaScan(BaseScan):
             with self._time_block("triggers:after_point", idx=index):
                 self._fire_triggers("after_point")
 
-            plugin_data: List[Any] = []
             with self._time_block("plugins", idx=index):
-                for plugin in self.plugins:
-                    data = plugin.on_scan_point(index, current_position)
-                    plugin_data += data
-                    self.extend_current_row_cache(plugin.get_headers(False), data)
+                plugin_data = self._collect_plugin_point_data(
+                    index,
+                    current_position,
+                )
             vals = vals + plugin_data
 
             with self._time_block("write:data", idx=index):
@@ -299,11 +363,7 @@ class ParaScan(BaseScan):
             self._fire_triggers("before")
 
             while True:
-                if self._stop_requested.is_set():
-                    logger.debug("Stop event set")
-                    break
-                if self.get_stop_pv() == 1:
-                    logger.info("Stop PV triggered—aborting para scan.")
+                if self._scan_stop_requested():
                     break
 
                 self._wait_cycle()
@@ -321,15 +381,7 @@ class ParaScan(BaseScan):
                     continue
 
                 have_recorded_inside_range = True
-
-                if not self._all_actuators_ready():
-                    logger.debug("Actuators in range but not ready yet: %s", snapshot)
-                    continue
-
-                if not self._position_changed(snapshot, self._last_position_snapshot, tolerances):
-                    # Stable, ready, and unchanged since the previous point.  This
-                    # is the passive scan's wait-for-external-step state.
-                    logger.debug("Skipping duplicate ready position snapshot: %s", snapshot)
+                if not self._snapshot_is_acquirable(snapshot, tolerances):
                     continue
 
                 self._acquire_point(index, snapshot, monitor)
@@ -337,36 +389,11 @@ class ParaScan(BaseScan):
                 if index >= self._maxindex:
                     break
 
-                # Idle state after DAQ:
-                # Do not allow another point only because the readback changed
-                # slightly after the integration window.  A new parasitical step
-                # starts only after at least one configured actuator reports
-                # moving/running.  The outer loop will then wait until all
-                # actuators are ready again before recording the next point.
-                while not self._stop_requested.is_set():
-                    if self.get_stop_pv() == 1:
-                        logger.info("Stop PV triggered—aborting para scan.")
-                        self._stop_requested.set()
-                        break
-                    if self._any_actuator_moving():
-                        logger.debug("External para step startup detected")
-                        break
-                    self._wait_cycle()
+                if not self._wait_for_external_motion():
+                    break
 
         finally:
-            self._daq_is_on = False
-            self._stop_metadata_monitor()
-            if monitor is not None:
-                monitor.close()
-            try:
-                self._stop_subscriptions()
-            except Exception:
-                logger.exception("Error stopping scan subscriptions")
-            try:
-                self._fire_triggers("after")
-            finally:
-                self.busyflag = False
-                self._perf_report()
+            self._cleanup_scan(monitor)
 
     def execute(self):
         self._execute_standard(None)
