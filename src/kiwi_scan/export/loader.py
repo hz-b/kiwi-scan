@@ -6,7 +6,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional, Sequence, Union
+from typing import Any, Dict, Optional, Sequence, Union
 
 from kiwi_scan.data.loader import DataLoader
 from kiwi_scan.data.manifestwriter import ManifestResolver
@@ -21,6 +21,7 @@ PathLike = Union[str, Path]
 
 class EmptyScanDataError(ValueError):
     """Raised when a scan file exists but contains no scan data."""
+
 
 def _contains_non_comment_content(path: Path) -> bool:
     """Return True when *path* contains at least one non-empty, non-comment line."""
@@ -193,14 +194,89 @@ def load_export_bundle_from_scan_file(
     return bundle
 
 
+def _load_manifest_scan_entry(
+    manifest_path: Path,
+    entry: Dict[str, Any],
+    index: int,
+    *,
+    include_metadata: bool,
+    skip_missing_data: bool,
+) -> Optional[ExportScan]:
+    """Load one manifest entry, or return ``None`` when it should be skipped."""
+    scan_id = entry.get("id") or f"scan_{index}"
+    logger.debug(
+        "Processing manifest scan entry index=%d id=%r",
+        index,
+        scan_id,
+    )
+    scan_directory = _resolve_reference_path(manifest_path, entry.get("path"))
+    if scan_directory is not None and not scan_directory.is_dir():
+        logger.debug(
+            "Manifest scan path is not an existing directory: %s",
+            scan_directory,
+        )
+
+    data_file = _resolve_reference_path(
+        manifest_path,
+        entry.get("data_file"),
+        extra_bases=(scan_directory,),
+    )
+    metadata_file = _resolve_reference_path(
+        manifest_path,
+        entry.get("metadata_file"),
+        extra_bases=(scan_directory,),
+    )
+
+    if data_file is None or not data_file.exists():
+        message = (
+            f"Manifest scan {scan_id!r} refers to missing data file: {data_file}"
+        )
+        if skip_missing_data:
+            logger.warning("%s; skipping", message)
+            return None
+        raise FileNotFoundError(message)
+
+    try:
+        data = _load_scan_dataframe(data_file, data_file.parent)
+    except EmptyScanDataError as exc:
+        logger.warning(
+            "Skipping manifest scan %r because its data file is empty: %s",
+            scan_id,
+            data_file,
+        )
+        logger.debug("Empty scan details: %s", exc)
+        return None
+
+    metadata = _load_metadata(metadata_file, include_metadata)
+    logger.debug(
+        "Loaded manifest scan index=%d id=%r data=%s metadata=%s rows=%d columns=%d",
+        index,
+        scan_id,
+        data_file,
+        metadata_file,
+        len(data),
+        len(data.columns),
+    )
+    return ExportScan(
+        scan_id=scan_id,
+        scan_type=entry.get("scan_type"),
+        data_file=data_file,
+        metadata_file=metadata_file,
+        data=data,
+        metadata=metadata,
+        created_at=_parse_datetime(entry.get("created_at")),
+        manifest_entry=dict(entry),
+    )
+
+
 def load_export_bundle_from_manifest(
     manifest_file: PathLike,
     *,
     include_metadata: bool = True,
     skip_missing_data: bool = False,
 ) -> ExportBundle:
-    """ 
-    Load all scan files from one manifest into an export bundle.
+    """Load all scan files from one manifest into an export bundle.
+
     Manifest scan order is preserved. ``#S 1``, ``#S 2`` then match the scan series.
     """
     manifest_path = Path(manifest_file).expanduser()
@@ -211,76 +287,35 @@ def load_export_bundle_from_manifest(
     manifest_data = ManifestResolver.load_manifest(manifest_path)
     scans_raw = manifest_data.get("scans") or []
     if not isinstance(scans_raw, list):
-        raise TypeError(f"Manifest {manifest_path} has invalid 'scans' section; expected a list")
+        raise TypeError(
+            f"Manifest {manifest_path} has invalid 'scans' section; expected a list"
+        )
 
     logger.debug("Manifest contains %d raw scan entries", len(scans_raw))
     export_scans = []
-    skipped_empty = 0  # ignore empty data files
     for index, entry in enumerate(scans_raw, start=1):
         if not isinstance(entry, dict):
-            logger.warning("Skipping invalid manifest scan entry at index %d: %r", index, entry)
-            continue
-
-        logger.debug("Processing manifest scan entry index=%d id=%r", index, entry.get("id"))
-        entry_dir = _resolve_reference_path(manifest_path, entry.get("path"))
-        if entry_dir is not None and not entry_dir.is_dir():
-            logger.debug("Manifest scan path is not an existing directory: %s", entry_dir)
-
-        data_path = _resolve_reference_path(
-            manifest_path,
-            entry.get("data_file"),
-            extra_bases=(entry_dir,),
-        )
-        metadata_path = _resolve_reference_path(
-            manifest_path,
-            entry.get("metadata_file"),
-            extra_bases=(entry_dir,),
-        )
-
-        if data_path is None or not data_path.exists():
-            message = "Manifest scan {!r} refers to missing data file: {}".format(
-                entry.get("id", index),
-                data_path,
-            )
-            if skip_missing_data:
-                logger.warning("%s; skipping", message)
-                continue
-            raise FileNotFoundError(message)
-
-        try:
-            df = _load_scan_dataframe(data_path, data_path.parent)
-        except EmptyScanDataError as exc:
-            skipped_empty += 1
             logger.warning(
-                "Skipping manifest scan %r because its data file is empty: %s",
-                entry.get("id", index),
-                data_path,
+                "Skipping invalid manifest scan entry at index %d: %r",
+                index,
+                entry,
             )
-            logger.debug("Empty scan details: %s", exc)
             continue
 
-        metadata = _load_metadata(metadata_path, include_metadata)
-        logger.debug(
-            "Loaded manifest scan index=%d id=%r data=%s metadata=%s rows=%d columns=%d",
-            index, entry.get("id"), data_path, metadata_path, len(df), len(df.columns),
+        scan = _load_manifest_scan_entry(
+            manifest_path,
+            entry,
+            index,
+            include_metadata=include_metadata,
+            skip_missing_data=skip_missing_data,
         )
-        export_scans.append(
-            ExportScan(
-                scan_id=entry.get("id") or f"scan_{index}",
-                scan_type=entry.get("scan_type"),
-                data_file=data_path,
-                metadata_file=metadata_path,
-                data=df,
-                metadata=metadata,
-                created_at=_parse_datetime(entry.get("created_at")),
-                manifest_entry=dict(entry),
-            )
-        )
+
+        if scan is not None:
+            export_scans.append(scan)
 
     logger.debug(
-        "Created manifest export bundle scans=%d skipped_empty=%d manifest=%s",
+        "Created manifest export bundle scans=%d manifest=%s",
         len(export_scans),
-        skipped_empty,
         manifest_path,
     )
     return ExportBundle(

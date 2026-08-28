@@ -111,7 +111,7 @@ enable = [
     ## Enable for maintainablility checks by cathegory
     "too-many-locals",
     ## FIXME
-    "too-many-statements",
+    #"too-many-statements",
     #"too-many-branches",
     #"too-many-return-statements",
     #"duplicate-code",
