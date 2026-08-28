@@ -419,7 +419,7 @@ class TestCMScanExecution(CMScanTestCase):
         monitor.close.side_effect = RuntimeError("monitor close failed")
 
         with self.assertLogs(
-            "kiwi_scan.scan_concrete.cm",
+            "kiwi_scan.scan.common",
             level="ERROR",
         ), self.assertRaisesRegex(RuntimeError, "scan failed"):
             scan.scan({}, monitor)

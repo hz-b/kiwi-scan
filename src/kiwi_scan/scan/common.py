@@ -403,8 +403,11 @@ class BaseScan(ScanABC):
         delay = scheduled_sample_time - now
         if delay > 0:
             time.sleep(delay)
-        logger.debug( f"delay = {delay:.6f}, start time = {datetime.fromtimestamp(start_time, tz=timezone.utc).strftime('%H:%M:%S.%f')}, "
-                f"scheduled time = {datetime.fromtimestamp(scheduled_sample_time, tz=timezone.utc).strftime('%H:%M:%S.%f')}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug("delay = %.6f, start time = %s, scheduled time = %s", delay,
+                datetime.fromtimestamp(start_time, tz=timezone.utc).strftime( "%H:%M:%S.%f"),
+                datetime.fromtimestamp( scheduled_sample_time, tz=timezone.utc,).strftime("%H:%M:%S.%f"),
+            )
 
     def get_data_writing_enabled(self) -> bool:
         with self._data_writer_lock:
@@ -540,7 +543,7 @@ class BaseScan(ScanABC):
                 else:
                     readings.append(reading)
             except Exception as e:  # noqa BLE001 
-                logger.error(f"Failed to read metadata for PV {pv.pvname}, {e}")
+                logger.error("Failed to read metadata for PV %s, %s", pv.pvname, e)
                 readings.append(None)
             # logger.debug("PV %s → %r", pv.pvname, reading)
         return readings
@@ -797,7 +800,7 @@ class BaseScan(ScanABC):
         """
         Write one scan row and return the same concrete row values.
         """
-        logger.debug(f"Detector values to be written: {detector_values}")
+        logger.debug("Detector values to be written: %s", detector_values)
 
         # Independent per-line timestamp time zone aware (ISO 8601)
         line_ts_iso = datetime.now().astimezone().isoformat()
@@ -831,7 +834,7 @@ class BaseScan(ScanABC):
         # TODO: output format from cfg (as in print monitor)
         with open(self.output_file, "a", encoding="utf-8") as file:
             line = "\t".join(self._format_scan_value(value) for value in row_values) + "\n"
-            logger.debug(f"Save line to file:{line}")
+            logger.debug("Save line to file: %s", line)
             file.write(line)
 
         return row_values
@@ -979,14 +982,22 @@ class BaseScan(ScanABC):
         if self.stop_pv:
             try:
                 value = self.stop_pv.get()
-                logger.info(f"Scan stop PV value received: {value}")
+                logger.info("Scan stop PV value received: %s", value)
             except Exception as e: # noqa: BLE001
-                logger.error(f"Failed to get stop PV {self.stop_pv.pvname}: {e}")
+                logger.error(
+                    "Failed to get stop PV %s: %s",
+                    self.stop_pv.pvname,
+                    e,
+                )
             if value == 1:
                 try:
                     self.stop_pv.put(0)
                 except Exception as e: # noqa: BLE001
-                    logger.error(f"Failed to reset stop PV {self.stop_pv.pvname}: {e}")
+                    logger.error(
+                        "Failed to reset stop PV %s: %s",
+                        self.stop_pv.pvname,
+                        e,
+                    )
         return value
     
     def _start_plugins(self) -> None:
@@ -1024,6 +1035,97 @@ class BaseScan(ScanABC):
             except Exception:
                 logger.exception("Failed to close plugin %s", getattr(plugin, "name", plugin))
 
+    def _run_cleanup_step(
+        self,
+        label: str,
+        cleanup: Callable[[], Any],
+    ) -> None:
+        """Run one cleanup operation without preventing later cleanup steps."""
+        try:
+            with self._time_block(label):
+                cleanup()
+        except Exception:
+            logger.exception("Error during scan cleanup step '%s'", label)
+
+    def _move_scan_step(
+        self,
+        positions: Dict[str, List[Any]],
+        index: int,
+    ) -> bool:
+        """Issue all actuator moves for one scan step.
+
+        Return ``False`` if a stop was requested before all moves were issued.
+        """
+        self._daq_is_on = False
+        for name, actuator in self.actuators.items():
+            if name not in positions:
+                continue
+
+            target = positions[name][index]
+            if self._stop_requested.is_set():
+                logger.info("Stop requested—skipping remaining move commands.")
+                return False
+
+            logger.info("[%s] moving to %s", name, target)
+            actuator.move(target)
+
+        return not self._stop_requested.is_set()
+
+    def _acquire_scan_point(
+        self,
+        index: int,
+        position: Any,
+        monitor: Optional[BaseMonitor],
+    ) -> bool:
+        """Acquire, process, save, and publish one scan point.
+
+        Return ``False`` if acquisition was interrupted during integration.
+        """
+        self._reset_data_column_provider_windows()
+        self._daq_is_on = True
+
+        with self._time_block("triggers:on_point", idx=index):
+            self._fire_triggers("on_point")
+
+        if self.integration_time > 0.0:
+            logger.info("DAQ for integration_time = %s", self.integration_time)
+            if self._stop_requested.wait(self.integration_time):
+                logger.info("Stop requested during integration time")
+                return False
+        else:
+            logger.info("integration_time = %s", self.integration_time)
+
+        with self._time_block("read_detectors", idx=index):
+            values = self.read_detectors()
+        self.update_current_row_cache(
+            idx=index,
+            pos=position,
+            values=values,
+        )
+
+        plugin_values = []
+        with self._time_block("plugins", idx=index):
+            for plugin in self.plugins:
+                data = plugin.on_scan_point(index, position)
+                plugin_values += data
+                self.extend_current_row_cache(plugin.get_headers(False), data)
+
+        values = values + plugin_values
+        with self._time_block("write:data", idx=index):
+            monitor_values = self.save_to_file(
+                position,
+                values,
+                self.include_timestamps,
+            )
+
+        self._position = position
+        with self._time_block("monitor:update", idx=index):
+            if monitor is not None:
+                logger.debug("Monitor values: %s", monitor_values)
+                monitor.update(monitor_values)
+
+        return True
+
     def scan(self, positions, monitor: BaseMonitor = None):
         """
         Parallel multi-actuator scan:
@@ -1038,8 +1140,8 @@ class BaseScan(ScanABC):
             self.write_header_to_output_file()
             self._start_plugins()
             self._start_subscriptions()
-            logger.debug(f"Actuators: {list(self.actuators)}")
-            logger.debug(f"Requested positions: {positions}")
+            logger.debug("Actuators: %s", list(self.actuators))
+            logger.debug("Requested positions: %s", positions)
             self._start_metadata_monitor()
 
             # prepare new_positions and tell us if we added an overshoot step
@@ -1050,33 +1152,22 @@ class BaseScan(ScanABC):
                 return
 
             # how many total steps (includes overshoot if applied)
-            n_steps = len(next(iter(new_positions.values())))
+            step_count = len(next(iter(new_positions.values())))
+            first_actuator = next(iter(new_positions))
 
             self._fire_triggers("before")
-            for idx in range(n_steps):
+            for index in range(step_count):
                 if self._stop_requested.is_set():
-                    logger.info("Stop requested—aborting scan before step %d.", idx)
+                    logger.info("Stop requested—aborting scan before step %d.", index)
                     break
 
-                self._daq_is_on = False
-                # 1) broadcast every move
-                for name, act in self.actuators.items():
-                    if name not in new_positions:
-                        continue
-                    tgt = new_positions[name][idx]
-                    if self._stop_requested.is_set():
-                        logger.info("Stop requested—skipping remaining move commands.")
-                        break
-                    logger.info(f"[{name}] moving to {tgt}")
-                    act.move(tgt)
-
-                if self._stop_requested.is_set():
+                if not self._move_scan_step(new_positions, index):
                     break
 
                 # 2) wait for all in parallel
                 self._parallel_wait(
                     {name: self.actuators[name] for name in new_positions},
-                    {name: new_positions[name][idx] for name in new_positions}
+                    {name: new_positions[name][index] for name in new_positions}
                 )
 
                 if self._stop_requested.is_set():
@@ -1084,43 +1175,13 @@ class BaseScan(ScanABC):
                     break
 
                 # 3) skip detector‐read on the overshoot step
-                if overshoot_applied and idx == 0:
+                if overshoot_applied and index == 0:
                     continue
 
                 # 4) read detectors & save & monitor
-                self._reset_data_column_provider_windows()
-                self._daq_is_on = True
-                with self._time_block("triggers:on_point", idx=idx):
-                    self._fire_triggers("on_point")
-                if self.integration_time > 0.0:
-                    logger.info(f"DAQ for integration_time = {self.integration_time}")
-                    if self._stop_requested.wait(self.integration_time):
-                        logger.info("Stop requested during integration time")
-                        break
-                else:
-                    logger.info(f"integration_time = {self.integration_time}")
-                ## pos_snapshot = {n: new_positions[n][idx] for n in new_positions}
-                first_actuator = next(iter(new_positions))
-                pos_snapshot = new_positions[first_actuator][idx]
-                with self._time_block("read_detectors", idx=idx):
-                    vals = self.read_detectors()
-                self.update_current_row_cache(idx=idx, pos=pos_snapshot, values=vals)
-                # Collect plugin data and append to detector values
-                plugin_data = []
-                with self._time_block("plugins", idx=idx):
-                    for plugin in self.plugins:
-                        data = plugin.on_scan_point(idx, pos_snapshot)
-                        plugin_data = plugin_data + data
-                        self.extend_current_row_cache(plugin.get_headers(False), data)
-                vals = vals + plugin_data
-                with self._time_block("write:data", idx=idx):
-                    monitor_values = self.save_to_file(pos_snapshot, vals, self.include_timestamps)
-                self._position = pos_snapshot 
-                # >>> Notify monitor/plotter
-                with self._time_block("monitor:update", idx=idx):
-                    if monitor is not None:
-                        logger.debug(f"{monitor_values}")
-                        monitor.update(monitor_values)
+                position = new_positions[first_actuator][index]
+                if not self._acquire_scan_point(index, position, monitor):
+                    break
 
                 # 5) abort if needed
                 if self.get_stop_pv() == 1:
@@ -1132,21 +1193,14 @@ class BaseScan(ScanABC):
         
         finally:
             self._daq_is_on = False
-            try:
-                self._end_plugins()
-            finally:
-                self._close_plugins()
-            self._stop_metadata_monitor()
-
+            self._run_cleanup_step("plugins:stop", self._end_plugins)
+            self._run_cleanup_step("plugins:close", self._close_plugins)
+            self._run_cleanup_step("metadata:stop", self._stop_metadata_monitor)
+            self._run_cleanup_step("subscriptions:stop", self._stop_subscriptions)
             if monitor is not None:
-                monitor.close()
-
-            try:
-                self._stop_subscriptions()
-            except Exception:
-                logger.exception("Error stopping scan subscriptions")
+                self._run_cleanup_step("monitor:close", monitor.close)
             self.busyflag = False
-            self._perf_report()
+            self._run_cleanup_step("performance:report", self._perf_report)
     
     def _execute_standard(self, positions):
         if self.get_data_writing_enabled():

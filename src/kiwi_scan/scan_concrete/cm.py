@@ -59,14 +59,6 @@ class CMScan(BaseScan):
         super().stop()
         self._restore_original_velocities()
 
-    def _run_cleanup_step(self, label, cleanup) -> None:
-        """ Run cleanup operation without preventing later cleanup by gracefully handling exceptions. TODO: move to common """
-        try:
-            with self._time_block(label):
-                cleanup()
-        except Exception:
-            logger.exception("Error during CM scan cleanup step '%s'", label)
-
     def run_daq(self, monitor: BaseMonitor = None):
         """
         DAQ loop driven by heartbeat subscription when available.
@@ -155,7 +147,7 @@ class CMScan(BaseScan):
                 # >>> Notify monitor/plotter
                 with self._time_block("monitor:update", idx=index):
                     if monitor is not None:
-                        logger.debug(f"{monitor_values}")
+                        logger.debug("Monitor values: %s", monitor_values)
                         monitor.update(monitor_values)
             index += 1
             if self._maxindex > 0 and index >= self._maxindex:

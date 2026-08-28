@@ -358,6 +358,146 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         self.assertTrue(missing.use_monitor)
         self.assertTrue(broken.use_monitor)
 
+    def test_move_scan_step_moves_configured_actuators(self):
+        scan = DummyScan()
+        scan._stop_requested = threading.Event()
+        scan._daq_is_on = True
+        energy = MagicMock()
+        gap = MagicMock()
+        unused = MagicMock()
+        scan.actuators = {
+            "energy": energy,
+            "gap": gap,
+            "unused": unused,
+        }
+
+        completed = scan._move_scan_step(
+            {
+                "energy": [1.0, 2.0],
+                "gap": [10.0, 20.0],
+            },
+            1,
+        )
+
+        self.assertTrue(completed)
+        self.assertFalse(scan._daq_is_on)
+        energy.move.assert_called_once_with(2.0)
+        gap.move.assert_called_once_with(20.0)
+        unused.move.assert_not_called()
+
+    def test_move_scan_step_stops_before_remaining_moves(self):
+        scan = DummyScan()
+        scan._stop_requested = threading.Event()
+        scan._daq_is_on = True
+        first = MagicMock()
+        second = MagicMock()
+        first.move.side_effect = lambda _target: scan._stop_requested.set()
+        scan.actuators = {"first": first, "second": second}
+
+        completed = scan._move_scan_step(
+            {"first": [1.0], "second": [2.0]},
+            0,
+        )
+
+        self.assertFalse(completed)
+        first.move.assert_called_once_with(1.0)
+        second.move.assert_not_called()
+
+    def test_acquire_scan_point_processes_and_publishes_values(self):
+        scan = DummyScan()
+        scan._perf_enabled = False
+        scan._stop_requested = threading.Event()
+        scan._reset_data_column_provider_windows = MagicMock()
+        scan._fire_triggers = MagicMock()
+        scan.integration_time = 0.0
+        detector_values = [{"value": 3.0}]
+        scan.read_detectors = MagicMock(return_value=detector_values)
+        scan.update_current_row_cache = MagicMock()
+        plugin = MagicMock()
+        plugin.on_scan_point.return_value = [{"value": 4.0}]
+        plugin.get_headers.return_value = ["PluginValue"]
+        scan.plugins = [plugin]
+        scan.extend_current_row_cache = MagicMock()
+        scan.include_timestamps = False
+        scan.save_to_file = MagicMock(return_value=[2.0, 3.0, 4.0])
+        monitor = MagicMock()
+
+        completed = scan._acquire_scan_point(5, 2.0, monitor)
+
+        self.assertTrue(completed)
+        self.assertTrue(scan._daq_is_on)
+        self.assertEqual(scan._position, 2.0)
+        scan._reset_data_column_provider_windows.assert_called_once_with()
+        scan._fire_triggers.assert_called_once_with("on_point")
+        scan.update_current_row_cache.assert_called_once_with(
+            idx=5,
+            pos=2.0,
+            values=detector_values,
+        )
+        plugin.on_scan_point.assert_called_once_with(5, 2.0)
+        scan.extend_current_row_cache.assert_called_once_with(
+            ["PluginValue"],
+            [{"value": 4.0}],
+        )
+        scan.save_to_file.assert_called_once_with(
+            2.0,
+            [{"value": 3.0}, {"value": 4.0}],
+            False,
+        )
+        monitor.update.assert_called_once_with([2.0, 3.0, 4.0])
+
+    def test_acquire_scan_point_stops_during_integration(self):
+        scan = DummyScan()
+        scan._perf_enabled = False
+        scan._stop_requested = threading.Event()
+        scan._stop_requested.set()
+        scan._reset_data_column_provider_windows = MagicMock()
+        scan._fire_triggers = MagicMock()
+        scan.integration_time = 1.0
+        scan.read_detectors = MagicMock()
+
+        completed = scan._acquire_scan_point(0, 1.0, None)
+
+        self.assertFalse(completed)
+        scan.read_detectors.assert_not_called()
+
+    def test_scan_cleanup_continues_and_preserves_original_error(self):
+        scan = DummyScan()
+        scan._perf_enabled = False
+        scan._stop_requested = threading.Event()
+        scan.write_header_to_output_file = MagicMock(
+            side_effect=RuntimeError("scan failed")
+        )
+        scan._end_plugins = MagicMock(
+            side_effect=RuntimeError("plugin stop failed")
+        )
+        scan._close_plugins = MagicMock()
+        scan._stop_metadata_monitor = MagicMock(
+            side_effect=RuntimeError("metadata stop failed")
+        )
+        scan._stop_subscriptions = MagicMock(
+            side_effect=RuntimeError("subscription stop failed")
+        )
+        scan._perf_report = MagicMock()
+        monitor = MagicMock()
+        monitor.close.side_effect = RuntimeError("monitor close failed")
+
+        with patch(
+            "kiwi_scan.scan.common.ensure_ca_context"
+        ), self.assertLogs(
+            "kiwi_scan.scan.common",
+            level="ERROR",
+        ), self.assertRaisesRegex(RuntimeError, "scan failed"):
+            scan.scan({}, monitor)
+
+        scan._end_plugins.assert_called_once_with()
+        scan._close_plugins.assert_called_once_with()
+        scan._stop_metadata_monitor.assert_called_once_with()
+        scan._stop_subscriptions.assert_called_once_with()
+        monitor.close.assert_called_once_with()
+        scan._perf_report.assert_called_once_with()
+        self.assertFalse(scan.busyflag)
+
     def test_metadata_drop_count_supports_method_attribute_and_bad_values(self):
         scan = DummyScan()
 
