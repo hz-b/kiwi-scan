@@ -4,12 +4,11 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Optional, Sequence, Union
 
 from kiwi_scan.data.loader import DataLoader
-from kiwi_scan.data.manifestwriter import ManifestResolver
+from kiwi_scan.data.manifestwriter import ManifestResolver, parse_manifest_datetime
 from kiwi_scan.data.metadata_loader import parse_metadata_file
 
 from .model import ExportBundle, ExportScan
@@ -34,21 +33,6 @@ def _contains_non_comment_content(path: Path) -> bool:
             if stripped and not stripped.startswith("#"):
                 return True
     return False
-
-def _parse_datetime(value: Any) -> Optional[datetime]:
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        dt = value
-    else:
-        try:
-            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-        except ValueError:
-            return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt
-
 
 def _resolve_reference_path(
     manifest_file: Path,
@@ -264,7 +248,7 @@ def _load_manifest_scan_entry(
         metadata_file=metadata_file,
         data=data,
         metadata=metadata,
-        created_at=_parse_datetime(entry.get("created_at")),
+        created_at=parse_manifest_datetime(entry.get("created_at")),
         manifest_entry=dict(entry),
     )
 

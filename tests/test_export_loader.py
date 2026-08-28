@@ -9,12 +9,13 @@ from unittest.mock import Mock, call, patch
 
 import pandas as pd
 
+from kiwi_scan.data.manifestwriter import parse_manifest_datetime
+
 from kiwi_scan.export.loader import (
     EmptyScanDataError,
     _contains_non_comment_content,
     _load_metadata,
     _load_scan_dataframe,
-    _parse_datetime,
     _resolve_reference_path,
     load_export_bundle_from_latest_manifest,
     load_export_bundle_from_manifest,
@@ -70,17 +71,17 @@ class TestParseDatetime(unittest.TestCase):
         )
         naive = aware.replace(tzinfo=None)
 
-        self.assertIs(_parse_datetime(aware), aware)
+        self.assertIs(parse_manifest_datetime(aware), aware)
         self.assertEqual(
-            _parse_datetime(naive),
+            parse_manifest_datetime(naive),
             naive.replace(tzinfo=timezone.utc),
         )
         self.assertEqual(
-            _parse_datetime("2026-08-26T08:30:00Z"),
+            parse_manifest_datetime("2026-08-26T08:30:00Z"),
             datetime(2026, 8, 26, 8, 30, tzinfo=timezone.utc),
         )
-        self.assertIsNone(_parse_datetime(None))
-        self.assertIsNone(_parse_datetime("not-a-timestamp"))
+        self.assertIsNone(parse_manifest_datetime(None))
+        self.assertIsNone(parse_manifest_datetime("not-a-timestamp"))
 
 
 class TestResolveReferencePath(TemporaryDirectoryTestCase):

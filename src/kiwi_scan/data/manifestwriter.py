@@ -19,6 +19,24 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+
+def parse_manifest_datetime(value: Any) -> Optional[datetime]:
+    """Parse a manifest datetime value and normalize naive values to UTC."""
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        dt = value
+    else:
+        try:
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        except ValueError:
+            return None
+
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
 def get_package_version(package_name: str = "kiwi-scan") -> str:
     """ TODO: move into tool subpackage """
     try:
@@ -113,8 +131,6 @@ class ManifestWriter:
                 cls.logger.exception("Failed to create fallback manifest")
                 return None
 
-            return None
-
         path = Path(filename).expanduser()
         if not path.is_file():
             cls.logger.warning("Active manifest does not exist anymore: %s", path)
@@ -125,7 +141,6 @@ class ManifestWriter:
             except Exception:
                 cls.logger.exception("Failed to create replacement manifest")
                 return None
-            return None
 
         cls.logger.info("Using active manifest: %s", filename)
         return cls(filename)
@@ -646,7 +661,7 @@ class ManifestResolver:
                 ManifestScanRef(
                     manifest_file=path,
                     scan_id=entry.get("id"),
-                    created_at=self._parse_datetime(entry.get("created_at")),
+                    created_at=parse_manifest_datetime(entry.get("created_at")),
                     data_file=self._resolve_ref_path(path, entry.get("data_file")),
                     metadata_file=self._resolve_ref_path(path, entry.get("metadata_file")),
                     scan_type=entry.get("scan_type"),
@@ -919,7 +934,7 @@ class ManifestResolver:
                 self.logger.debug( "Manifest section in %s is not a mapping; using file modification time", path)
             else:
                 created_at = manifest.get("created_at")
-                dt = self._parse_datetime(created_at)
+                dt = parse_manifest_datetime(created_at)
                 if dt is not None:
                     try:
                         return dt.timestamp()
@@ -956,19 +971,3 @@ class ManifestResolver:
             f"{', '.join(str(candidate.parent) for candidate in candidates)}; using {candidates[0]}"
         )
         return candidates[0]
-
-    @staticmethod
-    def _parse_datetime(value: Any) -> Optional[datetime]:
-        if value is None:
-            return None
-        if isinstance(value, datetime):
-            dt = value
-        else:
-            try:
-                dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-            except ValueError:
-                return None
-
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
