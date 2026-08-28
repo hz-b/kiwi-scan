@@ -108,9 +108,10 @@ enable = [
     ## API/inheritance problems
     "arguments-differ",
 
-    ## Maintainability particularly relevant to generated code
+    ## Enable for maintainablility checks by cathegory
     "too-many-locals",
-    #"too-many-statements",
+    ## FIXME
+    "too-many-statements",
     #"too-many-branches",
     #"too-many-return-statements",
     #"duplicate-code",

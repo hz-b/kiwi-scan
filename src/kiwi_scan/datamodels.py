@@ -356,6 +356,49 @@ class ScanConfig:
 
         self.subscriptions = validated_subscriptions
 
+    @staticmethod
+    def _parse_dimensions(
+        config_dict: Dict[str, Any],
+        key: str,
+    ) -> Optional[List[ScanDimension]]:
+        dimensions = config_dict.get(key)
+        if dimensions is None:
+            return None
+        return [
+            ScanDimension.from_dict(dimension)
+            for dimension in dimensions
+            if isinstance(dimension, dict)
+        ]
+
+    @staticmethod
+    def _parse_subscriptions(
+        config_dict: Dict[str, Any],
+    ) -> List[SubscriptionConfig]:
+        subscriptions_raw = config_dict.get("subscriptions", [])
+        if subscriptions_raw is None:
+            subscriptions_raw = []
+        if not isinstance(subscriptions_raw, list):
+            raise TypeError("'subscriptions' must be a list of mappings")
+
+        subscriptions = []
+        for index, subscription_data in enumerate(subscriptions_raw):
+            try:
+                subscriptions.append(SubscriptionConfig.from_dict(subscription_data))
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid subscriptions[{index}]: {exc}") from exc
+        return subscriptions
+
+    @staticmethod
+    def _parse_manifest_mode(config_dict: Dict[str, Any]) -> str:
+        manifest_mode = str(config_dict.get("manifest_mode", "full")).strip().lower()
+        if manifest_mode not in {"full", "small", "off"}:
+            raise ValueError(
+                "manifest_mode must be one of: full, small, off "
+                f"(got {config_dict.get('manifest_mode')!r})"
+            )
+        logger.debug("manifest_mode: %s", manifest_mode)
+        return manifest_mode
+
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> "ScanConfig":
         known_keys = {f.name for f in fields(cls)}
@@ -366,38 +409,13 @@ class ScanConfig:
             if isinstance(cfg, dict)
         }
 
-        def parse_dimensions(key: str) -> Optional[List[ScanDimension]]:
-            dims = config_dict.get(key)
-            if dims is None:
-                return None
-            return [ScanDimension.from_dict(d) for d in dims if isinstance(d, dict)]
-
         triggers_raw = config_dict.get("triggers", None)
-        # logger.info(f"TRIGGERS_RAW:{triggers_raw}<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<")
         triggers = ScanTriggers.from_dict(triggers_raw) if triggers_raw else None
 
-        # Parse and validate subscriptions
-        subscriptions_raw = config_dict.get("subscriptions", [])
-        if subscriptions_raw is None:
-            subscriptions_raw = []
-        if not isinstance(subscriptions_raw, list):
-            raise TypeError("'subscriptions' must be a list of mappings")
-
-        subs = []
-        for index, sub_data in enumerate(subscriptions_raw):
-            try:
-                subs.append(SubscriptionConfig.from_dict(sub_data))
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f"Invalid subscriptions[{index}]: {exc}") from exc
-
+        subscriptions = cls._parse_subscriptions(config_dict)
         monitor = MonitorConfig.from_dict(config_dict.get("monitor"))
-        manifest_mode = str(config_dict.get("manifest_mode", "full")).strip().lower()
-        if manifest_mode not in {"full", "small", "off"}:
-            raise ValueError(
-                "manifest_mode must be one of: full, small, off "
-                f"(got {config_dict.get('manifest_mode')!r})"
-            )
-        logger.debug("manifest_mode: %s", manifest_mode)
+        manifest_mode = cls._parse_manifest_mode(config_dict)
+
         # Log unknown configuration keys
         for key, value in config_dict.items():
             if key not in known_keys:
@@ -406,9 +424,9 @@ class ScanConfig:
             actuators=actuators,
             detector_pvs=config_dict.get("detector_pvs", []),
             detector_pvs_monitor=config_dict.get("detector_pvs_monitor", True),
-            scan_dimensions=parse_dimensions("scan_dimensions"),
-            parallel_scans=parse_dimensions("parallel_scans"),
-            nested_scans=parse_dimensions("nested_scans"),
+            scan_dimensions=cls._parse_dimensions(config_dict, "scan_dimensions"),
+            parallel_scans=cls._parse_dimensions(config_dict, "parallel_scans"),
+            nested_scans=cls._parse_dimensions(config_dict, "nested_scans"),
             plugin_configs=config_dict.get("plugin_configs", []),
             monitor_type=config_dict.get("monitor_type", None),
             monitor=monitor,
@@ -426,8 +444,9 @@ class ScanConfig:
             metadata_pvs=config_dict.get("metadata_pvs", []),
             metadata_constants=config_dict.get("metadata_constants", {}),
             metadata_file=config_dict.get("metadata_file", "scan_metadata.txt"),
-            subscriptions=subs,
+            subscriptions=subscriptions,
         )
+
 
 def build_scan_dim(actuator: str, start: float, stop: float, steps: int) -> ScanDimension:
     """
@@ -441,4 +460,3 @@ def build_scan_dim(actuator: str, start: float, stop: float, steps: int) -> Scan
         ScanDimension: Configured scan dimension object.
     """
     return ScanDimension(actuator=actuator, start=start, stop=stop, steps=steps)
-

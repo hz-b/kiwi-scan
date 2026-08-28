@@ -222,6 +222,52 @@ class TestScanConfigParsing(unittest.TestCase):
         ):
             ScanConfig.from_dict(raw)
 
+    def test_scan_config_accepts_none_for_subscriptions(self):
+        config = ScanConfig.from_dict(
+            {
+                "actuators": {},
+                "detector_pvs": [],
+                "subscriptions": None,
+            }
+        )
+
+        self.assertEqual(config.subscriptions, [])
+
+    def test_scan_config_rejects_non_list_subscriptions(self):
+        with self.assertRaisesRegex(
+            TypeError,
+            "'subscriptions' must be a list of mappings",
+        ):
+            ScanConfig.from_dict(
+                {
+                    "actuators": {},
+                    "detector_pvs": [],
+                    "subscriptions": {},
+                }
+            )
+
+    def test_scan_config_normalizes_and_validates_manifest_mode(self):
+        config = ScanConfig.from_dict(
+            {
+                "actuators": {},
+                "detector_pvs": [],
+                "manifest_mode": " SMALL ",
+            }
+        )
+        self.assertEqual(config.manifest_mode, "small")
+
+        with self.assertRaisesRegex(
+            ValueError,
+            "manifest_mode must be one of: full, small, off",
+        ):
+            ScanConfig.from_dict(
+                {
+                    "actuators": {},
+                    "detector_pvs": [],
+                    "manifest_mode": "invalid",
+                }
+            )
+
     def test_actuator_config_with_extras_and_defaults(self):
         raw = {
             "pv": "SOME:ACTUATOR",
@@ -605,4 +651,3 @@ class TestUndulatorViaCAN(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
-
