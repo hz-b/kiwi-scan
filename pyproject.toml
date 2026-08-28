@@ -109,7 +109,7 @@ enable = [
     "arguments-differ",
 
     ## Maintainability particularly relevant to generated code
-    #"too-many-locals",
+    "too-many-locals",
     #"too-many-statements",
     #"too-many-branches",
     #"too-many-return-statements",

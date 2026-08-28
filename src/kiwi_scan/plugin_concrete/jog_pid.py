@@ -2,16 +2,29 @@
 # SPDX-License-Identifier: MIT
 
 """
-jog_pid.py
-A generic example closed-loop controller for ScanLib.
+An example plugin with simple closed-loop controller. This plugin is only used for tests and demonstartion.
 
-Reads:
-    • Actuator
-    • (Optionally) gain PVs for Kp, Ki, Kd, Kvf
+Example Usage:
+Mono test setup example config to make a device following mono energy:
+scan_runner --config-file jogpid.yaml --scan_type cm --dim actuator=energy,start=300,stop=700,steps=0,velocity=0.01
 
-Computes a new set-point with a PID + velocity feed-forward term and
-runs jog(). The control law is executed once for every sample period at a
-scan point via ScanPlugin.get_values().
+# jogpid.yaml looks like
+...
+plugin_configs:
+  - type: JogPIDPlugin
+    name: jogpid
+    parameters:
+      actuator:
+        ...
+        jog:
+          velocity_pv: "${IOC_MONO}:M1_SETJOGSPEED"
+          abs_velocity: True
+          command_pv: "${IOC_MONO}:M1_JOG_COMMAND"
+          command_pos: 1
+          command_neg: -1
+...
+
+This computes a new set-point with a PID + velocity feed-forward term and runs jog(). 
 """
 
 import time
@@ -28,9 +41,7 @@ from kiwi_scan.scan.common import BaseScan
 
 def _gain_source(gain_spec):
     """
-    Helper: support a numeric constant OR a PV name.
-    Returns either a float (constant) or an epics.PV instance.
-    TODO: share move to base
+    Support a numeric constant OR a PV name.
     """
     if gain_spec is None:
         return 0.0
@@ -42,7 +53,7 @@ def _gain_source(gain_spec):
 @register_plugin("JogPIDPlugin")
 class JogPIDPlugin(ScanPlugin):
     """
-    Generic PID + velocity-feed-forward controller executed at each scan point. TODO: optionally at monitor event.
+    Generic PID controller executed at each scan point.
     """
 
     def __init__(
@@ -59,7 +70,7 @@ class JogPIDPlugin(ScanPlugin):
 
         # ---------- Mandatory Actuator ---------------------------------------
         try:
-            self.logger.info(f"{self.parameters['actuator']}")
+            self.logger.info("%s", self.parameters["actuator"])
             self.actuator = create_actuator(ActuatorConfig.from_dict(self.parameters["actuator"]))
         except KeyError as missing:
             raise ValueError(f"JogPIDPlugin: missing parameter {missing!s}")
@@ -72,10 +83,13 @@ class JogPIDPlugin(ScanPlugin):
 
         # ---------- Internal state -----------------------------------------
         self.sample_time = float(self.parameters.get("sample_time", 1.0))
+        if not self.sample_time > 0:
+            raise ValueError("JogPIDPlugin: sample_time must be > 0")
         self.integral    = 0.0
         self.prev_error  = 0.0
         self.prev_time   = None
         self.prev_set_time = None
+        self.setpoint = float("nan")
 
         self.logger.debug("JogPIDPlugin initialised with parameters: %s", self.parameters)
 
@@ -85,20 +99,37 @@ class JogPIDPlugin(ScanPlugin):
 
     def get_values(self, idx: int, pos: Dict[str, Any]) -> List[Any]:
         """
-        Called once per scan point.  Computes new set-point, writes it, and
-        returns the value for recording.
+        Called once per scan point. Compute and write a new setpoint when the
+        control interval is due; otherwise return the most recent setpoint.
         """
         now = time.time()
+        if (self.prev_set_time is not None and now - self.prev_set_time < self.sample_time):
+            return [self.setpoint]
 
         try:
             position  = self.actuator.rbv 
             velocity = self.actuator.get_velocity() or 0.0
-            target    = float(pos)
+            target    = float(pos)    # Exapmple set position to follow first actuator in this case
         except Exception as e: # noqa BLE001
             self.logger.error("PV read failed @ point %s: %s", idx, e)
             return [float("nan")]
 
-        self.logger.info(f"pos: {pos}, target: {target}")
+        self.logger.info("pos: %s, target: %s", pos, target)
+        self.setpoint = self._calculate_setpoint(position, velocity, target, now)
+        self.actuator.jog(self.setpoint, sync=False)
+        self.prev_set_time = now
+
+        self.logger.debug( "[%d] pos=%.6g vel=%.6g tgt=%.6g sp=%.6g err=%.6g", idx, position, velocity, target, self.setpoint, target - position,)
+        return [self.setpoint]
+
+    def _calculate_setpoint(
+        self,
+        position: float,
+        velocity: float,
+        target: float,
+        now: float,
+    ) -> float:
+        """Calculate one PID control update and advance the controller state."""
         # Convert gain PVs to numeric if necessary --------------------------
         def g(val):
             return val.get() if hasattr(val, "get") else val
@@ -119,26 +150,17 @@ class JogPIDPlugin(ScanPlugin):
             kvf * velocity          # feed-forward term
         )
 
-        # Write new set-point ----------------------------------------------
-        if not self.prev_set_time or (now - self.prev_set_time) > self.sample_time:
-            self.actuator.jog(setpoint, sync=False)
-            self.prev_set_time = now
-
         # State update ------------------------------------------------------
         self.prev_error = error
         self.prev_time  = now
-
-        # Log & return ------------------------------------------------------
-        self.logger.debug(
-            "[%d] pos=%.6g vel=%.6g tgt=%.6g sp=%.6g err=%.6g",
-            idx, position, velocity, target, setpoint, error
-        )
-        return [setpoint]
+        return setpoint
 
     # ------------------------------------------------------------------ Hooks
     def on_start(self) -> None:
         self.logger.info("JogPIDPlugin started")
 
     def on_end(self) -> None:
-        self.logger.info("JogPIDPlugin finished")
-
+        try:
+            self.actuator.stop()
+        finally:
+            self.logger.info("JogPIDPlugin finished")
