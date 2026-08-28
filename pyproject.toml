@@ -113,8 +113,8 @@ enable = [
     "too-many-statements",
     "too-many-branches",
     ## FIXME
-    #"too-many-return-statements",
-    #"duplicate-code",
+    "too-many-return-statements",
+    "duplicate-code",
 
     ## Keep suppressions clean
     "useless-suppression",

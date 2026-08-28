@@ -62,90 +62,128 @@ class BaseScan(ScanABC):
         ensure_ca_context()
         super().__init__(config, data_dir)
         logger.debug("Init BaseScan")
+
+        self._initialize_config(config)
+        self._initialize_data_output(data_dir)
+        self._initialize_scan_timing()
+        self._initialize_output_file()
+        self._connect_scan_devices()
+        self._initialize_runtime_managers()
+        self._initialize_stop_pv()
+        self._initialize_metadata_monitor()
+        self._initialize_runtime_state()
+        self._initialize_performance_state()
+        self._initialize_event_state()
+        self._start_event_workers()
+        self._start_legacy_subscriptions_if_needed()
+
+    def _initialize_config(self, config: ScanConfig) -> None:
+        """Validate and normalize scan configuration used during runtime."""
         self.busyflag = False
         self.cfg = config
-        # Validate 
         self.cfg.validate()
         self.scan_type = self.__class__.__name__
-        # Perform config cleanup
         self._validate_and_filter_actuators()
 
-        self.plugins = [create_plugin(plugin_config, self) for plugin_config in self.cfg.plugin_configs]
+        self.plugins = [
+            create_plugin(plugin_config, self)
+            for plugin_config in self.cfg.plugin_configs
+        ]
         logger.debug("Plugin Configs: %s", self.cfg.plugin_configs)
 
-        # Perform config cleanup
-        self._validate_and_filter_actuators()
-        # normalize optionals
         self.scan_dimensions = config.scan_dimensions or []
-        self.parallel_scans  = config.parallel_scans  or []
-        self.nested_scans    = config.nested_scans    or []
+        self.parallel_scans = config.parallel_scans or []
+        self.nested_scans = config.nested_scans or []
         self.trigger_manager = TriggerManager.from_config(self.cfg.triggers)
-        # Prepare I/O
-        self.data_dir = os.path.abspath(resolve_data_dir(data_dir, config.data_dir))
+
+    def _initialize_data_output(self, data_dir) -> None:
+        """Prepare scan output state without starting data acquisition."""
+        self.data_dir = os.path.abspath(
+            resolve_data_dir(data_dir, self.cfg.data_dir)
+        )
         logger.info("Data directory: %s", self.data_dir)
 
         self._data_writer_lock = threading.RLock()
-        self._requested_output_file = config.output_file
+        self._requested_output_file = self.cfg.output_file
         self._output_timestamp = datetime.now().astimezone().strftime("%Y%m%d%H%M%S")
         self._data_writing_enabled = bool(
-            getattr(config, "data_writing_enabled", True)
+            getattr(self.cfg, "data_writing_enabled", True)
         )
         self._data_header_written = False
 
-        # copy runtime flags
-        self.include_timestamps = config.include_timestamps
+    def _initialize_scan_timing(self) -> None:
+        """Initialize timestamp and sample-rate settings."""
+        self.include_timestamps = self.cfg.include_timestamps
         self.sample_rate_hz = 1.0
         self.sampletime = 1.0
-        self._apply_sample_rate(getattr(config, "sample_rate_hz", None))
+        self._apply_sample_rate(getattr(self.cfg, "sample_rate_hz", None))
+        self.debug = self.cfg.debug
 
-        self.debug = config.debug
-        # if self.debug:
-        #    pdb.set_trace()
+    def _initialize_output_file(self) -> None:
+        """Create the configured data file when data writing is enabled."""
         self.output_file: Optional[str] = None
         if self._data_writing_enabled:
             self._ensure_output_file_exists()
-        # setup
+
+    def _connect_scan_devices(self) -> None:
+        """Connect configured detectors and actuators."""
         logger.debug("_connect_detectors")
         self._connect_detectors()
         logger.debug("_connect_actuators")
         self._connect_actuators()
         self.actuators = getattr(self, "actuators", {})
+
+    def _initialize_runtime_managers(self) -> None:
+        """Create subscription and synchronization managers."""
         logger.debug("init subscription manager")
+        subscriptions = getattr(self.cfg, "subscriptions", None) or []
         self.subscription_manager = SubscriptionManager(
-            getattr(self.cfg, "subscriptions", None) or [],
+            subscriptions,
             actuator_configs=getattr(self.cfg, "actuators", {}) or {},
             actuators=self.actuators,
         )
-        self.sync_controller = SyncController(
-            getattr(self.cfg, "subscriptions", None) or []
-        )
+        self.sync_controller = SyncController(subscriptions)
+
         logger.debug("_validate_config")
-        
         self._validate_config()
-        if config.stop_pv:
-            self.stop_pv = EpicsPV(config.stop_pv)
-            self.prefix = config.stop_pv.split(':')[0]
+
+    def _initialize_stop_pv(self) -> None:
+        """Connect the optional external stop process variable."""
+        if self.cfg.stop_pv:
+            self.stop_pv = EpicsPV(self.cfg.stop_pv)
+            self.prefix = self.cfg.stop_pv.split(":")[0]
         else:
             self.stop_pv = None
-        # Build a time-stamped sibling file next to main scan file
-        base_name, ext = os.path.splitext(self.cfg.metadata_file or "scan_metadata.txt")
-        # Reuse the same timestamp as the main file when writing is enabled.
-        self._metadata_out = os.path.join(self.data_dir, f"{base_name}-{self._output_timestamp}{ext}")
-        # Create the monitor (but don't start yet)
+
+    def _initialize_metadata_monitor(self) -> None:
+        """Prepare the metadata sidecar monitor without starting it."""
+        base_name, ext = os.path.splitext(
+            self.cfg.metadata_file or "scan_metadata.txt"
+        )
+        self._metadata_out = os.path.join(
+            self.data_dir,
+            f"{base_name}-{self._output_timestamp}{ext}",
+        )
         self._meta_mon = MetadataCAMonitor(
             pvs=list(self.cfg.metadata_pvs or []),
             constants=dict(self.cfg.metadata_constants or {}),
             outfile=self._metadata_out,
-            queue_maxsize=20000, 
+            queue_maxsize=20000,
         )
         self._meta_mon_started = False
+
+    def _initialize_runtime_state(self) -> None:
+        """Initialize mutable per-scan data state."""
         self._position: Any = None
         self._last_point: Dict[str, Any] = {}
         self._current_row_cache: Dict[str, Any] = {}
         self._data_column_providers: List[DataColumnProvider] = []
-        self._daq_is_on = False   # safe to take data for stats
-        self.integration_time = config.integration_time
-        self._perf_enabled: bool = bool(
+        self._daq_is_on = False
+        self.integration_time = self.cfg.integration_time
+
+    def _initialize_performance_state(self) -> None:
+        """Initialize optional performance collection state."""
+        self._perf_enabled = bool(
             getattr(self.cfg, "debug", False)
             or getattr(self.cfg, "performance_report", False)
         )
@@ -155,18 +193,18 @@ class BaseScan(ScanABC):
         else:
             logger.debug("Performance report disabled")
         self._perf: Dict[str, List[float]] = defaultdict(list)
-        
-        # --- event-driven wakeup state (used in _on_heartbeat_event()) with condition  ---
+
+    def _initialize_event_state(self) -> None:
+        """Initialize event-driven synchronization state."""
         self._tick_cond = threading.Condition()
-        self._tick_seq = 0  # increments on each heartbeat event
-        # --- event driven stop event semaphore, can be checked non blocking with is_set()
+        self._tick_seq = 0
         self._stop_requested = threading.Event()
-        # optional: last-seen events for debugging
         self._last_heartbeat: Optional[PvEvent] = None
         self._last_sync: Optional[PvEvent] = None
         self._last_status: Optional[PvEvent] = None
 
-        # Creating trigger worker thread to avoid caput from callback context.
+    def _start_event_workers(self) -> None:
+        """Start worker threads used outside EPICS callback context."""
         self._trigger_q = queue.SimpleQueue()
         self._trigger_worker_stop = threading.Event()
         self._trigger_worker = threading.Thread(
@@ -174,7 +212,7 @@ class BaseScan(ScanABC):
             daemon=True,
         )
         self._trigger_worker.start()
-        # Creating plugin worker thread to avoid caput from callback context.
+
         self._plugin_q = queue.SimpleQueue()
         self._plugin_worker_stop = threading.Event()
         self._plugin_worker = threading.Thread(
@@ -182,12 +220,17 @@ class BaseScan(ScanABC):
             daemon=True,
         )
         self._plugin_worker.start()
-        
-        # TODO: cleanup, use  _start_subscriptions ouside
+
+    def _start_legacy_subscriptions_if_needed(self) -> None:
+        """Preserve automatic subscription startup for legacy scan types."""
         if getattr(self, "ROLE_CALLBACKS", None):
-            logger.debug("Detected legacy ROLE_CALLBACKS on %s; auto-starting subscriptions for compatibility", type(self).__name__)
+            logger.debug(
+                "Detected legacy ROLE_CALLBACKS on %s; "
+                "auto-starting subscriptions for compatibility",
+                type(self).__name__,
+            )
             self._start_subscriptions()
-    
+
     # -------------------- performance testing --------------------
 
     @contextmanager
