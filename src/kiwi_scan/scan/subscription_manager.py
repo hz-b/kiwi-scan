@@ -121,11 +121,7 @@ class SubscriptionManager:
         """Dispatch one subscription event to the registered role handler."""
         handler = self._role_handlers.get(role)
         if handler is None:
-            logger.debug(
-                "No handler registered for subscription role '%s' (subscription '%s')",
-                role,
-                subscription.name,
-            )
+            logger.debug("No handler registered for subscription role '%s' (subscription '%s')", role, subscription.name)
             return
 
         handler(event, subscription)
@@ -143,18 +139,10 @@ class SubscriptionManager:
         for name, actuator in self._actuators.items():
             try:
                 if actuator is not None and actuator.supports_monitors():
-                    logger.debug(
-                        "Using actuator '%s' as subscription monitor provider (%s)",
-                        name,
-                        type(actuator).__name__,
-                    )
+                    logger.debug("Using actuator '%s' as subscription monitor provider (%s)", name, type(actuator).__name__)
                     return actuator
             except Exception:
-                logger.debug(
-                    "Actuator '%s' could not be probed for monitor support",
-                    name,
-                    exc_info=True,
-                )
+                logger.debug("Actuator '%s' could not be probed for monitor support", name, exc_info=True)
 
         return None
 
@@ -169,28 +157,16 @@ class SubscriptionManager:
             # fallback: try first available actuator config
             if self._actuator_configs:
                 fallback_name, raw_config = next(iter(self._actuator_configs.items()))
-                logger.warning(
-                    "Unknown actuator '%s' in subscription config. "
-                    "Falling back to actuator '%s'.",
-                    actuator_name,
-                    fallback_name,
-                )
+                logger.warning("Unknown actuator '%s' in subscription config. Falling back to actuator '%s'.",
+                    actuator_name, fallback_name)
             else:
                 # second fallback: try more actuators
                 if self._actuators:
                     fallback_name = next(iter(self._actuators.keys()))
-                    logger.warning(
-                        "Unknown actuator '%s' and no actuator_configs available. "
-                        "Using live actuator '%s' without config.",
-                        actuator_name,
-                        fallback_name,
-                    )
-                    raise ValueError(
-                        f"Cannot resolve actuator '{actuator_name}' to PV (no config available)"
-                    )
-                raise ValueError(
-                    f"Unknown actuator '{actuator_name}' in subscription config"
-                )
+                    logger.warning("Unknown actuator '%s' and no actuator_configs available. Using live actuator '%s' without config.",
+                        actuator_name, fallback_name)
+                    raise ValueError(f"Cannot resolve actuator '{actuator_name}' to PV (no config available)")
+                raise ValueError(f"Unknown actuator '{actuator_name}' in subscription config")
 
         if isinstance(raw_config, ActuatorConfig):
             return raw_config

@@ -4,7 +4,7 @@
 import logging
 import threading
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Mapping, Optional
 
 from kiwi_scan.datamodels import ActuatorConfig
@@ -31,8 +31,7 @@ class PvEvent:
     status: Optional[int] = None
     
     # Anything else provided by the backend
-    raw: Mapping[str, Any] = None
-
+    raw: Mapping[str, Any] = field(default_factory=dict)
 
 MonitorCallback = Callable[[PvEvent], None]
 

@@ -224,11 +224,8 @@ class BaseScan(ScanABC):
     def _start_legacy_subscriptions_if_needed(self) -> None:
         """Preserve automatic subscription startup for legacy scan types."""
         if getattr(self, "ROLE_CALLBACKS", None):
-            logger.debug(
-                "Detected legacy ROLE_CALLBACKS on %s; "
-                "auto-starting subscriptions for compatibility",
-                type(self).__name__,
-            )
+            logger.warning("Detected legacy ROLE_CALLBACKS on %s; starting subscriptions. This feature will be removed soon.", 
+                           type(self).__name__)
             self._start_subscriptions()
 
     # -------------------- performance testing --------------------
@@ -1072,20 +1069,12 @@ class BaseScan(ScanABC):
                 value = self.stop_pv.get()
                 logger.info("Scan stop PV value received: %s", value)
             except Exception as e: # noqa: BLE001
-                logger.error(
-                    "Failed to get stop PV %s: %s",
-                    self.stop_pv.pvname,
-                    e,
-                )
+                logger.error( "Failed to get stop PV %s: %s", self.stop_pv.pvname, e)
             if value == 1:
                 try:
                     self.stop_pv.put(0)
                 except Exception as e: # noqa: BLE001
-                    logger.error(
-                        "Failed to reset stop PV %s: %s",
-                        self.stop_pv.pvname,
-                        e,
-                    )
+                    logger.error( "Failed to reset stop PV %s: %s", self.stop_pv.pvname, e)
         return value
     
     def _start_plugins(self) -> None:
@@ -1611,10 +1600,7 @@ class BaseScan(ScanABC):
             try:
                 self._fire_triggers("monitor")
             except Exception:
-                logger.exception(
-                    "WORKER: Failed to fire monitor triggers (ev=%s)",
-                    ev,
-                )
+                logger.exception("WORKER: Failed to fire monitor triggers (ev=%s)", ev)
 
     def _on_plugin_event(self, ev: PvEvent, _subscription: SubscriptionConfig) -> None:
         """
