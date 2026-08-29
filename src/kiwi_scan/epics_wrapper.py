@@ -134,13 +134,10 @@ class EpicsPV:
         def _do() -> Optional[Dict[str, Any]]:
             if full:
                 meta = pv.get_with_metadata(use_monitor=use_monitor)
-                # print(f"----------------------- {meta}")
                 return meta
             else:
                 """ Thread safe usage: self._ca(_do) """
                 val = pv.get(timeout=t, use_monitor=use_monitor)
-                if val is None and use_monitor:
-                    val = pv.get(timeout=t, use_monitor=False)
                 if val is None:
                     return None
                 # pyepics has pv.timestamp, pv.severity, pv.status sometimes

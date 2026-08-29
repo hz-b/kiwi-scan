@@ -56,7 +56,7 @@ class TriggerManager:
 
     @classmethod
     def _detect_phases(cls, triggers: Optional[ScanTriggers]) -> Sequence[str]:
-        phases = list(cls.DEFAULT_PHASES)
+        phases: List[str] = list(cls.DEFAULT_PHASES)
         if triggers is None:
             return phases
 
@@ -66,30 +66,27 @@ class TriggerManager:
         return tuple(phases)
 
     @staticmethod
-    def _prepare_actions(phase: str, actions: Iterable[TriggerAction]) -> List[PreparedTriggerAction]:
+    def _prepare_actions(phase: str, actions: Iterable[TriggerAction]) -> List[PreparedTriggerAction]: 
+        """ prepare actions from trigger config. """
         prepared: List[PreparedTriggerAction] = []
         for action in actions:
-            pvname = getattr(action, "pv", None)
+            pvname = action.pv
             if not pvname:
                 logger.warning("Trigger action missing 'pv' in phase %s: %r", phase, action)
                 continue
 
-            value = TriggerManager._normalize_value(getattr(action, "value", 0))
-            delay = float(getattr(action, "delay", 0.0) or 0.0)
+            value = TriggerManager._normalize_value(action.value)
+            delay = float(action.delay or 0.0)
+
             try:
-                pv = EpicsPV(pvname, timeout=1.0, queueing_delay=0.01)
-            except Exception: # noqa BLE001
+                pv = EpicsPV(pvname, timeout=1.0, queueing_delay=0.0)
+            except Exception:  # noqa: BLE001
                 logger.error(f"Failed to init trigger PV {pvname}, phase {phase}")
                 continue
 
-            prepared.append(PreparedTriggerAction(pv=pv, value=value, delay=delay))
-            logger.debug(
-                "Initialized trigger PV %s (phase=%s, value=%r, delay=%.3f)",
-                pvname,
-                phase,
-                value,
-                delay,
-            )
+            prepared.append(PreparedTriggerAction( pv=pv, value=value, delay=delay))
+            logger.debug("Initialized trigger PV %s (phase=%s, value=%r, delay=%.3f)", pvname, phase, value, delay)
+
         return prepared
 
     @staticmethod
@@ -126,17 +123,9 @@ class TriggerManager:
         for action in self._actions_by_phase.get(phase, []):
             ok = action.pv.put(action.value)
             if not ok:
-                logger.error(
-                    "Failed to write trigger PV %s value %r",
-                    action.pv.pvname,
-                    action.value,
-                )
+                logger.error( "Failed to write trigger PV %s value %r", action.pv.pvname, action.value)
             else:
-                logger.debug(
-                    "Wrote trigger PV %s value %r",
-                    action.pv.pvname,
-                    action.value,
-                )
+                logger.debug( "Wrote trigger PV %s value %r", action.pv.pvname, action.value)
             if action.delay > 0:
                 time.sleep(action.delay)
 
