@@ -70,6 +70,18 @@ def _split_header_and_body(path: str) -> Tuple[List[str], List[str]]:
     return header_lines, body_lines
 
 
+def _parse_waveform_value(value: str) -> Any:
+    """Parse a bracketed numeric waveform, preserving invalid input."""
+    inner = value[1:-1].strip()
+    if not inner:
+        return np.array([], dtype=float)
+
+    try:
+        return np.array([float(part) for part in inner.split()], dtype=float)
+    except ValueError:
+        return value
+
+
 def _parse_value(v: Any) -> Any:
     """
     Parse VALUE column:
@@ -88,16 +100,7 @@ def _parse_value(v: Any) -> Any:
 
     # waveform?
     if s.startswith("[") and s.endswith("]"):
-        inner = s[1:-1].strip()
-        if not inner:
-            return np.array([], dtype=float)
-        parts = inner.split()
-        try:
-            arr = np.array([float(p) for p in parts], dtype=float)
-            return arr
-        except ValueError:
-            # fall back to raw string if not purely numeric
-            return s
+        return _parse_waveform_value(s)
 
     # scalar numeric as string?
     try:
@@ -155,4 +158,3 @@ def parse_metadata_file(path: str) -> Optional[MetadataFile]:
     except Exception:
         logger.exception(f"Failed to parse metadata file {path}")
         return None
-

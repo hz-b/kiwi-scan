@@ -53,7 +53,7 @@ def _manifest_filename(path: str) -> str:
     return _fit_epics_string(os.path.basename(str(path)))
 
 
-def _log_level_record_value(level: Any = None) -> int:
+def _log_level_record_value(level: Any = None) -> int:   # pylint: disable=too-many-return-statements
     """Map a Python logging level to the IOC mbbo value 0..5."""
     if level is None:
         level = logging.getLogger().level

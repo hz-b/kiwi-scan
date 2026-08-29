@@ -95,6 +95,9 @@ ignore = [
 [tool.pylint.main]
 py-version = "3.11"
 
+[tool.pylint.similarities]
+min-similarity-lines = 10
+
 [tool.pylint.messages_control]
 disable = [
     "all",
@@ -112,7 +115,6 @@ enable = [
     "too-many-locals",
     "too-many-statements",
     "too-many-branches",
-    ## FIXME
     "too-many-return-statements",
     "duplicate-code",
 

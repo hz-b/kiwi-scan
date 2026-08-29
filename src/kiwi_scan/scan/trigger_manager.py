@@ -93,7 +93,7 @@ class TriggerManager:
         return prepared
 
     @staticmethod
-    def _normalize_value(value: Any) -> Any:
+    def _normalize_value(value: Any) -> Any: # pylint: disable=too-many-return-statements
         if isinstance(value, (list, tuple)):
             return value
 

@@ -92,23 +92,25 @@ class DataPVSpec:
 
         if self.value_type == "float":
             try:
-                return float(value)
+                result = float(value)
             except (TypeError, ValueError):
-                return float("nan")
-
-        if self.value_type == "int":
+                result = float("nan")
+        elif self.value_type == "int":
             try:
-                return int(float(value))
+                result = int(float(value))
             except (TypeError, ValueError):
-                return 0
-
-        if self.value_type == "bool":
+                result = 0
+        elif self.value_type == "bool":
             if isinstance(value, str):
-                return value.strip().lower() in {"1", "true", "t", "yes", "y", "on"}
-            return bool(value)
+                result = value.strip().lower() in {
+                    "1", "true", "t", "yes", "y", "on"
+                }
+            else:
+                result = bool(value)
+        else:
+            result = str(value)
 
-        return str(value)
-
+        return result
 
 def parse_data_pv_spec(spec: str) -> DataPVSpec:
     """Parse from args ``LOCAL=KEY[:TYPE]`` into a :class:`DataPVSpec`.
