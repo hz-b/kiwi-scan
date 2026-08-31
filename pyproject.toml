@@ -85,12 +85,17 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
+
+[tool.ruff]
+target-version = "py38"
+
 [tool.ruff.lint]
 ignore = [
-    "UP006",  # Dict/List/etc. -> built-in generics (Python 3.9+)
-    "UP045",  # Optional[X] -> X | None (Python 3.10+)
     "FA100",  # Do not require future annotations for typing simplification
 ]
+
+[tool.ruff.lint.pyupgrade]
+keep-runtime-typing = true
 
 [tool.pylint.main]
 py-version = "3.11"

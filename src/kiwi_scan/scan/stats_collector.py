@@ -246,19 +246,19 @@ class StatsCollector:
     def update(
         self,
         event: PvEvent,
-        subscription: Optional[SubscriptionConfig] = None,
+        subscription: SubscriptionConfig,
         *,
         collect: bool = True,
     ) -> None:
-        """Update statistics from one subscription event.
+        """
+        Update statistics from one subscription event.
 
         ``collect=True`` adds the value to the current DAQ window.  With
         ``collect=False`` the value is recorded as an idle/zero-sample snapshot
         and the current window for that subscription is cleared.
         """
         if event is None:
-            logger.warning("Ignoring stats update for subscription %r: event is None",
-                getattr(subscription, "name", None))
+            logger.warning("Ignoring stats update for subscription %r: event is None", subscription.name)
             return
         prefix = self._prefix_for_event(subscription)
         if prefix is None:
@@ -268,15 +268,13 @@ class StatsCollector:
             raw_value = event.value
             value = float(raw_value)
         except (AttributeError, TypeError, ValueError):
-            logger.debug("Ignoring non-numeric stats event for subscription %r pv=%r: %r",
-                getattr(subscription, "name", None), getattr(event, "pvname", None), getattr(event, "value", None))
+            logger.debug("Ignoring non-numeric stats event for subscription %r pv=%r: %r", subscription.name, event.pvname, event.value)
             return
 
         with self._lock:
             state = self._state_by_prefix.get(prefix)
             if state is None:
-                logger.warning("Ignoring stats event for subscription %r: prefix %r is not registered",
-                    getattr(subscription, "name", None), prefix)
+                logger.warning("Ignoring stats event for subscription %r: prefix %r is not registered", subscription.name, prefix)
                 return
             try:
                 if collect:
@@ -286,40 +284,31 @@ class StatsCollector:
                     state.set_idle_value(value)
                     action = "idle"
             except Exception:
-                logger.exception("Failed to update stats for subscription %r prefix=%r value=%r collect=%s",
-                    getattr(subscription, "name", None), prefix, raw_value, collect)
+                logger.exception("Failed to update stats for subscription %r prefix=%r value=%r collect=%s", subscription.name, prefix, raw_value, collect)
                 raise
             if logger.isEnabledFor(logging.DEBUG):
                 snapshot = state.snapshot()
                 logger.debug("StatsCollector %s sample subscription=%r prefix=%r pv=%r value=%r n=%d mean=%g std=%g min=%g max=%g",
                     action,
-                    getattr(subscription, "name", None),
+                    subscription.name,
                     prefix,
-                    getattr(event, "pvname", None),
+                    event.pvname,
                     raw_value,
                     snapshot.nsamples, snapshot.mean, snapshot.std, snapshot.minimum, snapshot.maximum)
 
-    def _prefix_for_event(self, subscription: Optional[SubscriptionConfig]) -> Optional[str]:
-        if subscription is None:
-            if len(self._ordered_prefixes) == 1:
-                logger.info("StatsCollector received event without subscription; using only prefix %r",
-                    self._ordered_prefixes[0])
-                return self._ordered_prefixes[0]
-            logger.debug("Ignoring stats event without subscription for multi-source collector")
+    def _prefix_for_event(self, subscription: SubscriptionConfig,) -> Optional[str]:
+        if subscription.role != self.role:
+            logger.debug(
+                "Ignoring stats event from subscription %r with role=%r; collector role=%r",
+                subscription.name,
+                subscription.role,
+                self.role,
+            )
             return None
-
-        if getattr(subscription, "role", None) != self.role:
-            logger.debug("Ignoring stats event from subscription %r with role=%r; collector role=%r",
-                getattr(subscription, "name", None), getattr(subscription, "role", None), self.role)
-            return None
-
-        prefix = self._prefix_by_subscription_name.get(getattr(subscription, "name", None))
+        prefix = self._prefix_by_subscription_name.get(subscription.name)
         if prefix is not None:
             return prefix
-
-        logger.debug("Ignoring stats event from unregistered subscription %r",
-            getattr(subscription, "name", None),
-        )
+        logger.debug("Ignoring stats event from unregistered subscription %r", subscription.name)
         return None
 
     def get_headers(self, include_timestamps: bool = False) -> List[str]:

@@ -519,7 +519,12 @@ class EpicsActuator(AbstractActuator):
                 time.sleep(0.1)
 
     def is_in_position(self, target, in_position_band):
-        current = self.rb_pv.get(timeout=self.ca_timeout)
+        rb_pv = self.rb_pv
+        if rb_pv is None:
+            return True
+        current = rb_pv.get(timeout=self.ca_timeout)
+        if current is None:
+            return True
         return abs(current - target) <= in_position_band
     
     def dwell(self) -> None:

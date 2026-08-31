@@ -15,9 +15,11 @@ class DataColumnProvider(Protocol):
 
     def get_headers(self, include_timestamps: bool = False) -> List[str]:
         """Return column headers in the order produced by ``get_values``."""
+        ...
 
     def get_values(self) -> List[Any]:
         """Return the current column values in header order."""
+        ...
 
     def update_last_point(
         self,
@@ -25,6 +27,8 @@ class DataColumnProvider(Protocol):
         include_timestamps: bool = False,
     ) -> None:
         """Add provider values to the in-memory ``get_value`` cache."""
+        ...
 
     def reset_window(self) -> None:
         """Start a new data-acquisition window, if the provider is windowed."""
+        ...

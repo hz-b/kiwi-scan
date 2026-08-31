@@ -542,22 +542,15 @@ class BaseScan(ScanABC):
             self._meta_mon_started = False
 
     def get_metadata_queue_drop_count(self) -> int:
-        """Return metadata monitor queue drops for diagnostics/performance reports."""
-        monitor = getattr(self, "_meta_mon", None)
+        """ Return metadata monitor queue drops for diagnostics/performance reports. """
+        monitor: Optional[MetadataCAMonitor] = getattr(self, "_meta_mon", None)   # maybe no meta monitor at all
         if monitor is None:
             return 0
 
-        getter = getattr(monitor, "get_drop_count", None)
-        if callable(getter):
-            try:
-                return int(getter())
-            except Exception:
-                logger.debug("Failed to read metadata monitor drop count", exc_info=True)
-                return 0
-
         try:
-            return int(getattr(monitor, "dropped_events", 0) or 0)
-        except (TypeError, ValueError):
+            return monitor.get_drop_count()
+        except Exception:
+            logger.debug("Failed to read metadata monitor drop count", exc_info=True)
             return 0
 
     def read_detectors(self) -> List[Any]:
@@ -867,6 +860,9 @@ class BaseScan(ScanABC):
         if not self.get_data_writing_enabled():
             logger.debug("Skipping data write because data writing is disabled")
             return row_values
+        
+        if self.output_file is None:
+            raise RuntimeError("Data writing is enabled, but no output file is configured")
 
         if not self._data_header_written:
             self.write_header_to_output_file()
@@ -1212,7 +1208,7 @@ class BaseScan(ScanABC):
 
         return True
 
-    def scan(self, positions, monitor: BaseMonitor = None):
+    def scan(self, positions, monitor: Optional[BaseMonitor] = None):
         """
         Parallel multi-actuator scan:
          1. pad all position lists to equal length

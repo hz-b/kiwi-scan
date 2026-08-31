@@ -24,10 +24,18 @@ class UndulatorViaEPICS(MultiActuator):
         self._axis1 = axis1
         self._axis2 = axis2
 
-        jog_cfg = getattr(self.config, 'jog', None)
-        if jog_cfg:
-            self.jog_velocity_pv = EpicsPV(jog_cfg.velocity_pv) if getattr(jog_cfg, 'velocity_pv', None) else None
-            self.jog_command_pv = EpicsPV(jog_cfg.command_pv) if getattr(jog_cfg, 'command_pv', None) else None
+        jog_cfg = self.config.jog
+        if jog_cfg is not None:
+            self.jog_velocity_pv = (
+                EpicsPV(jog_cfg.velocity_pv)
+                if jog_cfg.velocity_pv
+                else None
+            )
+            self.jog_command_pv = (
+                EpicsPV(jog_cfg.command_pv)
+                if jog_cfg.command_pv
+                else None
+            )
         else:
             self.jog_velocity_pv = None
             self.jog_command_pv = None
@@ -48,33 +56,44 @@ class UndulatorViaEPICS(MultiActuator):
     def _write_jog_velocities(self, velocities: Sequence[float]) -> bool:
         """Default: writes to jog_velocity_pv as a waveform (array of floats)."""
         arr = list(velocities)
-        if self.jog_velocity_pv is not None:
-            nelm = getattr(self.jog_velocity_pv, 'nelm', None)
-            if nelm is not None and len(arr) > nelm:
-                raise ValueError(
-                    f"Waveform length {len(arr)} exceeds NELM ({nelm}) for PV {self.jog_velocity_pv.pvname}"
-                )
-            return self.jog_velocity_pv.put(arr)
-        else:
+        jog_velocity_pv = self.jog_velocity_pv
+        if jog_velocity_pv is None:
             logger.error("No jog_velocity_pv configured")
             return False
 
+        nelm = jog_velocity_pv.nelm
+        if nelm is not None and len(arr) > nelm:
+            raise ValueError(
+                f"Waveform length {len(arr)} exceeds NELM ({nelm}) for PV {jog_velocity_pv.pvname}"
+            )
+        return jog_velocity_pv.put(arr)
+
     def _write_jog_command(self, velocities: Sequence[float]) -> bool:
-        """Writes the start command for jog operation (if required)."""
-        jog_cfg = getattr(self.config, 'jog', None)
-        if not self.jog_command_pv:
+        """Write the optional start command for jog operation."""
+        jog_command_pv = self.jog_command_pv
+        if jog_command_pv is None:
             logger.debug("No jog_command_pv, not writing jog start command.")
-            return True  # Not an error; just nothing to do.
+            return True 
+
+        jog_cfg = self.config.jog
+        if jog_cfg is None:
+            logger.error("Jog command PV exists without jog configuration")
+            return False
 
         velocity = velocities[0]
-        if hasattr(jog_cfg, 'command_pos') and hasattr(jog_cfg, 'command_neg'):
-            if jog_cfg.command_pos is not None and jog_cfg.command_neg is not None:
-                cmd = jog_cfg.command_pos if velocity >= 0 else jog_cfg.command_neg
-            else:
-                cmd = getattr(jog_cfg, 'command_pos', 1.0) or 1.0
+        if jog_cfg.command_pos is not None and jog_cfg.command_neg is not None:
+            cmd = jog_cfg.command_pos if velocity >= 0 else jog_cfg.command_neg
         else:
-            cmd = getattr(jog_cfg, 'command_pos', 1.0) or 1.0
-        return self.jog_command_pv.put(cmd)
+            cmd = (
+                jog_cfg.command_pos
+                if jog_cfg.command_pos is not None
+                else 1.0
+            )
+
+        success = jog_command_pv.put(cmd)
+        if not success:
+            logger.error("Failed to set jog start command for %s", jog_command_pv.pvname)
+        return success
 
     def jog(self, velocities: Sequence[float], sync: bool = True) -> None:
         if len(velocities) != 2:
@@ -84,9 +103,7 @@ class UndulatorViaEPICS(MultiActuator):
         if not ok:
             raise RuntimeError(f"Failed to write jog velocities {velocities}.")
 
-        success = self._write_jog_command(velocities)
-        if not success:
-            logger.error(f"Failed to set jog start command for {self.jog_command_pv.pvname}")
+        self._write_jog_command(velocities)
 
         if sync:
             logger.debug("Jog sync=True: no sync implementation (override if needed)")

@@ -13,14 +13,15 @@ from unittest.mock import MagicMock, patch
 
 from kiwi_scan import test_support
 
-# common.py imports the EPICS wrapper, but these unit tests only exercise
-# BaseScan helpers.  Use the project's fake module on hosts without pyepics.
+# common.py imports the EPICS wrapper during module loading. These tests exercise only BaseScan helpers, 
+# so provide the project fake unless another test has already loaded an EPICS module.
 if "epics" not in sys.modules:
     sys.modules["epics"] = test_support.make_fake_epics_module()
 
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import SubscriptionConfig
 from kiwi_scan.scan.common import BaseScan
+from kiwi_scan.scan.metadata_monitor import MetadataCAMonitor
 
 
 class DummyScan(BaseScan):
@@ -498,20 +499,33 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan._perf_report.assert_called_once_with()
         self.assertFalse(scan.busyflag)
 
-    def test_metadata_drop_count_supports_method_attribute_and_bad_values(self):
+    def test_metadata_drop_count_returns_zero_without_monitor(self):
         scan = DummyScan()
 
-        scan._meta_mon = None
         self.assertEqual(scan.get_metadata_queue_drop_count(), 0)
 
-        scan._meta_mon = SimpleNamespace(get_drop_count=lambda: "7")
+    def test_metadata_drop_count_uses_monitor_method(self):
+        scan = DummyScan()
+        monitor = MagicMock(spec=MetadataCAMonitor)
+        monitor.get_drop_count.return_value = 7
+        scan._meta_mon = monitor
+
         self.assertEqual(scan.get_metadata_queue_drop_count(), 7)
+        monitor.get_drop_count.assert_called_once_with()
 
-        scan._meta_mon = SimpleNamespace(dropped_events=4)
-        self.assertEqual(scan.get_metadata_queue_drop_count(), 4)
+    def test_metadata_drop_count_returns_zero_when_monitor_fails(self):
+        scan = DummyScan()
+        monitor = MagicMock(spec=MetadataCAMonitor)
+        monitor.get_drop_count.side_effect = RuntimeError("monitor failure")
+        scan._meta_mon = monitor
 
-        scan._meta_mon = SimpleNamespace(dropped_events="bad")
-        self.assertEqual(scan.get_metadata_queue_drop_count(), 0)
+        with self.assertLogs(
+            "kiwi_scan.scan.common",
+            level="DEBUG",
+        ):
+            result = scan.get_metadata_queue_drop_count()
+
+        self.assertEqual(result, 0)
 
     def test_metadata_monitor_start_and_stop_are_idempotent(self):
         scan = DummyScan()

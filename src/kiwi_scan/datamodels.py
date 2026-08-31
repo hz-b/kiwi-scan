@@ -26,7 +26,7 @@ class JogConfig:
 
 @dataclass
 class ActuatorConfig:
-    pv: str = None
+    pv: Optional[str] = None
     type: str = "epics"
     rel_pv: Optional[str] = None
     rb_pv: Optional[str] = None
@@ -270,6 +270,46 @@ class SubscriptionConfig:
         config.validate()
         return config
 
+
+@dataclass
+class PluginConfig:
+    """Common plugin declaration with plugin-specific parameters left untyped."""
+    type: str
+    name: Optional[str] = None
+    parameters: Dict[str, Any] = field(default_factory=dict)
+
+    def validate(self) -> None:
+        """Validate only the common plugin envelope."""
+        if not isinstance(self.type, str) or not self.type.strip():
+            raise ValueError("Plugin entry must define a non-empty 'type'")
+        if self.name is not None and not isinstance(self.name, str):
+            raise TypeError("Plugin 'name' must be a string when provided")
+        if not isinstance(self.parameters, dict):
+            raise TypeError("Plugin 'parameters' must be a mapping")
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "PluginConfig":
+        if not isinstance(data, dict):
+            raise TypeError(
+                f"Plugin entry must be a mapping, got {type(data).__name__}"
+            )
+        if "type" not in data:
+            raise ValueError("Plugin entry missing required: type")
+
+        raw_parameters = data.get("parameters", {})
+        if raw_parameters is None:
+            raw_parameters = {}
+        if not isinstance(raw_parameters, dict):
+            raise TypeError("Plugin 'parameters' must be a mapping")
+
+        config = cls(
+            type=data["type"],
+            name=data.get("name"),
+            parameters=dict(raw_parameters),
+        )
+        config.validate()
+        return config
+
 @dataclass
 class MonitorConfig:
     """Untyped monitor parameter block.
@@ -313,8 +353,8 @@ class ScanConfig:
     scan_dimensions: Optional[List[ScanDimension]] = None
     parallel_scans: Optional[List[ScanDimension]] = None
     nested_scans: Optional[List[ScanDimension]] = None
-    plugin_configs: List[Dict[str, Any]] = field(default_factory=list)
-    monitor_type: str = None
+    plugin_configs: List[PluginConfig] = field(default_factory=list)
+    monitor_type: Optional[str] = None
     monitor: MonitorConfig = field(default_factory=MonitorConfig)
     stop_pv: Optional[str] = None
     data_dir: str = "."
@@ -370,6 +410,30 @@ class ScanConfig:
             if isinstance(dimension, dict)
         ]
 
+
+    @staticmethod
+    def _parse_plugin_configs(
+        config_dict: Dict[str, Any],
+    ) -> List[PluginConfig]:
+        plugins_raw = config_dict.get("plugin_configs", [])
+        if plugins_raw is None:
+            plugins_raw = []
+        if not isinstance(plugins_raw, list):
+            raise TypeError("'plugin_configs' must be a list of mappings")
+
+        plugins: List[PluginConfig] = []
+        for index, plugin_data in enumerate(plugins_raw):
+            try:
+                if isinstance(plugin_data, PluginConfig):
+                    plugin_data.validate()
+                    plugin = plugin_data
+                else:
+                    plugin = PluginConfig.from_dict(plugin_data)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"Invalid plugin_configs[{index}]: {exc}") from exc
+            plugins.append(plugin)
+        return plugins
+
     @staticmethod
     def _parse_subscriptions(
         config_dict: Dict[str, Any],
@@ -412,6 +476,7 @@ class ScanConfig:
         triggers_raw = config_dict.get("triggers", None)
         triggers = ScanTriggers.from_dict(triggers_raw) if triggers_raw else None
 
+        plugin_configs = cls._parse_plugin_configs(config_dict)
         subscriptions = cls._parse_subscriptions(config_dict)
         monitor = MonitorConfig.from_dict(config_dict.get("monitor"))
         manifest_mode = cls._parse_manifest_mode(config_dict)
@@ -427,7 +492,7 @@ class ScanConfig:
             scan_dimensions=cls._parse_dimensions(config_dict, "scan_dimensions"),
             parallel_scans=cls._parse_dimensions(config_dict, "parallel_scans"),
             nested_scans=cls._parse_dimensions(config_dict, "nested_scans"),
-            plugin_configs=config_dict.get("plugin_configs", []),
+            plugin_configs=plugin_configs,
             monitor_type=config_dict.get("monitor_type", None),
             monitor=monitor,
             stop_pv=config_dict.get("stop_pv") or None,

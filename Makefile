@@ -70,18 +70,31 @@ tag: ## Create a version+timestamp git tag from COMMIT
 	echo "Creating tag $$tag"; \
 	git tag -a "$$tag" "$$commit" -m "Release $$tag"
 
-lint: ## Run pylint on src/kiwi_scan (uses mkvenv.sh when needed)
-	@echo 'For pylint, ruff install extra packages: pip install -e ".[dev]"'
-	@echo '--------------------------------------------------------------------'
-	@echo '--------------------------------------------------------------------'
-	@echo 'pylint src/kiwi_scan'
+lint: ## Run pylint, ruff, and pyright (uses mkvenv.sh when needed)
+	@echo
+	@echo '========================================================================'
+	@echo '  PYLINT'
+	@echo '========================================================================'
 	@$(WITH_VENV); \
 	PYTHONPATH=src pylint src/kiwi_scan || true
-	@echo '--------------------------------------------------------------------'
-	@echo '--------------------------------------------------------------------'
-	@echo 'ruff check src/kiwi_scan tests/'
+	@echo '========================================================================'
+	@echo
+	@echo '========================================================================'
+	@echo '  RUFF'
+	@echo '========================================================================'
 	@$(WITH_VENV); \
 	ruff check src/kiwi_scan tests/
+	@echo '========================================================================'
+	@echo
+	@echo '========================================================================'
+	@echo '  PYRIGHT'
+	@echo '========================================================================'
+	@$(WITH_VENV); \
+	pyright src/kiwi_scan/scan
+	@echo '========================================================================'
+	@echo
+	@echo 'Lint complete.'
+
 
 test: ## Run the current test scripts (uses mkvenv.sh when needed)
 	@if [ -z "$$KIWI_SCAN_DATA_DIR" ]; then mkdir -p scandata; fi

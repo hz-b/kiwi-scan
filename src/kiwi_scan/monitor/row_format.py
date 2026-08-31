@@ -8,7 +8,7 @@ import json
 import logging
 import sys
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, TextIO
+from typing import Any, Dict, Iterable, List, Optional, Protocol, TextIO
 
 
 class MonitorValueFormatter:
@@ -78,6 +78,9 @@ class MonitorValueFormatter:
             )
             return str(ts)
 
+class RowWriter(Protocol):
+    def writerow(self, row: Iterable[Any]) -> Any:
+        """Write one row."""
 
 class MonitorRowFormatter:
     """ 
@@ -111,7 +114,7 @@ class MonitorRowFormatter:
             logger=self.logger,
         )
         self.signal_names: List[str] = []
-        self._writer: Optional[csv.writer] = None
+        self._writer: Optional[RowWriter] = None
         self._out = out or sys.stdout
         self._rows_written = 0
 
@@ -134,9 +137,10 @@ class MonitorRowFormatter:
 
         if self.format in ("tsv", "csv"):
             delimiter = "\t" if self.format == "tsv" else ","
-            self._writer = csv.writer(self._out, delimiter=delimiter, lineterminator="\n")
+            writer = csv.writer(self._out, delimiter=delimiter, lineterminator="\n")
+            self._writer = writer
             if self.include_header:
-                self._writer.writerow(self.headers())
+                writer.writerow(self.headers())
                 self._out.flush()
         else:
             self._writer = None

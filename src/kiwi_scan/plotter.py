@@ -7,11 +7,12 @@ import matplotlib
 
 matplotlib.use('TkAgg')  # Must come BEFORE importing pyplot, temporary workaround TODO: should not be hard coded here
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import List, Optional, Union, cast
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.axes import Axes
 
 logger = logging.getLogger(__name__)
 
@@ -174,10 +175,13 @@ class Plotter:
 
         if subplot:
             logger.info("subplot")
-            fig, axes = plt.subplots(len(self.plots), 1, figsize=(8, 3 * len(self.plots)))
-            if len(self.plots) == 1:
-                axes = [axes]
-            for ax, data in zip(axes, self.plots):
+            fig, axes = plt.subplots(
+                len(self.plots),
+                1,
+                figsize=(8, 3 * len(self.plots)),
+                squeeze=False,
+            )
+            for ax, data in zip(axes[:, 0], self.plots):
                 ax.plot(data.x, data.y, marker='o', linestyle='-', label=data.label)
                 ax.set_xlabel(self.xlabel, fontsize=self.label_fontsize)
                 ax.set_ylabel(data.label or self.ylabel, fontsize=self.label_fontsize)
@@ -190,10 +194,14 @@ class Plotter:
         
         # multi-axis yy-plot: shared X, several Y scales
         if multi_axis:
-            fig, ax0 = plt.subplots(figsize=(8, 5))
+            fig, raw_ax0 = plt.subplots(figsize=(8, 5))
+            ax0 = cast(Axes, raw_ax0)
             axes = {0: ax0}
             # global color cycle across ALL axes
-            color_cycle = plt.rcParams['axes.prop_cycle'].by_key()['color']
+            prop_cycle = plt.rcParams['axes.prop_cycle']
+            color_cycle = (
+                prop_cycle.by_key().get('color') if prop_cycle is not None else None
+            ) or ['C0']
 
             for color_idx, data in enumerate(self.plots):
                 ax = axes.get(data.axis)
@@ -265,4 +273,3 @@ def plot_scan_data(
                 plotter.export_each_series(export_path.parent, include_x=True)
             else:
                 plotter.export_each_series(export_path, include_x=True)
-

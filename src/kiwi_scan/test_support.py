@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import ModuleType, SimpleNamespace
-from typing import Any, Callable, ClassVar, Dict, List, Optional
+from typing import Any, Callable, ClassVar, Dict, List, Optional, Union
 
 
 class FakeRawPV:
@@ -68,11 +68,16 @@ class FakePV:
         self.wait_for_connection_calls: List[Optional[float]] = []
         self.wait_for_connection_result = True
         self.add_callback_kwargs: List[Dict[str, Any]] = []
+        self.created_via_create_monitor = False
 
+        self.callbacks: Union[
+            Dict[int, Callable[..., None]],
+            List[Callable[..., None]],
+        ]
         if self.__class__.callback_mode == "dict":
-            self.callbacks: Dict[int, Callable[..., None]] = {}
+            self.callbacks = {}
         else:
-            self.callbacks: List[Callable[..., None]] = []
+            self.callbacks = []
 
         if self.__class__.use_raw_pv:
             self._pv = FakeRawPV()
@@ -88,7 +93,7 @@ class FakePV:
 
     def add_callback(self, callback: Callable[..., None], **kwargs: Any) -> int:
         self.add_callback_kwargs.append(dict(kwargs))
-        if self.__class__.callback_mode == "dict":
+        if isinstance(self.callbacks, dict):
             idx = self.__class__.next_index
             self.__class__.next_index += 1
             self.callbacks[idx] = callback
@@ -155,8 +160,10 @@ class FakePV:
 def make_fake_epics_module(*, pv_class: Optional[type] = None) -> ModuleType:
     """Create a minimal ``epics`` module stub backed by ``FakePV``."""
     mod = ModuleType("epics")
-    mod.PV = pv_class or make_fake_epics_pv_class()
-    mod.ca = SimpleNamespace(
+    mod.PV = (  # pyright: ignore[reportAttributeAccessIssue]
+        pv_class or make_fake_epics_pv_class()
+    )
+    mod.ca = SimpleNamespace(  # pyright: ignore[reportAttributeAccessIssue]
         poll=lambda: None,
         use_initial_context=lambda: None,
     )
@@ -226,13 +233,21 @@ def make_fake_trigger_pv_class():
 
 class FakeMonitorProvider:
     def __init__(self) -> None:
-        self.callbacks_by_pv: Dict[str, Callable[..., None]] = {}
+        self.callbacks_by_pv: Dict[
+            str,
+            Optional[Callable[..., None]],
+        ] = {}
         self.removed_pvs: List[str] = []
 
     def supports_monitors(self) -> bool:
         return True
 
-    def add_monitor(self, pvname: str, user_callback=None, **kwargs: Any):
+    def add_monitor(
+        self,
+        pvname: str,
+        user_callback: Optional[Callable[..., None]] = None,
+        **kwargs: Any,
+    ) -> Dict[str, str]:
         self.callbacks_by_pv[pvname] = user_callback
         return {"pvname": pvname}
 

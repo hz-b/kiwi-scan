@@ -15,7 +15,7 @@ if "epics" not in sys.modules:
 
 import kiwi_scan
 from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
-from kiwi_scan.datamodels import ActuatorConfig, ScanTriggers
+from kiwi_scan.datamodels import ActuatorConfig, PluginConfig, ScanTriggers
 from kiwi_scan.plugin.base import ScanPlugin
 from kiwi_scan.plugin.registry import PLUGIN_REGISTRY, create_plugin, register_plugin
 from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
@@ -51,7 +51,11 @@ class TestPluginRegistry(unittest.TestCase):
             pass
 
         plugin = create_plugin(
-            {"type": alias, "name": "friendly", "parameters": {"answer": 42}}
+            PluginConfig(
+                type=alias,
+                name="friendly",
+                parameters={"answer": 42},
+            )
         )
 
         self.assertIn(alias, PLUGIN_REGISTRY)
@@ -84,7 +88,7 @@ class TestPluginRegistry(unittest.TestCase):
                 kiwi_scan.load_all_plugins(raise_on_error=True)
 
         self.assertIn("env_plugin", PLUGIN_REGISTRY)
-        plugin = create_plugin({"type": "env_plugin", "name": "loaded"})
+        plugin = create_plugin(PluginConfig(type="env_plugin", name="loaded"))
         self.assertEqual(plugin.name, "loaded")
         self.assertEqual(plugin.get_headers(False), ["env"])
 

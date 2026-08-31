@@ -200,32 +200,37 @@ class SubscriptionManager:
             return subscription.pv
 
         if not subscription.actuator:
-            raise ValueError(f"Subscription '{subscription.name}' must define either 'pv' or 'actuator'")
+            raise ValueError(f"Subscription '{subscription.name}' must define " "either 'pv' or 'actuator'")
 
         config = self._get_actuator_config(subscription.actuator)
         source = (subscription.source or "rbv").lower()
 
         if source == "rbv":
-            return config.rb_pv or config.pv
+            pv = config.rb_pv or config.pv
+        elif source in ("cmd", "set", "command"):
+            pv = config.cmd_pv or config.pv
+        elif source == "status":
+            pv = config.status_pv
+        elif source == "stop":
+            pv = config.stop_pv
+        elif source == "velocity":
+            pv = (
+                config.get_velocity_pv
+                or config.velocity_pv
+                or config.cmdvel_pv
+                or config.pv
+            )
+        else:
+            raise ValueError(f"Subscription '{subscription.name}': " f"unsupported source '{subscription.source}'")
 
-        if source in ("cmd", "set", "command"):
-            return config.cmd_pv or config.pv
+        if not pv:
+            raise ValueError(
+                f"Subscription '{subscription.name}': actuator "
+                f"'{subscription.actuator}' has no PV configured "
+                f"for source '{source}'"
+            )
 
-        if source == "status":
-            if not config.status_pv:
-                raise ValueError(f"Subscription '{subscription.name}': actuator '{subscription.actuator}' has no status_pv")
-            return config.status_pv
-
-        if source == "stop":
-            if not config.stop_pv:
-                raise ValueError(f"Subscription '{subscription.name}': actuator '{subscription.actuator}' has no stop_pv")
-            return config.stop_pv
-
-        if source == "velocity":
-            return config.get_velocity_pv or config.velocity_pv or config.cmdvel_pv or config.pv
-
-        raise ValueError(f"Subscription '{subscription.name}': unsupported source '{subscription.source}'")
-
+        return pv
     # ------------------------------------------------------------------
     # Start helpers
     # ------------------------------------------------------------------

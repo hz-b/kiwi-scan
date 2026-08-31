@@ -15,7 +15,7 @@ class ScanABC(ABC):
     Defines the interface/contract for scan behavior.
     """
     cfg: ScanConfig
-    data_dir: Optional[str]
+    data_dir: str
     output_file: Optional[str]
     include_timestamps: bool
     busyflag: bool

@@ -245,13 +245,20 @@ class TestPlotterRendering(unittest.TestCase):
     @patch("kiwi_scan.plotter.plt.subplots")
     def test_plot_subplot_mode(self, subplots, tight_layout, show):
         axis = MagicMock()
-        subplots.return_value = (MagicMock(), axis)
+        axes = np.empty((1, 1), dtype=object)
+        axes[0, 0] = axis
+        subplots.return_value = (MagicMock(), axes)
         plotter = Plotter(xlabel="position")
         plotter.add_series([0], [1], label="first")
 
         plotter.plot(subplot=True)
 
-        subplots.assert_called_once_with(1, 1, figsize=(8, 3))
+        subplots.assert_called_once_with(
+            1,
+            1,
+            figsize=(8, 3),
+            squeeze=False,
+        )
         axis.plot.assert_called_once()
         axis.set_xlabel.assert_called_once_with("position", fontsize=10)
         axis.set_ylabel.assert_called_once_with("first", fontsize=10)

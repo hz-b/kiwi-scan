@@ -106,6 +106,23 @@ class EpicsPV:
             logger.debug("Failed to enable EPICS auto_monitor", exc_info=True)
         _safe_poll()
 
+    @property
+    def nelm(self) -> Optional[int]:
+        """Return the configured number of PV elements when available."""
+        pv = self._require_pv()
+        raw_nelm = getattr(pv, "nelm", None)
+        if raw_nelm is None:
+            return None
+        try:
+            return int(raw_nelm)
+        except (TypeError, ValueError):
+            logger.debug(
+                "Invalid NELM value for PV %s: %r",
+                self.pvname,
+                raw_nelm,
+            )
+            return None
+
     def _wrap_callback(self, user_cb: Callable[..., None]) -> Callable[..., None]:
         def _cb(pvname=None, value=None, **kwargs):
             try:
@@ -141,13 +158,18 @@ class EpicsPV:
                 if val is None:
                     return None
                 # pyepics has pv.timestamp, pv.severity, pv.status sometimes
+                timestamp = pv.timestamp
                 meta: Dict[str, Any] = {"value": val}
-                try:
-                    meta["timestamp"] = float(pv.timestamp)
-                except Exception:
-                    logger.debug("Failed to get timestamp for PV %s; using local time", self.pvname, exc_info=True)
-                    meta["timestamp"] = time.time()
                 meta["pvname"] = self.pvname
+                if timestamp is None:
+                    logger.debug("No timestamp available for PV %s; using local time", self.pvname)
+                    meta["timestamp"] = time.time()
+                else:
+                    try:
+                        meta["timestamp"] = float(timestamp)
+                    except (TypeError, ValueError, OverflowError):
+                        logger.debug("Invalid timestamp for PV %s; using local time", self.pvname, exc_info=True)
+                        meta["timestamp"] = time.time()
                 return meta
 
         return _do()
@@ -167,28 +189,25 @@ class EpicsPV:
             pv.put(v, timeout=self.timeout)
             if self.queueing_delay > 0:
                 time.sleep(self.queueing_delay)
-            logger.debug("Set PV {self.pvname}={v}")
+            logger.debug("Set PV %s = %r", self.pvname, v)
             self.last_written = v
             return True
         except Exception as e: # noqa BLE001
-            logger.error(f"Failed to set {self.pvname}={v}:{e}")
+            logger.error("Failed to set PV %s to %r: %s", self.pvname, v, e)
             return False
-
-    def add_callback(self, callback: Callable[..., None], **kwargs: Any) -> Optional[int]:
+    
+    def add_callback(self, callback: Callable[..., None], **kwargs: Any) -> int:
         pv = self._require_pv()
         wrapped = self._wrap_callback(callback)
         self._callback_refs.append(wrapped)
 
-        cb_index: Optional[int] = None
-
-        def _do_add() -> None:
+        def _do_add() -> int:
             # Ensure monitoring (best effort)
             try:
                 pv.auto_monitor = True
             except Exception:
                 logger.debug("Failed to enable auto_monitor for PV %s", self.pvname, exc_info=True)
             _safe_poll()
-            nonlocal cb_index
             try:
                 cb_index = pv.add_callback(wrapped, **kwargs)
             except TypeError:
@@ -198,8 +217,13 @@ class EpicsPV:
                 cb_index = pv.add_callback(wrapped, **kwargs)
             _safe_poll()
 
-        self._ca(_do_add)
-        return cb_index
+            if cb_index is None:
+                raise RuntimeError(
+                    f"Adding callback to PV {self.pvname!r} returned no callback index"
+                )
+            return cb_index
+
+        return self._ca(_do_add)
 
     def remove_callback(self, index: int) -> None:
         """Remove one callback by the index returned from add_callback()."""
