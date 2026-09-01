@@ -115,7 +115,7 @@ class ScanPlugin(ABC):
         """
     
     @abstractmethod
-    def get_values(self, idx: int, pos: Dict[str, Any]) -> List[Any]:
+    def get_values(self, idx: int, pos: Any) -> List[Any]:
         """Return additional data at each scan point. Data must match header."""
     
     def on_scan_point(self, idx: int, pos: Dict[str, Any]) -> List[Dict[str, Any]]:

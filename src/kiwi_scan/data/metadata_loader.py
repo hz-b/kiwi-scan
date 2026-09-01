@@ -145,7 +145,7 @@ def parse_metadata_file(path: str) -> Optional[MetadataFile]:
 
         # Pivot: index=TS-ISO8601, columns=PV, values=VALUE
         if {"TS-ISO8601", "PV", "VALUE"} <= set(df_raw.columns):
-            df_pivot = df_raw.pivot(index="TS-ISO8601", columns="PV", values="VALUE")
+            df_pivot = df_raw.pivot(index="TS-ISO8601", columns="PV", values="VALUE") # pyright: ignore[reportArgumentType]
         else:
             logger.warning("Metadata file %s does not have expected TS-ISO8601 / PV / VALUE columns", path)
             df_pivot = df_raw.copy()

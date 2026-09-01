@@ -9,7 +9,7 @@ import numbers
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional, Tuple, cast
 
 import pandas as pd
 
@@ -236,8 +236,9 @@ class SpecWriter(ExportWriter):
         dropped = []
 
         logger.debug("Preparing SPEC table rows=%d columns=%d", len(df), len(df.columns))
-        for column in df.columns:
-            converted, label = self._convert_column(str(column), df[column])
+        for index, column in enumerate(df.columns):
+            series = df.iloc[:, index]
+            converted, label = self._convert_column(str(column), series)
             if converted is None:
                 dropped.append(str(column))
                 continue
@@ -258,7 +259,8 @@ class SpecWriter(ExportWriter):
 
         if self._is_datetime_series(series):
             logger.debug("SPEC column %s dtype=%s converted=datetime_to_epoch", name, series.dtype)
-            return series.apply(self._datetime_to_epoch), self._label(name + "_epoch_s")
+            converted = series.map(self._datetime_to_epoch)
+            return converted, self._label(name + "_epoch_s")
 
         if pd.api.types.is_bool_dtype(series):
             logger.debug("SPEC column %s dtype=%s converted=bool_to_int", name, series.dtype)
@@ -268,9 +270,11 @@ class SpecWriter(ExportWriter):
             logger.debug("SPEC column %s dtype=%s kept=numeric", name, series.dtype)
             return series, label
 
-        numeric = pd.to_numeric(series, errors="coerce")
+        numeric = cast(pd.Series, pd.to_numeric(series, errors="coerce"))
         meaningful = series.notna() & (series.astype(str).str.strip() != "")
-        if bool(meaningful.any()) and bool(numeric[meaningful].notna().all()):
+        if bool(meaningful.any()) and bool(
+            cast(pd.Series, numeric[meaningful]).notna().all()
+        ):
             logger.debug("SPEC column %s dtype=%s converted=numeric_text", name, series.dtype)
             return numeric, label
 

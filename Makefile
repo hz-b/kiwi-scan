@@ -90,7 +90,7 @@ lint: ## Run pylint, ruff, and pyright (uses mkvenv.sh when needed)
 	@echo '  PYRIGHT'
 	@echo '========================================================================'
 	@$(WITH_VENV); \
-	pyright src/kiwi_scan/scan
+	pyright src/kiwi_scan
 	@echo '========================================================================'
 	@echo
 	@echo 'Lint complete.'

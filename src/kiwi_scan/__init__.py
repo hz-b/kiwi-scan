@@ -23,6 +23,7 @@ import logging
 import os
 import pkgutil
 import sys
+from importlib.abc import ExecutionLoader
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
@@ -61,12 +62,16 @@ def _import_plugin_file(pyfile: Path, raise_on_error: bool = False) -> None:
         logger.debug("Importing plugin file: %s as %s", pyfile, module_name)
 
         spec = importlib.util.spec_from_file_location(module_name, pyfile)
-        if spec is None or spec.loader is None:
+        if spec is None:
             raise ImportError(f"Could not create import spec for {pyfile}")
+
+        loader = spec.loader
+        if not isinstance(loader, ExecutionLoader):
+            raise TypeError(f"Could not create executable loader for {pyfile}")
 
         module = importlib.util.module_from_spec(spec)
         sys.modules[module_name] = module
-        spec.loader.exec_module(module)
+        loader.exec_module(module)
 
         logger.debug("Imported plugin file successfully: %s", pyfile)
 

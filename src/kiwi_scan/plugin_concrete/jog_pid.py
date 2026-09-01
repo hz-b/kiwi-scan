@@ -97,7 +97,7 @@ class JogPIDPlugin(ScanPlugin):
     def get_headers(self, timestamps: bool) -> List[str]:
         return ["ControllerSetpoint"] + (["TS_ControllerSetpoint"] if timestamps else [])
 
-    def get_values(self, idx: int, pos: Dict[str, Any]) -> List[Any]:
+    def get_values(self, idx: int, pos: Any) -> List[Any]:
         """
         Called once per scan point. Compute and write a new setpoint when the
         control interval is due; otherwise return the most recent setpoint.
@@ -107,7 +107,10 @@ class JogPIDPlugin(ScanPlugin):
             return [self.setpoint]
 
         try:
-            position  = self.actuator.rbv 
+            readback  = self.actuator.rbv
+            if readback is None:
+                raise ValueError("actuator readback is unavailable")
+            position = float(readback)
             velocity = self.actuator.get_velocity() or 0.0
             target    = float(pos)    # Exapmple set position to follow first actuator in this case
         except Exception as e: # noqa BLE001

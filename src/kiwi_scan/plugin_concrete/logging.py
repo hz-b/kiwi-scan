@@ -72,17 +72,28 @@ class LoggingPlugin(ScanPlugin):
         worst: Tuple[str, str, Any, Any] = ("NO_ALARM", "", None, None)
 
         for name, pv in self.monitored_pvs.items():
+            severity: Optional[int] = None
+            status: Any = None
+            state = 4
+
             try:
                 meta = pv.get_with_metadata(use_monitor=True, full=True)
                 if not meta:
-                    state = "ERROR"
-                    severity = None
                     status = "NO_METADATA"
                 else:
-                    severity = meta.get("severity", None)
-                    status = meta.get("status", None)
+                    raw_severity = meta.get("severity")
+                    try:
+                        severity = (
+                            int(raw_severity)
+                            if raw_severity is not None
+                            else None
+                        )
+                    except (TypeError, ValueError):
+                        severity = None
 
-                    if has_alarm(severity):
+                    status = meta.get("status")
+
+                    if severity is not None and has_alarm(severity):
                         self.logger.info(
                             "%s value=%s %s alarm=%s",
                             name,
@@ -100,8 +111,9 @@ class LoggingPlugin(ScanPlugin):
                 severity = None
                 status = str(exc)
 
-            if severity_rank(state) > worst_rank:
-                worst_rank = severity_rank(state)
+            rank = severity_rank(state)
+            if rank > worst_rank:
+                worst_rank = rank
                 worst = (severity_name(state), name, severity, status)
 
         return list(worst)
@@ -158,13 +170,15 @@ class LoggingPlugin(ScanPlugin):
 
     @staticmethod
     def _event_timestamp(ev: PvEvent) -> Optional[float]:
-        if getattr(ev, "timestamp", None) is not None:
+        timestamp = ev.timestamp
+        if timestamp is not None:
             try:
-                return float(ev.timestamp)
+                return float(timestamp)
             except (TypeError, ValueError):
                 pass
-        sec = getattr(ev, "posixseconds", None)
-        nsec = getattr(ev, "nanoseconds", None)
+
+        sec = ev.posixseconds
+        nsec = ev.nanoseconds
         if sec is not None:
             try:
                 return float(sec) + (float(nsec or 0) * 1e-9)
@@ -175,10 +189,10 @@ class LoggingPlugin(ScanPlugin):
     def _record_event(self, actuator_name: str, source: str, ev: PvEvent) -> None:
         ts = self._event_timestamp(ev)
         self._last_events[f"{actuator_name}:{source}"] = {
-            "value": getattr(ev, "value", None),
+            "value": ev.value,
             "timestamp": ts,
             "arrival_time": time.time(),
-            "pvname": getattr(ev, "pvname", None),
+            "pvname": ev.pvname,
         }
     
     def _decode_ready_from_status(self, actuator_name: str, value: Any) -> Optional[bool]:
@@ -188,20 +202,23 @@ class LoggingPlugin(ScanPlugin):
         The function is processed from a monitor event context. 
         Use is_ready() in regular ca_context 
         """
+        scan = self.scan
+        if scan is None:
+            self.logger.debug("Cannot decode ready state without an attached scan")
+            return None
+
         try:
-            actuator = self.scan.get_actuator(actuator_name)
+            actuator = scan.get_actuator(actuator_name)
         except Exception:  # noqa: BLE001
             self.logger.debug(f"Failed to get actuator {actuator_name} for ready-state decoding")
             return None
 
         cfg = getattr(actuator, "config", None)
-        if cfg is None:
+        if cfg is None or value is None:
             return None
 
         mask = getattr(cfg, "ready_bitmask", 0)
         ready_value = getattr(cfg, "ready_value", 0)
-        if value is None:
-            return None
 
         if mask:
             try:
@@ -241,8 +258,18 @@ class LoggingPlugin(ScanPlugin):
         if cached is not None and cached.get("value", None) is not None:
             self.logger.debug(f"Get cached: {key}")
             return cached.get("value")
+
+        scan = self.scan
+        if scan is None:
+            self.logger.warning(
+                "Cannot read actuator trace value %s:%s without an attached scan",
+                actuator_name,
+                source,
+            )
+            return None
+
         try:
-            actuator = self.scan.get_actuator(actuator_name)
+            actuator = scan.get_actuator(actuator_name)
             self.logger.debug(f"Get {key}")
             value = self._read_actuator_value(actuator, source)
         except Exception: # noqa: BLE001
@@ -287,11 +314,13 @@ class LoggingPlugin(ScanPlugin):
             self.logger.debug(f"rbv={rbv},cmd={cmd}, status={status}")
             ready = self._decode_ready_from_status(name, status)
             if ready is None:
-                try:
-                    ready = bool(self.scan.get_actuator(name).is_ready())
-                except Exception:  # noqa: BLE001
-                    self.logger.debug(f"Failed to read ready state for actuator {name}")
-                    ready = None
+                scan = self.scan
+                if scan is not None:
+                    try:
+                        ready = bool(scan.get_actuator(name).is_ready())
+                    except Exception:  # noqa: BLE001
+                        self.logger.debug(f"Failed to read ready state for actuator {name}")
+                        ready = None
 
             previous_ready = self._last_ready_state.get(name)
             if previous_ready is not None and ready is not None and ready != previous_ready:
@@ -368,7 +397,7 @@ class LoggingPlugin(ScanPlugin):
         if not self.enable_actuator_trace:
             return
 
-        pvname = str(getattr(ev, "pvname", ""))
+        pvname = str(ev.pvname)
         mapped = self._actuator_pv_map.get(pvname)
         if mapped is None:
             self.logger.debug("Ignoring non-actuator monitor event: %s", ev)
@@ -378,7 +407,7 @@ class LoggingPlugin(ScanPlugin):
         self._record_event(actuator_name, source, ev)
 
         if source == "status":
-            ready = self._decode_ready_from_status(actuator_name, getattr(ev, "value", None))
+            ready = self._decode_ready_from_status(actuator_name, ev.value)
             previous_ready = self._last_ready_state.get(actuator_name)
             if previous_ready is not None and ready is not None and ready != previous_ready:
                 self._transition_counts[actuator_name] = self._transition_counts.get(actuator_name, 0) + 1
@@ -387,7 +416,7 @@ class LoggingPlugin(ScanPlugin):
                     actuator_name,
                     "ready" if previous_ready else "not_ready",
                     "ready" if ready else "not_ready",
-                    getattr(ev, "value", None),
+                    ev.value,
                     pvname,
                 )
             if ready is not None:
