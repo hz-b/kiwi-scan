@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import logging
+from typing import Optional
 
 from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor.base import BaseMonitor
@@ -16,11 +17,11 @@ class CMScan(BaseScan):
     def __init__(self, config: ScanConfig, data_dir=None):
         super().__init__(config, data_dir)
         
-        if not self.scan_dimensions:
+        scan_dimensions = self.scan_dimensions
+        if not scan_dimensions:
             raise ValueError("CMScan requires at least one ScanDimension")
-        
-        logger.info("Creating samplerate from scan dimensions: %s", self.scan_dimensions)
-        dim = config.scan_dimensions[0]
+        logger.info("Creating samplerate from scan dimensions: %s", scan_dimensions)
+        dim = scan_dimensions[0]
         if dim.start == dim.stop:
             raise ArithmeticError(f"Start equals stop == {dim.start!r}")
         self._start = dim.start
@@ -50,17 +51,9 @@ class CMScan(BaseScan):
 
             try:
                 actuator.set_velocity(orig_vel)
-                logger.info(
-                    "Restored velocity for actuator %s to %s",
-                    name,
-                    orig_vel,
-                )
+                logger.info("Restored velocity for actuator %s to %s", name, orig_vel)
             except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "Failed to restore velocity for actuator %s: %s",
-                    name,
-                    exc,
-                )
+                logger.error("Failed to restore velocity for actuator %s: %s", name, exc)
 
     def stop(self) -> None:
         """Request CM scan stop and restore original actuator velocities."""
@@ -89,12 +82,7 @@ class CMScan(BaseScan):
         self._position = position
         return position
 
-    def _acquire_daq_point(
-        self,
-        index: int,
-        position,
-        monitor: BaseMonitor = None,
-    ) -> None:
+    def _acquire_daq_point(self, index: int, position, monitor: Optional[BaseMonitor] = None) -> None:
         """Acquire, process, persist, and publish one continuous-motion point."""
         with self._time_block("daq:point", idx=index):
             with self._time_block("triggers:on_point", idx=index):
@@ -102,32 +90,21 @@ class CMScan(BaseScan):
 
             with self._time_block("read_detectors", idx=index):
                 values = self.read_detectors()
-            self.update_current_row_cache(
-                idx=index,
-                pos=position,
-                values=values,
-            )
+            self.update_current_row_cache(idx=index, pos=position, values=values)
 
             with self._time_block("plugins", idx=index):
-                plugin_values = self._collect_plugin_point_data(
-                    index,
-                    position,
-                )
+                plugin_values = self._collect_plugin_point_data(index, position)
             values = values + plugin_values
 
             with self._time_block("write:data", idx=index):
-                monitor_values = self.save_to_file(
-                    position,
-                    values,
-                    self.include_timestamps,
-                )
+                monitor_values = self.save_to_file(position, values, self.include_timestamps)
 
             with self._time_block("monitor:update", idx=index):
                 if monitor is not None:
                     logger.debug("Monitor values: %s", monitor_values)
                     monitor.update(monitor_values)
 
-    def run_daq(self, monitor: BaseMonitor = None):
+    def run_daq(self, monitor: Optional[BaseMonitor] = None):
         """
         DAQ loop driven by heartbeat subscription when available.
         sampletime acts as timeout fallback (so it still works without heartbeat).
@@ -201,25 +178,12 @@ class CMScan(BaseScan):
                     else actuator.backlash
                 )
                 overshoot = dim.start + backlash
-                logger.info(
-                    "overshoot=%s, bdist=%s, backlash=%s",
-                    overshoot,
-                    backlash,
-                    actuator.backlash,
-                )
+                logger.info("overshoot=%s, bdist=%s, backlash=%s", overshoot, backlash, actuator.backlash)
                 try:
                     actuator.run_move(overshoot, sync=True)
-                    logger.info(
-                        "Started actuator '%s' moving to %s",
-                        name,
-                        dim.start,
-                    )
+                    logger.info("Started actuator '%s' moving to %s", name, dim.start)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Failed to move actuator '%s': %s",
-                        name,
-                        exc,
-                    )
+                    logger.warning("Failed to move actuator '%s': %s", name, exc)
 
     def _store_original_velocities(self) -> None:
         """Read actuator velocities for best-effort restoration after the scan."""
@@ -228,24 +192,12 @@ class CMScan(BaseScan):
                 try:
                     velocity = actuator.get_velocity()
                     if velocity is None:
-                        logger.warning(
-                            "Could not read original velocity for actuator "
-                            "'%s'; velocity restore will be skipped",
-                            name,
-                        )
+                        logger.warning( "Could not read original velocity for actuator '%s'; velocity restore will be skipped", name)
                         continue
                     self._original_velocities[name] = velocity
-                    logger.info(
-                        "Stored velocity for actuator '%s': %s",
-                        name,
-                        velocity,
-                    )
+                    logger.info("Stored velocity for actuator '%s': %s", name, velocity)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning(
-                        "Could not read velocity for actuator '%s': %s",
-                        name,
-                        exc,
-                    )
+                    logger.warning("Could not read velocity for actuator '%s': %s", name, exc)
 
     def _start_continuous_motion(self) -> None:
         """Apply configured velocities and start all continuous moves."""
@@ -255,49 +207,27 @@ class CMScan(BaseScan):
                 actuator = self.actuators[name]
                 try:
                     actuator.set_velocity(dim.velocity)
-                    logger.info(
-                        "Set velocity of actuator '%s' to %s",
-                        name,
-                        dim.velocity,
-                    )
-                    actuator.run_move(
-                        dim.stop,
-                        sync=False,
-                        wait_startup=True,
-                    )
-                    logger.info(
-                        "Started actuator '%s' moving to %s",
-                        name,
-                        dim.stop,
-                    )
+                    logger.info("Set velocity of actuator '%s' to %s", name, dim.velocity)
+                    actuator.run_move(dim.stop, sync=False, wait_startup=True)
+                    logger.info("Started actuator '%s' moving to %s", name, dim.stop)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "Failed to configure/startup actuator '%s': %s",
-                        name,
-                        exc,
-                    )
+                    logger.error("Failed to configure/startup actuator '%s': %s", name, exc)
 
-    def _cleanup_scan(self, monitor: BaseMonitor = None) -> None:
+    def _cleanup_scan(self, monitor: Optional[BaseMonitor] = None) -> None:
         """Release scan resources without allowing one failure to block others."""
-        self._run_cleanup_step(
-            "velocity:restore",
-            self._restore_original_velocities,
-        )
+        self._run_cleanup_step("velocity:restore", self._restore_original_velocities)
         self._run_cleanup_step("plugins:stop", self._end_plugins)
         self._run_cleanup_step("plugins:close", self._close_plugins)
         self._run_cleanup_step("metadata:stop", self._stop_metadata_monitor)
         self._run_cleanup_step("subscriptions:stop", self._stop_subscriptions)
         if monitor is not None:
             self._run_cleanup_step("monitor:close", monitor.close)
-        self._run_cleanup_step(
-            "triggers:after",
-            lambda: self._fire_triggers("after"),
-        )
+        self._run_cleanup_step("triggers:after", lambda: self._fire_triggers("after"))
         self.busyflag = False
         self._run_cleanup_step("performance:report", self._perf_report)
 
     # ---------------- cm scan logic --------------------
-    def scan(self, positions, monitor: BaseMonitor = None):
+    def scan(self, positions, monitor: Optional[BaseMonitor] = None):
         """
         1) Move to start position
         2) Store current velocities

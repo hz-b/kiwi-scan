@@ -3,6 +3,7 @@
 
 import logging
 import time
+from typing import Optional
 
 from kiwi_scan.datamodels import ScanConfig
 from kiwi_scan.monitor.base import BaseMonitor
@@ -87,7 +88,7 @@ class PollScan(BaseScan):
         self,
         index: int,
         position,
-        monitor: BaseMonitor = None,
+        monitor: Optional[BaseMonitor] = None,
     ) -> None:
         """Acquire and publish one polling scan point."""
         self._fire_triggers("on_point")
@@ -106,7 +107,7 @@ class PollScan(BaseScan):
         if monitor is not None:
             monitor.update(values)
 
-    def _cleanup_scan(self, monitor: BaseMonitor = None) -> None:
+    def _cleanup_scan(self, monitor: Optional[BaseMonitor] = None) -> None:
         """Release polling-scan resources using its established semantics."""
         self._stop_metadata_monitor()
         if monitor is not None:
@@ -118,7 +119,7 @@ class PollScan(BaseScan):
         self._fire_triggers("after")
         self.busyflag = False
 
-    def scan(self, positions, monitor: BaseMonitor = None):
+    def scan(self, positions, monitor: Optional[BaseMonitor] = None):
         """
         Poll detector values.
         Now synchronized by heartbeat events when available, with poll timeout fallback.

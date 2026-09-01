@@ -12,6 +12,7 @@ import time
 from datetime import datetime, timezone
 from typing import List, Optional
 
+from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import ScanConfig, SubscriptionConfig
 from kiwi_scan.scan.stats_collector import StatsCollector
 from kiwi_scan.scan.subscription_manager import SubscriptionManager
@@ -173,10 +174,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         actuators=None,
     )
 
-    def _on_stats_event(event, subscription=None) -> None:
-        collector.update(event, subscription, collect=True)
+    def _on_status_event(ev: PvEvent, subscription: SubscriptionConfig) -> None:
+        collector.update(ev, subscription, collect=True)
 
-    manager.register_role(args.role, _on_stats_event)
+    manager.register_role(args.role, _on_status_event)
 
     sep = "\t"
     headers = collector.get_headers(False)

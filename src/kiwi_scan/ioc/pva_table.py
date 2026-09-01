@@ -99,12 +99,13 @@ class DataFrameToNTTableConverter:
                 index, str(name), field, series.dtype, pva_type, int(series.isna().sum()))
 
             columns.append((field, pva_type))
+            
             if numeric:
-                values[field] = (
-                    pd.to_numeric(series, errors="coerce")
-                    .astype(float)
-                    .to_numpy()
+                numeric_series = pd.Series(
+                    pd.to_numeric(series, errors="coerce"),
+                    index=series.index,
                 )
+                values[field] = numeric_series.astype(float).to_numpy()
             else:
                 values[field] = [
                     "" if pd.isna(value) else str(value)

@@ -190,6 +190,8 @@ class ParaScan(BaseScan):
         """Return True once an already-entered actuator range is left past its stop."""
         for dim in self.scan_dimensions:
             value = snapshot.get(dim.actuator)
+            if value is None:
+                continue 
             try:
                 pos = float(value)
             except (TypeError, ValueError):

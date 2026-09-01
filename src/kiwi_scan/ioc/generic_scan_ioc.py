@@ -344,7 +344,7 @@ class GenericScanIOC:
         return self._mk_record("aIn", name, initial, **opts)
 
     def _float_out(self, name: str, initial: Any, **kwargs: Any) -> Any:
-        opts = {"PREC": 6}
+        opts: Dict[str, Any] = {"PREC": 6}
         opts.update(kwargs)
         return self._mk_out_record("aOut", name, initial, **opts)
 
@@ -578,7 +578,7 @@ class GenericScanIOC:
         try:
             await loop.run_in_executor(None, self.controller.execute_current_scan)
         except Exception:
-            logger.exception("Scan execution failed: %s")
+            logger.exception("Scan execution failed")
         finally:
             logger.info("IOC scan task finished; publishing final state")
             self.publish_once()

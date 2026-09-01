@@ -272,7 +272,7 @@ class ManifestWriter:
         data_file: Optional[str] = None,
         metadata_file: Optional[str] = None,
         mode: str = MODE_FULL,
-    ) -> str:
+    ) -> Optional[str]:
         """
         Append one scan configuration entry to the manifest.
 
@@ -336,7 +336,7 @@ class ManifestWriter:
 
     @staticmethod
     def _to_plain_data(value: Any) -> Any:
-        if is_dataclass(value):
+        if is_dataclass(value) and not isinstance(value, type):
             return asdict(value)
         return value
 
@@ -538,7 +538,7 @@ class ManifestResolver:
         return cls(str(Path(manifest_file).expanduser().parent))
 
     @classmethod
-    def _resolve_data_dir(cls, data_dir: Optional[str]) -> Path:
+    def _resolve_data_dir(cls, data_dir: Optional[str]) -> Optional[Path]:
         value = data_dir or os.environ.get(cls.ENV_DATA_DIR)
         # Fall back to the currently active manifest
         if not value:

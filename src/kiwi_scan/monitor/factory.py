@@ -46,10 +46,6 @@ def create_monitor(config: ScanConfig):
     if set(parameters.keys()) == {"parameters"} and isinstance(parameters.get("parameters"), dict):
         logger.debug("Unwrapping nested monitor parameters block: %r", parameters)
         parameters = parameters["parameters"]
-    logger.debug(
-        "Instantiating monitor type=%r with parameters=%r",
-        monitor_type,
-        parameters,
-    )
+    logger.debug("Instantiating monitor type=%r with parameters=%r", monitor_type, parameters)
 
     return factory(parameters=parameters)

@@ -1183,22 +1183,14 @@ class BaseScan(ScanABC):
 
         with self._time_block("read_detectors", idx=index):
             values = self.read_detectors()
-        self.update_current_row_cache(
-            idx=index,
-            pos=position,
-            values=values,
-        )
+        self.update_current_row_cache(idx=index, pos=position, values=values)
 
         with self._time_block("plugins", idx=index):
             plugin_values = self._collect_plugin_point_data(index, position)
 
         values = values + plugin_values
         with self._time_block("write:data", idx=index):
-            monitor_values = self.save_to_file(
-                position,
-                values,
-                self.include_timestamps,
-            )
+            monitor_values = self.save_to_file(position, values, self.include_timestamps)
 
         self._position = position
         with self._time_block("monitor:update", idx=index):
