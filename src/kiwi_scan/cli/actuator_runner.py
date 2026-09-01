@@ -15,9 +15,9 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Tuple
 
-from kiwi_scan.actuator.factory import create_actuators
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
-from kiwi_scan.datamodels import ActuatorConfig, MonitorSpec
+from kiwi_scan.actuator.tools import load_actuators
+from kiwi_scan.datamodels import MonitorSpec
 from kiwi_scan.scan.tools import (
     get_scan_config_dir,
     load_scan_configs,
@@ -27,7 +27,6 @@ from kiwi_scan.yaml_loader import (
     get_env_replacements,
     get_replacements_help_and_required,
     parse_replacements,
-    yaml_loader,
 )
 
 logger = logging.getLogger(__name__)
@@ -86,20 +85,16 @@ def _parse_name_value_any(spec: str) -> Tuple[str, Any]:
 
 # ----------------------------- config + actuators -----------------------------
 
-def _load_raw_config(args) -> Tuple[Dict[str, Any], str]:
-    # Replacements (CLI + env)
-    repl = parse_replacements(args.replace or [])
-    repl.update(get_env_replacements("KIWI_SCAN"))
+def _resolve_config_input(args, config_dir: str) -> Tuple[str, Dict[str, str]]:
+    """Return the selected YAML path and merged CLI/environment replacements."""
+    replacements = parse_replacements(args.replace or [])
+    replacements.update(get_env_replacements("KIWI_SCAN"))
 
     if args.config_file:
-        return yaml_loader(args.config_file, repl), args.config_file
+        return args.config_file, replacements
 
-    config_dir = os.environ.get("KIWI_SCAN_CONFIG_DIR", get_scan_config_dir())
-    # For argparse choices/help we preloaded keys with replacements=None,
-    # but for actual load we load raw yaml with replacements applied:
-    cfg_path = os.path.join(config_dir, f"{args.config}.yaml")
-    cfg = yaml_loader(cfg_path, repl)
-    return cfg, cfg_path
+    config_file = os.path.join(config_dir, f"{args.config}.yaml")
+    return config_file, replacements
 
 def _pick_monitor_provider( actuators: Dict[str, AbstractActuator]) -> AbstractActuator:
     """ Return the first actuator that supports monitor subscriptions. """
@@ -190,7 +185,6 @@ def _start_monitors(
     *,
     have_monitors: bool,
     args,
-    raw_cfg: Dict[str, Any],
     actuators: Dict[str, AbstractActuator],
     ev_q: queue.Queue[dict],
     t0: float,
@@ -209,27 +203,20 @@ def _start_monitors(
     # provides the actual monitor subscriptions.
     provider = _pick_monitor_provider(actuators)
 
-    # resolve PV names.
-    actuators_raw = raw_cfg.get("actuators") or {}
-
     for monitor_id, spec_text in enumerate(args.monitor, start=1):
         monitor_spec = MonitorSpec.from_arg(spec_text)
 
         name = monitor_spec.name
         source = monitor_spec.source
 
-        # First check whether the requested actuator actually exists.
-        if name not in actuators_raw:
-            raise ValueError(f"--monitor refers to unknown actuator {name!r}")
+        try:
+            actuator = actuators[name]
+        except KeyError as exc:
+            raise ValueError(
+                f"--monitor refers to unknown actuator {name!r}"
+            ) from exc
 
-        raw_actuator = actuators_raw[name]
-
-        # An existing actuator entry must contain a configuration dictionary.
-        if not isinstance(raw_actuator, dict):
-            raise TypeError(f"Configuration for actuator {name!r} must be a dictionary")
-
-        actuator_config = ActuatorConfig.from_dict(raw_actuator)
-        pvname = monitor_spec.resolve_pv(actuator_config)
+        pvname = monitor_spec.resolve_pv(actuator.config)
 
         def _mk_cb(_monitor_id: int, _name: str, _source: str, _pvname: str):
             def _cb(ev: PvEvent) -> None:
@@ -275,12 +262,9 @@ def _start_monitors(
 def _validate_cli_specs(
     parser: argparse.ArgumentParser,
     args: argparse.Namespace,
-    raw_cfg: Dict[str, Any],
     actuators: Dict[str, AbstractActuator],
 ) -> None:
     """Validate repeatable CLI specs before starting monitors or motion."""
-    acts_raw = raw_cfg.get("actuators") or {}
-
     def _check_known(option: str, name: str) -> None:
         if name not in actuators:
             known = ", ".join(sorted(actuators)) or "<none>"
@@ -309,9 +293,8 @@ def _validate_cli_specs(
             parser.error(f"--monitor: {exc}")
 
         name = monitor_spec.name
-        raw_act = acts_raw.get(name)
-        if not isinstance(raw_act, dict):
-            known = ", ".join(sorted(acts_raw)) or "<none>"
+        if name not in actuators:
+            known = ", ".join(sorted(actuators)) or "<none>"
             parser.error(
                 f"--monitor unknown actuator {name!r}. "
                 "Use NAME:source, NAME@PV, or NAME. "
@@ -319,7 +302,7 @@ def _validate_cli_specs(
             )
 
         try:
-            monitor_spec.resolve_pv(ActuatorConfig.from_dict(raw_act))
+            monitor_spec.resolve_pv(actuators[name].config)
         except ValueError as exc:
             parser.error(f"--monitor {spec!r}: {exc}")
 
@@ -408,10 +391,7 @@ def main() -> None:
     if args.log_level is not None:
         set_valid_logging_level(args.log_level)
 
-    try:
-        raw_cfg, origin = _load_raw_config(args)
-    except (FileNotFoundError, ValueError, TypeError) as exc:
-        p.error(f"failed to load config: {exc}")
+    config_file, replacements = _resolve_config_input(args, config_dir)
 
     # Show required replacements help for presets (like scan_runner)
     if args.config and not args.config_file:
@@ -420,11 +400,11 @@ def main() -> None:
             print(help_text)
 
     try:
-        actuators = create_actuators(raw_cfg.get("actuators") or {})
-    except (ValueError, TypeError, ConnectionError) as exc:
-        p.error(f"failed to build actuators: {exc}")
+        actuators = load_actuators(config_file, replacements)
+    except (FileNotFoundError, ValueError, TypeError, ConnectionError) as exc:
+        p.error(f"failed to load actuators: {exc}")
 
-    _validate_cli_specs(p, args, raw_cfg, actuators)
+    _validate_cli_specs(p, args, actuators)
 
     # Validate "monitors only" mode
     have_moves = bool(args.move or args.rel_move or args.jog or args.stop or args.set_velocity)
@@ -499,7 +479,6 @@ def main() -> None:
     provider, monitor_handles = _start_monitors(
         have_monitors=have_monitors,
         args=args,
-        raw_cfg=raw_cfg,
         actuators=actuators,
         ev_q=ev_q,
         t0=t0,
@@ -616,7 +595,7 @@ def main() -> None:
     if dropped:
         logger.warning("Dropped %d monitor events (queue full).", dropped)
 
-    logger.debug("Config origin: %s", origin)
+    logger.debug("Config origin: %s", config_file)
     print(f"Done. events_seen={seen} dropped={dropped}")
 
 if __name__ == "__main__":
