@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from kiwi_scan.actuator.factory import create_actuators
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
-from kiwi_scan.datamodels import ActuatorConfig
+from kiwi_scan.datamodels import ActuatorConfig, MonitorSpec
 from kiwi_scan.scan.tools import (
     get_scan_config_dir,
     load_scan_configs,
@@ -82,55 +82,6 @@ def _parse_name_value_any(spec: str) -> Tuple[str, Any]:
         return name, float(value_text)
     except ValueError as exc:
         raise ValueError(f"Expected numeric value or JSON list in {spec!r}") from exc
-
-
-def _parse_monitor_spec(spec: str) -> Dict[str, Optional[str]]:
-    """
-    Monitor spec formats:
-      - NAME:source         (source default 'rbv' if omitted)
-      - NAME@PVNAME         (direct PV override)
-      - NAME               (equivalent to NAME:rbv)
-    """
-    s = spec.strip()
-    if not s:
-        raise ValueError("Empty --monitor spec")
-
-    if "@" in s:
-        name, pv = s.split("@", 1)
-        name = name.strip()
-        pv = pv.strip()
-        if not name or not pv:
-            raise ValueError(f"Invalid monitor spec {spec!r}, expected NAME@PV")
-        return {"name": name, "source": None, "pv": pv}
-
-    if ":" in s:
-        name, source = s.split(":", 1)
-        name = name.strip()
-        source = source.strip() or "rbv"
-        if not name:
-            raise ValueError(f"Invalid monitor spec {spec!r}, empty NAME")
-        return {"name": name, "source": source, "pv": None}
-
-    return {"name": s, "source": "rbv", "pv": None}
-
-
-def _resolve_pv_for_source(act_cfg: ActuatorConfig, source: str) -> str:
-    src = (source or "rbv").lower()
-    if src == "rbv":
-        return act_cfg.rb_pv or act_cfg.pv
-    if src in ("cmd", "set", "command"):
-        return act_cfg.cmd_pv or act_cfg.pv
-    if src == "status":
-        if not act_cfg.status_pv:
-            raise ValueError("source=status requested but actuator has no status_pv")
-        return act_cfg.status_pv
-    if src == "stop":
-        if not act_cfg.stop_pv:
-            raise ValueError("source=stop requested but actuator has no stop_pv")
-        return act_cfg.stop_pv
-    if src == "velocity":
-        return act_cfg.get_velocity_pv or act_cfg.velocity_pv or act_cfg.cmdvel_pv or act_cfg.pv
-    raise ValueError(f"Unsupported source {source!r}. Use rbv|cmd|status|stop|velocity.")
 
 
 # ----------------------------- config + actuators -----------------------------
@@ -245,7 +196,7 @@ def _start_monitors(
     t0: float,
     _inc_seen,
     _inc_dropped,
-) -> Tuple[Optional[AbstractActuator], List[Tuple[str, Any]], List[dict]]:
+) -> Tuple[Optional[AbstractActuator], List[Tuple[str, Any]]]:
     """Start all monitor subscriptions requested on the command line."""
 
     provider: Optional[AbstractActuator] = None
@@ -262,11 +213,10 @@ def _start_monitors(
     actuators_raw = raw_cfg.get("actuators") or {}
 
     for monitor_id, spec_text in enumerate(args.monitor, start=1):
-        monitor_spec = _parse_monitor_spec(spec_text)
+        monitor_spec = MonitorSpec.from_arg(spec_text)
 
-        name = monitor_spec["name"]
-        source = monitor_spec["source"] or "pv"
-        pv_override = monitor_spec["pv"]
+        name = monitor_spec.name
+        source = monitor_spec.source
 
         # First check whether the requested actuator actually exists.
         if name not in actuators_raw:
@@ -279,12 +229,7 @@ def _start_monitors(
             raise TypeError(f"Configuration for actuator {name!r} must be a dictionary")
 
         actuator_config = ActuatorConfig.from_dict(raw_actuator)
-
-        # An explicitly supplied PV wins. Otherwise derive the PV from the actuator configuration.
-        if pv_override:
-            pvname = pv_override
-        else:
-            pvname = _resolve_pv_for_source( actuator_config, monitor_spec["source"] or "rbv")
+        pvname = monitor_spec.resolve_pv(actuator_config)
 
         def _mk_cb(_monitor_id: int, _name: str, _source: str, _pvname: str):
             def _cb(ev: PvEvent) -> None:
@@ -359,11 +304,11 @@ def _validate_cli_specs(
 
     for spec in args.monitor:
         try:
-            ms = _parse_monitor_spec(spec)
+            monitor_spec = MonitorSpec.from_arg(spec)
         except ValueError as exc:
             parser.error(f"--monitor: {exc}")
 
-        name = ms["name"]
+        name = monitor_spec.name
         raw_act = acts_raw.get(name)
         if not isinstance(raw_act, dict):
             known = ", ".join(sorted(acts_raw)) or "<none>"
@@ -373,11 +318,10 @@ def _validate_cli_specs(
                 f"Known actuators: {known}"
             )
 
-        if not ms["pv"]:
-            try:
-                _resolve_pv_for_source(ActuatorConfig.from_dict(raw_act), ms["source"] or "rbv")
-            except ValueError as exc:
-                parser.error(f"--monitor {spec!r}: {exc}")
+        try:
+            monitor_spec.resolve_pv(ActuatorConfig.from_dict(raw_act))
+        except ValueError as exc:
+            parser.error(f"--monitor {spec!r}: {exc}")
 
 
 # ----------- immediate synchonous non blocking actions ---------------

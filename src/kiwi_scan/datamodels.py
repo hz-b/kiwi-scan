@@ -51,6 +51,39 @@ class ActuatorConfig:
     velocity: float = 0.0
     jog: Optional[JogConfig] = None
 
+    def resolve_pv(self, source: str) -> str:
+        """Resolve an actuator source name to a configured PV name."""
+        normalized_source = (source or "rbv").lower()
+
+        if normalized_source == "rbv":
+            pv = self.rb_pv or self.pv
+        elif normalized_source in ("cmd", "set", "command"):
+            pv = self.cmd_pv or self.pv
+        elif normalized_source == "status":
+            pv = self.status_pv
+        elif normalized_source == "stop":
+            pv = self.stop_pv
+        elif normalized_source == "velocity":
+            pv = (
+                self.get_velocity_pv
+                or self.velocity_pv
+                or self.cmdvel_pv
+                or self.pv
+            )
+        else:
+            raise ValueError(
+                f"Unsupported source {source!r}. "
+                "Use rbv|cmd|status|stop|velocity."
+            )
+
+        if not pv:
+            raise ValueError(
+                "Actuator has no PV configured for source "
+                f"{normalized_source!r}"
+            )
+
+        return pv
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ActuatorConfig":
         # 1) Extract & convert the jog block if it exists
@@ -64,6 +97,51 @@ class ActuatorConfig:
         # 2) Now build the top‐level config
         cfg_kwargs = filter_known_fields(cls, data)
         return cls(**cfg_kwargs)
+
+
+@dataclass(frozen=True)
+class MonitorSpec:
+    """One actuator monitor requested by a command-line argument."""
+
+    name: str
+    source: str = "rbv"
+    pv: Optional[str] = None
+
+    def resolve_pv(self, actuator_config: ActuatorConfig) -> str:
+        """Return the direct PV override or resolve the actuator source."""
+        if self.pv:
+            return self.pv
+        return actuator_config.resolve_pv(self.source)
+
+    @classmethod
+    def from_arg(cls, spec: str) -> "MonitorSpec":
+        """Parse ``NAME``, ``NAME:SOURCE``, or ``NAME@PV``."""
+        value = spec.strip()
+        if not value:
+            raise ValueError("Empty --monitor spec")
+
+        if "@" in value:
+            name, pv = value.split("@", 1)
+            name = name.strip()
+            pv = pv.strip()
+            if not name or not pv:
+                raise ValueError(
+                    f"Invalid monitor spec {spec!r}, expected NAME@PV"
+                )
+            return cls(name=name, source="pv", pv=pv)
+
+        if ":" in value:
+            name, source = value.split(":", 1)
+            name = name.strip()
+            source = source.strip() or "rbv"
+            if not name:
+                raise ValueError(
+                    f"Invalid monitor spec {spec!r}, empty NAME"
+                )
+            return cls(name=name, source=source)
+
+        return cls(name=value)
+
 
 @dataclass
 class ScanDimension:
