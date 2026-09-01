@@ -7,16 +7,15 @@ import argparse
 import json
 import logging
 import os
-import queue
 import signal
 import sys
 import threading
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
-from kiwi_scan.actuator.single import AbstractActuator, PvEvent
-from kiwi_scan.actuator.tools import load_actuators
+from kiwi_scan.actuator.single import AbstractActuator
+from kiwi_scan.actuator.tools import load_actuators, run_monitors
 from kiwi_scan.datamodels import MonitorSpec
 from kiwi_scan.scan.tools import (
     get_scan_config_dir,
@@ -95,169 +94,6 @@ def _resolve_config_input(args, config_dir: str) -> Tuple[str, Dict[str, str]]:
 
     config_file = os.path.join(config_dir, f"{args.config}.yaml")
     return config_file, replacements
-
-def _pick_monitor_provider( actuators: Dict[str, AbstractActuator]) -> AbstractActuator:
-    """ Return the first actuator that supports monitor subscriptions. """
-    for actuator in actuators.values():
-        if actuator.supports_monitors():
-            return actuator
-
-    raise RuntimeError(
-        "No actuator backend supports monitors in this config."
-    )
-
-# ----------------------------- monitor + output -----------------------------
-
-class _EventWriter(threading.Thread):
-    def __init__(
-        self,
-        q: queue.Queue[dict],
-        *,
-        out_path: Optional[str],
-        stop_event: threading.Event,
-    ):
-        super().__init__(daemon=True)
-
-        # monitor events
-        self._q = q
-
-        # When this event is set, the writer thread should stop.
-        self._stop_event = stop_event
-
-        self._out_path = out_path
-
-    def _emit(self, line: str, file_handle=None) -> None:
-        """ Print one monitor line and optionally write it to the output file. """
-        print(line)
-
-        if file_handle is not None:
-            file_handle.write(line + "\n")
-
-    def _run_writer(self, file_handle=None) -> None:
-        """Process queued monitor events until the writer is stopped."""
-        while not self._stop_event.is_set():
-            try:
-                # Wait briefly for the next monitor event.
-                item = self._q.get(timeout=0.1)
-            except queue.Empty:
-                # Nothing arrived yet. Go around and check stop_event again.
-                continue
-
-            # None is used as a special "stop now" message.
-            if item is None:
-                break
-
-            # Extract the values we want to display.
-            mon = item.get("monitor_id")
-            name = item.get("actuator")
-            src = item.get("source")
-            pv = item.get("pvname")
-            rel = item.get("t_rel_s")
-            val = item.get("value")
-
-            line = (
-                f"[mon#{mon} {name}:{src}] "
-                f"{rel:9.3f}s pv={pv} value={val!r}"
-            )
-
-            self._emit(line, file_handle)
-
-    def run(self) -> None:
-        """ Thread entry point. """
-
-        # print events to the terminal.
-        if self._out_path is None:
-            self._run_writer()
-            return
-
-        # --out was given - context manager closes it automatically on exit.
-        with open(
-            self._out_path,
-            "a",
-            encoding="utf-8",
-            buffering=1,
-        ) as file_handle:
-            self._run_writer(file_handle)
-
-
-# TODO: Align actuator_runner monitor handling with SubscriptionManager.
-def _start_monitors(
-    *,
-    have_monitors: bool,
-    args,
-    actuators: Dict[str, AbstractActuator],
-    ev_q: queue.Queue[dict],
-    t0: float,
-    _inc_seen,
-    _inc_dropped,
-) -> Tuple[Optional[AbstractActuator], List[Tuple[str, Any]]]:
-    """Start all monitor subscriptions requested on the command line."""
-
-    provider: Optional[AbstractActuator] = None
-    monitor_handles: List[Tuple[str, Any]] = []
-
-    # no --monitor arguments were given.
-    if not have_monitors:
-        return provider, monitor_handles
-
-    # provides the actual monitor subscriptions.
-    provider = _pick_monitor_provider(actuators)
-
-    for monitor_id, spec_text in enumerate(args.monitor, start=1):
-        monitor_spec = MonitorSpec.from_arg(spec_text)
-
-        name = monitor_spec.name
-        source = monitor_spec.source
-
-        try:
-            actuator = actuators[name]
-        except KeyError as exc:
-            raise ValueError(
-                f"--monitor refers to unknown actuator {name!r}"
-            ) from exc
-
-        pvname = monitor_spec.resolve_pv(actuator.config)
-
-        def _mk_cb(_monitor_id: int, _name: str, _source: str, _pvname: str):
-            def _cb(ev: PvEvent) -> None:
-                now = time.time()
-
-                payload = {
-                    "monitor_id": _monitor_id,
-                    "actuator": _name,
-                    "source": _source,
-                    "pvname": getattr(ev, "pvname", _pvname),
-                    "value": getattr(ev, "value", None),
-                    "t_abs_s": now,
-                    "t_rel_s": now - t0,
-                    "timestamp": getattr(ev, "timestamp", None),
-                    "posixseconds": getattr(ev, "posixseconds", None),
-                    "nanoseconds": getattr(ev, "nanoseconds", None),
-                    "severity": getattr(ev, "severity", None),
-                    "status": getattr(ev, "status", None),
-                    # raw may be large or not JSON serializable.
-                    # The final JSON writer handles that with default=str.
-                    "raw": getattr(ev, "raw", None),
-                }
-
-                try:
-                    ev_q.put_nowait(payload)
-                    _inc_seen()
-                except queue.Full:
-                    _inc_dropped()
-
-            return _cb
-
-        callback = _mk_cb(monitor_id, name, source, pvname)
-
-        handle = provider.add_monitor(pvname, user_callback=callback)
-
-        monitor_handles.append((pvname, handle))
-
-    logger.info("Started %d monitors via %s", len(monitor_handles), type(provider).__name__)
-
-    return provider, monitor_handles
-
 
 def _validate_cli_specs(
     parser: argparse.ArgumentParser,
@@ -449,43 +285,6 @@ def main() -> None:
 
     signal.signal(signal.SIGINT, _sigint)
 
-    t0 = time.time()
-
-    # Writer thread + queue
-    ev_q: queue.Queue[dict] = queue.Queue(maxsize=10000)
-    writer = _EventWriter(ev_q, out_path=args.out, stop_event=stop_all)
-    writer.start()
-
-    # Monitor counters
-    counter_lock = threading.Lock()
-    events_seen = 0
-    dropped = 0
-
-    def _inc_seen() -> None:
-        nonlocal events_seen
-        with counter_lock:
-            events_seen += 1
-
-    def _inc_dropped() -> None:
-        nonlocal dropped
-        with counter_lock:
-            dropped += 1
-
-    def _get_counts() -> Tuple[int, int]:
-        with counter_lock:
-            return events_seen, dropped
-
-    # Start monitors (if any)
-    provider, monitor_handles = _start_monitors(
-        have_monitors=have_monitors,
-        args=args,
-        actuators=actuators,
-        ev_q=ev_q,
-        t0=t0,
-        _inc_seen=_inc_seen,
-        _inc_dropped=_inc_dropped,
-    )
-    
     # set stop, velocity, ...
     _run_actions(args, actuators)
 
@@ -495,103 +294,79 @@ def main() -> None:
     # Submit moves/jogs concurrently
     used_motion_actuators: List[AbstractActuator] = []
     futures: List[Future] = []
+    seen = 0
+    dropped = 0
 
-    # serialize commands per actuator to avoid overlapping for same device
+    # Serialize commands per actuator to avoid overlapping for same device.
     per_act_lock: Dict[str, threading.Lock] = {
         name: threading.Lock()
         for name in actuators
     }
 
-    def _with_lock(name: str, fn, *args, **kwargs):
+    def _with_lock(name: str, fn, *fn_args, **fn_kwargs):
         with per_act_lock[name]:
-            return fn(*args, **kwargs)
+            return fn(*fn_args, **fn_kwargs)
 
-    max_workers = max(1, min(8, len(actuators)))  # keep it simple
+    max_workers = max(1, min(8, len(actuators)))
     with ThreadPoolExecutor(max_workers=max_workers) as ex:
         for spec in args.move:
             name, pos = _parse_name_value(spec)
-            if name not in actuators:
-                p.error(f"--move unknown actuator {name!r}")
             act = actuators[name]
             used_motion_actuators.append(act)
-            futures.append(ex.submit(_with_lock, name, act.run_move, float(pos), True))
- 
+            futures.append(
+                ex.submit(_with_lock, name, act.run_move, float(pos), True)
+            )
+
         for spec in args.rel_move:
             name, delta = _parse_name_value_any(spec)
-            if name not in actuators:
-                p.error(f"--rel-move unknown actuator {name!r}")
             act = actuators[name]
             used_motion_actuators.append(act)
-            futures.append(ex.submit(_with_lock, name, act.run_rel_move, delta, True))
+            futures.append(
+                ex.submit(_with_lock, name, act.run_rel_move, delta, True)
+            )
 
         for spec in args.jog:
             name, vel = _parse_name_value(spec)
-            if name not in actuators:
-                p.error(f"--jog unknown actuator {name!r}")
             act = actuators[name]
             used_motion_actuators.append(act)
-            futures.append(ex.submit(_with_lock, name, act.jog, float(vel), True))
-
-        # Main wait loop: satisfy all active conditions unless Ctrl+C
-        end_t = (time.time() + float(args.monitor_duration)) if args.monitor_duration is not None else None
-        target_count = int(args.monitor_count) if args.monitor_count is not None else None
-
-        moves_submitted = bool(futures)
-
-        def _moves_done() -> bool:
-            return all(f.done() for f in futures)
+            futures.append(
+                ex.submit(_with_lock, name, act.jog, float(vel), True)
+            )
 
         try:
-            while True:
-                if stop_all.is_set():
-                    break
+            if args.monitor:
+                completion_check = None
+                if futures and not args.keep_alive:
+                    completion_check = lambda: all(
+                        future.done() for future in futures
+                    )
 
-                # Conditions
-                conds: List[bool] = []
-
-                # moves condition (ignored if keep-alive)
-                if moves_submitted and not args.keep_alive:
-                    conds.append(_moves_done())
-
-                # duration condition
-                if end_t is not None:
-                    conds.append(time.time() >= end_t)
-
-                # count condition
-                if target_count is not None:
-                    seen, _dr = _get_counts()
-                    conds.append(seen >= target_count)
-
-                # If there are no conditions (e.g. keep-alive only), run until Ctrl+C
-                if conds and all(conds):
-                    break
-
-                time.sleep(0.05)
-
+                seen, dropped = run_monitors(
+                    actuators,
+                    args.monitor,
+                    duration=args.monitor_duration,
+                    count=args.monitor_count,
+                    out_path=args.out,
+                    stop_event=stop_all,
+                    completion_check=completion_check,
+                )
+            else:
+                while not stop_all.is_set():
+                    if futures and not args.keep_alive and all(
+                        future.done() for future in futures
+                    ):
+                        break
+                    time.sleep(0.05)
         finally:
-            # If interrupted, best-effort stop motion actuators still running
             if stop_all.is_set():
                 for act in used_motion_actuators:
                     try:
                         act.stop()
                     except Exception:
-                        logger.exception("Failed to stop actuator during shutdown")
-            # Remove monitors
-            if provider is not None:
-                for pvname, _handle in monitor_handles:
-                    try:
-                        provider.remove_monitor(pvname)
-                    except Exception:
-                        logger.exception(f"Failed to remove monitor {pvname} during shutdown")
+                        logger.exception(
+                            "Failed to stop actuator during shutdown"
+                        )
 
-            # Stop writer thread.
-            stop_all.set()
-            writer.join(timeout=2.0)
-
-            if writer.is_alive():
-                logger.warning("Writer thread did not stop cleanly")            
-
-    seen, dropped = _get_counts()
     if dropped:
         logger.warning("Dropped %d monitor events (queue full).", dropped)
 

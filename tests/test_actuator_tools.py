@@ -63,3 +63,77 @@ class TestLoadActuators(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class _FakeMonitorActuator:
+    def __init__(self):
+        from kiwi_scan.datamodels import ActuatorConfig
+
+        self.config = ActuatorConfig(
+            pv="SIM:THETA",
+            status_pv="TESTIOC:mono:ThetaStatus",
+        )
+        self.added = []
+        self.removed = []
+
+    def supports_monitors(self):
+        return True
+
+    def add_monitor(self, pvname, user_callback=None, **_kwargs):
+        self.added.append(pvname)
+        if user_callback is not None:
+            from kiwi_scan.actuator.single import PvEvent
+
+            user_callback(PvEvent(pvname=pvname, value=7, source="test"))
+        return object()
+
+    def remove_monitor(self, pvname):
+        self.removed.append(pvname)
+
+
+class TestRunMonitors(unittest.TestCase):
+    def test_run_monitors_resolves_config_counts_event_and_cleans_up(self):
+        import contextlib
+        import io
+
+        import kiwi_scan.actuator.tools as actuator_tools
+
+        self.assertTrue(
+            hasattr(actuator_tools, "run_monitors"),
+            "actuator.tools must expose run_monitors()",
+        )
+
+        actuator = _FakeMonitorActuator()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            seen, dropped = actuator_tools.run_monitors(
+                {"theta": actuator},
+                ["theta:status"],
+                count=1,
+            )
+
+        self.assertEqual((seen, dropped), (1, 0))
+        self.assertEqual(actuator.added, ["TESTIOC:mono:ThetaStatus"])
+        self.assertEqual(actuator.removed, ["TESTIOC:mono:ThetaStatus"])
+        self.assertIn("theta:status", output.getvalue())
+        self.assertIn("value=7", output.getvalue())
+
+    def test_run_monitors_waits_for_external_completion_condition(self):
+        import kiwi_scan.actuator.tools as actuator_tools
+
+        self.assertTrue(
+            hasattr(actuator_tools, "run_monitors"),
+            "actuator.tools must expose run_monitors()",
+        )
+
+        actuator = _FakeMonitorActuator()
+        checks = iter((False, True))
+
+        seen, dropped = actuator_tools.run_monitors(
+            {"theta": actuator},
+            ["theta:status"],
+            count=1,
+            completion_check=lambda: next(checks),
+        )
+
+        self.assertEqual((seen, dropped), (1, 0))
