@@ -8,9 +8,8 @@ import time
 from typing import Any, Dict, List, Optional
 
 from kiwi_scan.plugin.base import ScanPlugin
+from kiwi_scan.plugin.context import ScanPluginContext
 from kiwi_scan.plugin.registry import register_plugin
-from kiwi_scan.scan.common import BaseScan
-from kiwi_scan.tools import timestamp_to_seconds
 
 
 @register_plugin("TimestampPerformancePlugin")
@@ -24,13 +23,13 @@ class TimestampPerformancePlugin(ScanPlugin):
 
     """
 
-    TIMESTAMP_PREFIX = "TS-ISO8601-"
+    TIMESTAMP_PREFIX = "TS-"
 
     def __init__(
         self,
         name: str,
         parameters: Optional[Dict[str, Any]] = None,
-        scan: Optional[BaseScan] = None,
+        scan: Optional[ScanPluginContext] = None,
     ) -> None:
         super().__init__(name=name, parameters=parameters, scan=scan)
 
@@ -67,12 +66,22 @@ class TimestampPerformancePlugin(ScanPlugin):
         point_delta = self._diff(reference_time, self._previous_point_time)
         self._previous_point_time = reference_time
 
-        row = self.scan.get_current_row_cache() if self.scan is not None else {}
         values: List[float] = [point_delta]
 
         for timestamp_column in self._timestamp_columns:
-            raw_timestamp = row.get(timestamp_column)
-            timestamp = timestamp_to_seconds(raw_timestamp)
+            raw_timestamp = (
+                self.scan.get_current_row_value(timestamp_column)
+                if self.scan is not None
+                else None
+            )
+            try:
+                timestamp = (
+                    float(raw_timestamp)
+                    if raw_timestamp is not None
+                    else None
+                )
+            except (TypeError, ValueError, OverflowError):
+                timestamp = None
             if timestamp is None:
                 self.logger.debug("No valid timestamp @ column %s: %r", timestamp_column, raw_timestamp)
                 values.extend([math.nan, math.nan])

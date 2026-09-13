@@ -1,7 +1,6 @@
 import os
 import sys
 import tempfile
-import threading
 import types
 import unittest
 
@@ -35,13 +34,28 @@ if "epics" not in sys.modules:
 
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import SubscriptionConfig
+from kiwi_scan.scan._point_frame import _DetectorLayout
 from kiwi_scan.scan.common import BaseScan
+from kiwi_scan.scan.output_manager import OutputManager
+from kiwi_scan.scan.performance_tracker import PerformanceTracker
 from kiwi_scan.scan.stats_collector import StatsCollector
 
 
 class DummyScan(BaseScan):
     def __init__(self):
-        pass
+        # The real BaseScan constructor always establishes these attributes.
+        # This lightweight writer test intentionally skips hardware setup.
+        self.detector_pvs = []
+        self.plugins = []
+        self.include_timestamps = False
+        self.timestamp_output_format = "iso8601"
+        self.performance = PerformanceTracker(enabled=False)
+        self.output_manager = OutputManager(
+            data_dir=".",
+            requested_output_file="unused.txt",
+            data_writing_enabled=False,
+        )
+        self._initialize_point_pipeline()
 
     def execute(self):
         pass
@@ -55,16 +69,27 @@ class _DetectorPV:
 class TestDataColumnProviderWriter(unittest.TestCase):
     def _make_scan(self, output_file, collector):
         scan = DummyScan()
+        scan.output_manager = OutputManager(
+            data_dir=os.path.dirname(output_file),
+            requested_output_file=os.path.basename(output_file),
+            data_writing_enabled=True,
+            output_timestamp="20260901120000",
+        )
+        scan.output_manager.set_header_factory(
+            scan._point_pipeline.build_output_headers
+        )
         scan.output_file = output_file
-        scan._data_writer_lock = threading.RLock()
-        scan._data_writing_enabled = True
-        scan._data_header_written = False
         scan.detector_pvs = [_DetectorPV("DET:COUNTS")]
         scan.detector_pvs_monitor = True
         scan.plugins = []
         scan.include_timestamps = False
-        scan._last_point = {}
-        scan._data_column_providers = []
+        scan.timestamp_output_format = "iso8601"
+        scan._point_pipeline.set_detector_layout(
+            _DetectorLayout.from_headers(
+                pv.pvname for pv in scan.detector_pvs
+            )
+        )
+        scan._point_pipeline.replace_last_point({})
         scan.add_column_provider(collector)
         return scan
 

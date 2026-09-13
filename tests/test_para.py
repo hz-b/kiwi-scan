@@ -10,6 +10,7 @@ from unittest.mock import Mock, call, patch
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.datamodels import ActuatorConfig, ScanConfig, ScanDimension
 from kiwi_scan.scan.common import BaseScan
+from kiwi_scan.scan.output_manager import OutputManager
 from kiwi_scan.scan.range_exit_detector import RangeExitDetector
 from kiwi_scan.scan_concrete.para import ParaScan
 
@@ -67,8 +68,10 @@ class ParaScanTestCase(unittest.TestCase):
         scan._position = None
         scan._stop_requested = threading.Event()
         scan._daq_is_on = False
-        scan._perf_enabled = False
-        scan._perf = {}
+        scan.performance = Mock()
+        scan.performance.time_block.side_effect = (
+            lambda *_args, **_kwargs: nullcontext()
+        )
         scan.integration_time = 0.0
         scan.sampletime = 0.05
         scan.include_timestamps = False
@@ -76,6 +79,7 @@ class ParaScanTestCase(unittest.TestCase):
         scan.plugins = []
         scan.sync_controller = Mock()
         scan.sync_controller.is_enabled.return_value = False
+        scan._initialize_event_handler()
 
         scan.write_header_to_output_file = Mock()
         scan.get_stop_pv = Mock(return_value=0)
@@ -83,16 +87,19 @@ class ParaScanTestCase(unittest.TestCase):
         scan._wait_for_sync = Mock()
         scan._wait_for_tick_or_timeout = Mock()
         scan._fire_triggers = Mock()
-        scan._reset_data_column_provider_windows = Mock()
+        scan._point_pipeline = Mock()
+        scan._point_pipeline.reset_data_column_provider_windows = Mock()
+        scan._point_pipeline.append_plugin_point_values = Mock()
         scan.read_detectors = Mock(return_value=[10.0])
-        scan.update_current_row_cache = Mock()
-        scan.extend_current_row_cache = Mock()
-        scan.save_to_file = Mock()
+        scan._detector_reader = Mock()
+        scan._begin_point_frame = Mock()
+        scan._commit_point_async = Mock()
         scan._start_metadata_monitor = Mock()
         scan._stop_metadata_monitor = Mock()
         scan._start_subscriptions = Mock()
         scan._stop_subscriptions = Mock()
-        scan._perf_report = Mock()
+        scan._drain_parallel_writer_for_cleanup = Mock(return_value=None)
+        scan._propagate_parallel_writer_error = Mock()
 
         return scan
 
@@ -109,7 +116,21 @@ class TestParaScanInitialization(ParaScanTestCase):
         }
         scan.subscription_manager = Mock()
         scan.sync_controller = Mock()
-        scan._data_column_providers = []
+        scan._initialize_event_handler()
+        scan.detector_pvs = []
+        scan.plugins = []
+        scan.include_timestamps = bool(getattr(config, "include_timestamps", False))
+        scan.timestamp_output_format = getattr(config, "timestamp_output_format", "iso8601")
+        scan.performance = Mock()
+        scan.performance.time_block.side_effect = (
+            lambda *_args, **_kwargs: nullcontext()
+        )
+        scan.output_manager = OutputManager(
+            data_dir=".",
+            requested_output_file="unused.txt",
+            data_writing_enabled=False,
+        )
+        scan._initialize_point_pipeline()
 
     @staticmethod
     def _config(dimensions=True):
@@ -146,7 +167,10 @@ class TestParaScanInitialization(ParaScanTestCase):
         self.assertEqual(scan._last_position_snapshot, {})
         scan.sync_controller.set_timer_period.assert_called_once_with(0.05)
         collector_cls.assert_called_once_with([], role="stat")
-        self.assertEqual(scan._data_column_providers, [collector_cls.return_value])
+        self.assertEqual(
+            scan._point_pipeline.get_data_column_providers(),
+            [collector_cls.return_value],
+        )
         registered_roles = [
             registered_call.args[0]
             for registered_call in scan.subscription_manager.register_role.call_args_list
@@ -360,7 +384,7 @@ class TestParaScanAcquisition(ParaScanTestCase):
     def test_acquire_point_runs_full_pipeline(self, sleep):
         scan = self.make_scan()
         scan.integration_time = 0.25
-        scan._time_block = self._no_timing
+        scan.performance.time_block = self._no_timing
         scan._read_position_snapshot = Mock(return_value={"motor": 2.5})
         plugin = Mock()
         plugin.on_scan_point.return_value = [20.0]
@@ -373,28 +397,31 @@ class TestParaScanAcquisition(ParaScanTestCase):
         sleep.assert_called_once_with(0.25)
         self.assertEqual(scan._position, 2.5)
         self.assertEqual(scan._last_position_snapshot, {"motor": 2.5})
-        scan._reset_data_column_provider_windows.assert_called_once_with()
+        scan._point_pipeline.reset_data_column_provider_windows.assert_called_once_with()
         self.assertEqual(
             scan._fire_triggers.call_args_list,
             [call("on_point"), call("after_point")],
         )
-        scan.update_current_row_cache.assert_called_once_with(
+        scan._begin_point_frame.assert_called_once_with(
             idx=3,
             pos=2.5,
             values=[10.0],
         )
         plugin.on_scan_point.assert_called_once_with(3, 2.5)
-        scan.extend_current_row_cache.assert_called_once_with(
+        scan._point_pipeline.append_plugin_point_values.assert_called_once_with(
             ["PluginValue"],
             [20.0],
         )
-        scan.save_to_file.assert_called_once_with(2.5, [10.0, 20.0], False)
+        scan._commit_point_async.assert_called_once_with(
+            2.5,
+            [10.0],
+        )
         monitor.update.assert_called_once_with([10.0, 20.0])
         self.assertFalse(scan._daq_is_on)
 
     def test_acquire_point_clears_daq_flag_when_detector_read_fails(self):
         scan = self.make_scan()
-        scan._time_block = self._no_timing
+        scan.performance.time_block = self._no_timing
         scan._read_position_snapshot = Mock(return_value={"motor": 1.0})
         scan.read_detectors.side_effect = RuntimeError("detector failed")
 
@@ -402,7 +429,7 @@ class TestParaScanAcquisition(ParaScanTestCase):
             scan._acquire_point(0, {"motor": 1.0})
 
         self.assertFalse(scan._daq_is_on)
-        scan.save_to_file.assert_not_called()
+        scan._commit_point_async.assert_not_called()
 
 
 class TestParaScanLoop(ParaScanTestCase):
@@ -431,7 +458,7 @@ class TestParaScanLoop(ParaScanTestCase):
         scan._stop_subscriptions.assert_called_once_with()
         monitor.close.assert_called_once_with()
         self.assertFalse(scan.busyflag)
-        scan._perf_report.assert_called_once_with()
+        scan.performance.report.assert_called_once_with()
 
     def test_scan_waits_for_range_ready_and_changed_position(self):
         scan = self.make_scan(maxindex=1)
@@ -563,7 +590,7 @@ class TestParaScanLoop(ParaScanTestCase):
 
         scan._fire_triggers.assert_has_calls([call("before"), call("after")])
         self.assertFalse(scan.busyflag)
-        scan._perf_report.assert_called_once_with()
+        scan.performance.report.assert_called_once_with()
 
     def test_after_trigger_failure_still_clears_busy_and_reports_performance(self):
         scan = self.make_scan()
@@ -574,7 +601,7 @@ class TestParaScanLoop(ParaScanTestCase):
             scan.scan(None)
 
         self.assertFalse(scan.busyflag)
-        scan._perf_report.assert_called_once_with()
+        scan.performance.report.assert_called_once_with()
 
     def test_execute_uses_standard_execution(self):
         scan = self.make_scan()

@@ -438,6 +438,7 @@ class ScanConfig:
     data_dir: str = "."
     output_file: str = "scan_results.txt"
     include_timestamps: bool = False
+    timestamp_output_format: str = "iso8601"
     integration_time: float = 0.0
     sample_rate_hz: float = 1.0
     debug: bool = False
@@ -449,9 +450,33 @@ class ScanConfig:
     metadata_constants: Dict[str, Any] = field(default_factory=dict)  # key/value string constants
     metadata_file: str = "scan_metadata.txt"                        # sidecar filename
     subscriptions: List[SubscriptionConfig] = field(default_factory=list)
+    detector_reader_strategy: str = "direct"
 
     def validate(self) -> None:
         """ Validate and normalize configuration via API """
+        actuators_raw = self.actuators or {}
+        if not isinstance(actuators_raw, dict):
+            raise TypeError("'actuators' must be a mapping")
+
+        validated_actuators: Dict[str, ActuatorConfig] = {}
+        for name, actuator in actuators_raw.items():
+            if isinstance(actuator, dict):
+                actuator = ActuatorConfig.from_dict(dict(actuator))
+            elif not isinstance(actuator, ActuatorConfig):
+                raise TypeError(
+                    f"Actuator config for {name!r} must be a mapping or "
+                    f"ActuatorConfig, got {type(actuator).__name__}"
+                )
+            validated_actuators[name] = actuator
+
+        self.actuators = validated_actuators
+
+        self.detector_reader_strategy = self._normalize_detector_reader_strategy(
+            self.detector_reader_strategy
+        )
+        self.timestamp_output_format = self._normalize_timestamp_output_format(
+            self.timestamp_output_format
+        )
         subscriptions_raw = self.subscriptions or []
         if not isinstance(subscriptions_raw, list):
             raise TypeError("'subscriptions' must be a list of mappings")
@@ -473,6 +498,38 @@ class ScanConfig:
             validated_subscriptions.append(subscription)
 
         self.subscriptions = validated_subscriptions
+
+    @staticmethod
+    def _normalize_timestamp_output_format(value: Any) -> str:
+        """Return the canonical scan-file timestamp representation."""
+        normalized = str(value).strip().lower().replace("-", "").replace("_", "")
+        aliases = {
+            "iso": "iso8601",
+            "iso8601": "iso8601",
+            "unix": "unix",
+            "posix": "unix",
+            "raw": "unix",
+        }
+        try:
+            return aliases[normalized]
+        except KeyError as exc:
+            raise ValueError(
+                "timestamp_output_format must be one of: iso8601, unix "
+                f"(got {value!r})"
+            ) from exc
+
+    @staticmethod
+    def _normalize_detector_reader_strategy(strategy: Any) -> str:
+        """Return the canonical detector-reader strategy name."""
+        normalized = str(strategy).strip().lower().replace("-", "_")
+        if normalized == "monitor_snapshot":
+            normalized = "snapshot"
+        if normalized not in {"direct", "snapshot"}:
+            raise ValueError(
+                "detector_reader_strategy must be one of: direct, snapshot "
+                f"(got {strategy!r})"
+            )
+        return normalized
 
     @staticmethod
     def _parse_dimensions(
@@ -567,6 +624,10 @@ class ScanConfig:
             actuators=actuators,
             detector_pvs=config_dict.get("detector_pvs", []),
             detector_pvs_monitor=config_dict.get("detector_pvs_monitor", True),
+            detector_reader_strategy=config_dict.get(
+                "detector_reader_strategy",
+                "direct",
+            ),
             scan_dimensions=cls._parse_dimensions(config_dict, "scan_dimensions"),
             parallel_scans=cls._parse_dimensions(config_dict, "parallel_scans"),
             nested_scans=cls._parse_dimensions(config_dict, "nested_scans"),
@@ -577,6 +638,10 @@ class ScanConfig:
             data_dir=config_dict.get("data_dir", "."),
             output_file=config_dict.get("output_file", "scan_results.txt"),
             include_timestamps=config_dict.get("include_timestamps", False),
+            timestamp_output_format=config_dict.get(
+                "timestamp_output_format",
+                "iso8601",
+            ),
             integration_time=config_dict.get("integration_time", 0.0),
             sample_rate_hz=config_dict.get("sample_rate_hz", 1.0),
             debug=config_dict.get("debug", False),

@@ -3,12 +3,10 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from typing import Optional
 
 from kiwi_scan.datamodels import PluginConfig
-
-if TYPE_CHECKING:
-    from kiwi_scan.scan.common import BaseScan
+from kiwi_scan.plugin.context import ScanPluginContext
 
 PLUGIN_REGISTRY = {}
 
@@ -26,7 +24,7 @@ def register_plugin(name=None):
 
 def create_plugin(
     config: PluginConfig,
-    scan: Optional[BaseScan] = None,
+    scan: Optional[ScanPluginContext] = None,
 ):
     """Create a registered plugin from a normalized PluginConfig."""
     if not isinstance(config, PluginConfig):
@@ -34,7 +32,6 @@ def create_plugin(
             "create_plugin() requires PluginConfig; normalize raw mappings "
             "through ScanConfig.from_dict() first"
         )
-
     plugin_type = config.type
     cls = PLUGIN_REGISTRY.get(plugin_type)
     if cls is None:

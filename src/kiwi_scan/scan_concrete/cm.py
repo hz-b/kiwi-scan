@@ -30,12 +30,28 @@ class CMScan(BaseScan):
         self.set_samplerate()
         self.first_actuator = self.actuators[self.scan_dimensions[0].actuator]
 
-        self.register_subscription_role("heartbeat", self._on_heartbeat_event)
-        self.register_subscription_role("sync", self._on_sync_event)
-        self.register_subscription_role("status", self._on_status_event)
-        self.register_subscription_role("stop", self._on_stop_event)
+        self.register_subscription_role("heartbeat", self.event_handler.on_heartbeat_event)
+        self.register_subscription_role("sync", self.event_handler.on_sync_event)
+        self.register_subscription_role("status", self.event_handler.on_status_event)
+        self.register_subscription_role("stop", self.event_handler.on_stop_event)
 
         self._original_velocities = {}
+
+    def init_scan(self) -> None:
+        """Initialize sweep configuration before preparation, once per scan."""
+
+    def _prepare_sweep(self) -> None:
+        """Prepare motion; external scan types may replace this entire step."""
+        self._move_to_start_positions()
+        self._store_original_velocities()
+
+    def _start_sweep(self) -> None:
+        """Start motion before subscriptions and continuous DAQ are started."""
+        self._start_continuous_motion()
+
+    def _restore_sweep_state(self) -> None:
+        """Restore motion state during cleanup, including failed scans."""
+        self._restore_original_velocities()
 
     def _restore_original_velocities(self) -> None:
         """Restore actuator velocities saved before the continuous move."""
@@ -55,24 +71,6 @@ class CMScan(BaseScan):
             except Exception as exc:  # noqa: BLE001
                 logger.error("Failed to restore velocity for actuator %s: %s", name, exc)
 
-    def stop(self) -> None:
-        """Request CM scan stop and restore original actuator velocities."""
-        super().stop()
-        self._restore_original_velocities()
-
-    def _daq_stop_requested(self, index: int) -> bool:
-        """Return whether an event or the configured stop PV ended DAQ."""
-        if self._stop_requested.is_set():
-            return True
-
-        with self._time_block("stop:poll", idx=index):
-            stop_pv_value = self.get_stop_pv()
-        if stop_pv_value != 1:
-            return False
-
-        super().stop()
-        return True
-
     def _read_daq_position(self):
         """Return the synchronized position, polling RBV as a fallback."""
         if self._position_sync_subscription_set:
@@ -82,42 +80,15 @@ class CMScan(BaseScan):
         self._position = position
         return position
 
-    def _acquire_daq_point(self, index: int, position, monitor: Optional[BaseMonitor] = None) -> None:
-        """Acquire, process, persist, and publish one continuous-motion point."""
-        with self._time_block("daq:point", idx=index):
-            with self._time_block("triggers:on_point", idx=index):
-                self._fire_triggers("on_point")
-
-            with self._time_block("read_detectors", idx=index):
-                values = self.read_detectors()
-            self.update_current_row_cache(idx=index, pos=position, values=values)
-
-            with self._time_block("plugins", idx=index):
-                plugin_values = self._collect_plugin_point_data(index, position)
-            values = values + plugin_values
-
-            with self._time_block("write:data", idx=index):
-                monitor_values = self.save_to_file(position, values, self.include_timestamps)
-
-            with self._time_block("monitor:update", idx=index):
-                if monitor is not None:
-                    logger.debug("Monitor values: %s", monitor_values)
-                    monitor.update(monitor_values)
-
     def run_daq(self, monitor: Optional[BaseMonitor] = None):
-        """
-        DAQ loop driven by heartbeat subscription when available.
-        sampletime acts as timeout fallback (so it still works without heartbeat).
-        Position is taken from sync subscription when available; otherwise RBV is polled.
-        """
-        with self._time_block("write:header"):
+        """ DAQ loop driven by sync-controller """
+        with self.performance.time_block("write:header"):
             self.write_header_to_output_file()
         index = 0
 
         # initial snapshot; may quickly be overwritten by sync subscription indicated by flag
         self._position_sync_subscription_set = False
         self._position = self.first_actuator.rbv
-        self._stop_requested.clear()
         range_exit = RangeExitDetector(
             self._start,
             self._stop,
@@ -125,42 +96,29 @@ class CMScan(BaseScan):
             out_threshold=2,
         )
         while True:
-            logger.debug("run_daq: Entered cm scan loop")
-            if self._daq_stop_requested(index):
+            logger.debug("run_daq: Entered scan loop")
+            if self._daq_stop_requested():
                 break
 
-            # heartbeat-driven tick plus all configured sync-role updates
-            self._arm_sync_controller()
-            if self._stop_requested.is_set():
+            if not self._wait_for_scan_cycle(index):
                 break
-
-            with self._time_block("triggers:after_point", idx=index):
-                self._fire_triggers("after_point")
-            with self._time_block("sync:wait", idx=index):
-                self._wait_for_sync(stop_event=self._stop_requested)
-            if self._stop_requested.is_set():
-                break
-
-            with self._time_block("actuator:ready", idx=index):
-                actuator_ready = self.first_actuator.is_ready()
+            
+            position = self._read_daq_position()
+            scan_finished = range_exit.update(position)
+            actuator_ready = self.first_actuator.is_ready()
+            
             if actuator_ready:
                 logger.info("run_daq: First actuator is ready.")
                 break
-            # Prefer the position delivered by the primary actuator's sync
-            # subscription. Poll the actuator RBV only when no such event has
-            # been received.
-            with self._time_block("position:read", idx=index):
-                pos = self._read_daq_position()
-
-            with self._time_block("range:update", idx=index):
-                scan_finished = range_exit.update(pos)
             if scan_finished:
-                logger.info("Scan termination detected at pos=%s", pos)
+                logger.info("Scan termination detected at position=%s", position)
                 break
             if not range_exit.entered:
                 continue
+            if position is None:
+                continue
 
-            self._acquire_daq_point(index, pos, monitor)
+            self._acquire_daq_point_continuous(index, position, monitor)
             index += 1
             if self._maxindex > 0 and index >= self._maxindex:
                 super().stop()
@@ -168,7 +126,7 @@ class CMScan(BaseScan):
 
     def _move_to_start_positions(self) -> None:
         """Move each scan actuator to its backlash-adjusted start position."""
-        with self._time_block("move:to_start"):
+        with self.performance.time_block("move:to_start"):
             for dim in self.scan_dimensions:
                 name = dim.actuator
                 actuator = self.actuators[name]
@@ -187,7 +145,7 @@ class CMScan(BaseScan):
 
     def _store_original_velocities(self) -> None:
         """Read actuator velocities for best-effort restoration after the scan."""
-        with self._time_block("velocity:read"):
+        with self.performance.time_block("velocity:read"):
             for name, actuator in self.actuators.items():
                 try:
                     velocity = actuator.get_velocity()
@@ -201,7 +159,7 @@ class CMScan(BaseScan):
 
     def _start_continuous_motion(self) -> None:
         """Apply configured velocities and start all continuous moves."""
-        with self._time_block("move:start"):
+        with self.performance.time_block("move:start"):
             for dim in self.scan_dimensions:
                 name = dim.actuator
                 actuator = self.actuators[name]
@@ -213,9 +171,19 @@ class CMScan(BaseScan):
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to configure/startup actuator '%s': %s", name, exc)
 
-    def _cleanup_scan(self, monitor: Optional[BaseMonitor] = None) -> None:
+    def _cleanup_scan(
+        self,
+        monitor: Optional[BaseMonitor] = None,
+        *,
+        scan_failed: bool = False,
+    ) -> None:
         """Release scan resources without allowing one failure to block others."""
-        self._run_cleanup_step("velocity:restore", self._restore_original_velocities)
+        writer_error = self._drain_parallel_writer_for_cleanup()
+        self._run_cleanup_step(
+            "detectors:stop",
+            self._stop_detector_reader,
+        )
+        self._run_cleanup_step("velocity:restore", self._restore_sweep_state)
         self._run_cleanup_step("plugins:stop", self._end_plugins)
         self._run_cleanup_step("plugins:close", self._close_plugins)
         self._run_cleanup_step("metadata:stop", self._stop_metadata_monitor)
@@ -224,7 +192,11 @@ class CMScan(BaseScan):
             self._run_cleanup_step("monitor:close", monitor.close)
         self._run_cleanup_step("triggers:after", lambda: self._fire_triggers("after"))
         self.busyflag = False
-        self._run_cleanup_step("performance:report", self._perf_report)
+        self._run_cleanup_step("performance:report", self.performance.report)
+        self._propagate_parallel_writer_error(
+            writer_error,
+            scan_failed=scan_failed,
+        )
 
     # ---------------- cm scan logic --------------------
     def scan(self, positions, monitor: Optional[BaseMonitor] = None):
@@ -238,24 +210,31 @@ class CMScan(BaseScan):
         del positions
 
         self.busyflag = True
+        self._stop_requested.clear()
+        scan_failed = False
         try:
-            with self._time_block("plugins:start"):
+            with self.performance.time_block("detectors:start"):
+                self._start_detector_reader()
+            with self.performance.time_block("plugins:start"):
                 self._start_plugins()
-            self._move_to_start_positions()
-            self._store_original_velocities()
+            self.init_scan()
+            self._prepare_sweep()
 
-            with self._time_block("metadata:start"):
+            with self.performance.time_block("metadata:start"):
                 self._start_metadata_monitor()
-            with self._time_block("triggers:before"):
+            with self.performance.time_block("triggers:before"):
                 self._fire_triggers("before")
-            self._start_continuous_motion()
+            self._start_sweep()
 
-            with self._time_block("subscriptions:start"):
+            with self.performance.time_block("subscriptions:start"):
                 self._start_subscriptions()
-            with self._time_block("daq:run"):
+            with self.performance.time_block("daq:run"):
                 self.run_daq(monitor)
+        except BaseException:
+            scan_failed = True
+            raise
         finally:
-            self._cleanup_scan(monitor)
+            self._cleanup_scan(monitor, scan_failed=scan_failed)
 
     def execute(self):
         self._execute_standard(None)

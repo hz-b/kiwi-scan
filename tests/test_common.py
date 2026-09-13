@@ -5,8 +5,6 @@ import sys
 import tempfile
 import threading
 import unittest
-from collections import defaultdict
-from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -19,36 +17,112 @@ if "epics" not in sys.modules:
     sys.modules["epics"] = test_support.make_fake_epics_module()
 
 from kiwi_scan.actuator.single import PvEvent
-from kiwi_scan.datamodels import SubscriptionConfig
+from kiwi_scan.datamodels import (
+    ActuatorConfig,
+    JogConfig,
+    ScanConfig,
+    ScanDimension,
+    SubscriptionConfig,
+)
+from kiwi_scan.scan._point_frame import _DetectorLayout
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.metadata_monitor import MetadataCAMonitor
+from kiwi_scan.scan.output_manager import OutputManager
+from kiwi_scan.scan.performance_tracker import PerformanceTracker
 
 
 class DummyScan(BaseScan):
     """Concrete BaseScan without the hardware-heavy BaseScan constructor."""
 
-    def __init__(self):
-        pass
+    def __init__(
+        self,
+        *,
+        include_timestamps: bool = True,
+        timestamp_output_format: str = "iso8601",
+    ):
+        # BaseScan.__init__ is intentionally bypassed in these unit tests.
+        # Keep the runtime invariants used by the optimized point hot path
+        # explicit here rather than making production code defensive again.
+        self.detector_pvs = []
+        self.plugins = []
+        self.include_timestamps = include_timestamps
+        self.timestamp_output_format = timestamp_output_format
+        self.performance = PerformanceTracker(enabled=False)
+        self.output_manager = OutputManager(
+            data_dir=".",
+            requested_output_file="scan.txt",
+            data_writing_enabled=False,
+            output_timestamp="20260901120000",
+        )
+        self._initialize_point_pipeline()
+        self._initialize_event_handler()
 
     def execute(self):
         pass
 
 
-class DummyDetector:
-    def __init__(self, pvname, reading=None, error=None):
-        self.pvname = pvname
-        self.reading = reading
-        self.error = error
-        self.use_monitor = None
 
-    def get_with_metadata(self, *, use_monitor):
-        self.use_monitor = use_monitor
-        if self.error is not None:
-            raise self.error
-        return self.reading
+class TestScanConfigActuatorValidation(unittest.TestCase):
+    @staticmethod
+    def _config(actuators):
+        return ScanConfig(
+            actuators=actuators,
+            detector_pvs=[],
+            scan_dimensions=[ScanDimension("motor", 0.0, 1.0, 2)],
+        )
+
+    def test_validate_normalizes_actuator_dicts(self):
+        raw_actuator = {
+            "pv": "MOTOR",
+            "rb_pv": "MOTOR.RBV",
+            "jog": {"velocity_pv": "MOTOR:JOGVELO"},
+        }
+        config = self._config({"motor": raw_actuator})
+
+        config.validate()
+
+        actuator = config.actuators["motor"]
+        self.assertIsInstance(actuator, ActuatorConfig)
+        self.assertEqual(actuator.pv, "MOTOR")
+        self.assertEqual(actuator.rb_pv, "MOTOR.RBV")
+        self.assertIsInstance(actuator.jog, JogConfig)
+        self.assertEqual(actuator.jog.velocity_pv, "MOTOR:JOGVELO")
+        self.assertIsInstance(raw_actuator["jog"], dict)
+
+    def test_validate_keeps_actuator_config_instances(self):
+        actuator = ActuatorConfig(pv="MOTOR", rb_pv="MOTOR.RBV")
+        config = self._config({"motor": actuator})
+
+        config.validate()
+
+        self.assertIs(config.actuators["motor"], actuator)
+
+    def test_validate_rejects_invalid_actuator_config_type(self):
+        config = self._config({"motor": object()})
+
+        with self.assertRaisesRegex(
+            TypeError,
+            "Actuator config for 'motor'.*ActuatorConfig",
+        ):
+            config.validate()
 
 
 class TestBaseScanConfigurationHelpers(unittest.TestCase):
+    def test_connect_actuators_uses_validated_actuator_configs(self):
+        scan = DummyScan()
+        actuator_config = ActuatorConfig(pv="MOTOR", rb_pv="MOTOR.RBV")
+        scan.cfg = SimpleNamespace(actuators={"motor": actuator_config})
+        actuator = object()
+
+        with patch(
+            "kiwi_scan.scan.common.create_actuator",
+            return_value=actuator,
+        ) as create:
+            scan._connect_actuators()
+
+        create.assert_called_once_with(actuator_config)
+        self.assertEqual(scan.actuators, {"motor": actuator})
+
     def test_validate_and_filter_actuators_removes_unused_actuators(self):
         scan = DummyScan()
         scan.cfg = SimpleNamespace(
@@ -144,143 +218,118 @@ class TestBaseScanConfigurationHelpers(unittest.TestCase):
 
 
 class TestBaseScanOutputHelpers(unittest.TestCase):
+    def test_obsolete_point_pipeline_delegations_are_removed(self):
+        scan = DummyScan()
+        removed = (
+            "_get_data_column_providers",
+            "_get_data_column_headers",
+            "_get_data_column_values",
+            "_abort_active_point_frame",
+            "_append_plugin_point_values",
+            "_update_data_column_provider_cache",
+            "_reset_data_column_provider_windows",
+            "_format_scan_value",
+            "_standalone_point_frame",
+            "_point_frame_for_save",
+            "_publish_point_frame",
+            "_seal_point_frame",
+            "_freeze_point_frame",
+            "_positions_match",
+            "_point_frame_for_internal_commit",
+            "_get_parallel_writer",
+            "_ensure_parallel_writer",
+            "_write_prepared_point_sync",
+            "_prepare_legacy_point",
+            "_last_point_data_headers",
+            "_resolve_last_point_header",
+            "_last_point_timestamp_header",
+            "_cache_last_point_item",
+            "_cache_last_point_timestamp",
+            "_update_last_point_cache",
+            "build_output_headers",
+            "build_output_row_values",
+            "update_current_row_cache",
+            "extend_current_row_cache",
+            "_stop_parallel_writer",
+            "_initialize_performance_state",
+            "_record_perf_sample",
+            "_record_detector_profile",
+            "_time_block",
+            "_perf_report",
+        )
+        for name in removed:
+            with self.subTest(name=name):
+                self.assertFalse(hasattr(scan, name))
+
+    def test_point_cache_state_is_owned_by_point_pipeline(self):
+        scan = DummyScan()
+
+        self.assertIn("_point_pipeline", scan.__dict__)
+        self.assertNotIn("_last_point", scan.__dict__)
+        self.assertNotIn("_current_row_cache", scan.__dict__)
+        self.assertNotIn("_active_point_frame", scan.__dict__)
+        self.assertNotIn("_detector_layout", scan.__dict__)
+        self.assertNotIn("_data_column_providers", scan.__dict__)
+        self.assertNotIn("_parallel_point_writer", scan.__dict__)
+        self.assertNotIn("_point_writer_queue_size", scan.__dict__)
+        self.assertNotIn("_point_writer_queue_high_water", scan.__dict__)
+        self.assertNotIn("_point_writer_maximum_queue_delay", scan.__dict__)
+        self.assertIsNone(scan._point_pipeline.get_parallel_writer())
+        self.assertEqual(scan.get_current_row_cache(), {})
+        self.assertEqual(scan.get_last_point_keys(), [])
+
     def setUp(self):
         self.scan = DummyScan()
         self.scan.detector_pvs = [
             SimpleNamespace(pvname="DET:A"),
             SimpleNamespace(pvname="DET:B"),
         ]
+        self.scan._point_pipeline.set_detector_layout(
+            _DetectorLayout.from_headers(
+                pv.pvname for pv in self.scan.detector_pvs
+            )
+        )
         self.scan.plugins = []
         self.scan.include_timestamps = True
-        self.scan._data_column_providers = []
-        self.scan._current_row_cache = {}
-        self.scan._last_point = {}
+        self.scan._point_pipeline.replace_current_row_cache({})
+        self.scan._point_pipeline.replace_last_point({})
 
-    def test_build_output_headers_preserves_file_column_order(self):
+    def test_begin_point_frame_profiles_hot_path_sections(self):
+        self.scan.performance.enabled = True
         provider = MagicMock()
-        provider.get_headers.return_value = ["mean", "std"]
-        plugin = MagicMock()
-        plugin.get_headers.return_value = ["plugin_value", "TS-plugin_value"]
-        self.scan._data_column_providers = [provider]
-        self.scan.plugins = [plugin]
+        provider.get_values.return_value = [9.0]
+        provider.get_headers.return_value = ["mean"]
+        self.scan.add_column_provider(provider)
 
-        headers = self.scan.build_output_headers(include_timestamps=True)
-
-        self.assertEqual(
-            headers,
-            [
-                "Position",
-                "mean",
-                "std",
-                "TS-ISO8601",
-                "DET:A",
-                "TS-ISO8601-DET:A",
-                "DET:B",
-                "TS-ISO8601-DET:B",
-                "plugin_value",
-                "TS-plugin_value",
+        self.scan._begin_point_frame(
+            idx=4,
+            pos=2.5,
+            values=[
+                {"value": 1.0, "timestamp": 100.0},
+                {"value": 2.0, "timestamp": 101.0},
             ],
         )
-        provider.get_headers.assert_called_once_with(True)
-        plugin.get_headers.assert_called_once_with(True)
 
-    def test_build_output_row_values_handles_metadata_and_scalars(self):
-        with patch.object(
-            self.scan,
-            "_timestamp_to_iso",
-            side_effect=lambda value: "" if value is None else "detector-time",
+        for name in (
+            "row_cache:base",
+            "row_cache:providers",
+            "row_cache:detectors",
         ):
-            row = self.scan.build_output_row_values(
-                10.0,
-                [
-                    {"value": 1.5, "timestamp": 123.0},
-                    2.5,
-                ],
-                include_timestamps=True,
-                line_ts_iso="line-time",
-                provider_values=[9.0],
-            )
+            self.assertEqual(len(self.scan.performance.samples[name]), 1)
+            self.assertGreaterEqual(self.scan.performance.samples[name][0], 0.0)
 
-        self.assertEqual(
-            row,
-            [10.0, 9.0, "line-time", 1.5, "detector-time", 2.5, ""],
-        )
-
-    def test_build_output_row_values_can_omit_detector_timestamps(self):
-        row = self.scan.build_output_row_values(
-            10.0,
-            [{"value": 1.5, "timestamp": 123.0}, 2.5],
-            include_timestamps=False,
-            line_ts_iso="line-time",
-            provider_values=[],
-        )
-
-        self.assertEqual(row, [10.0, "line-time", 1.5, 2.5])
-
-    def test_timestamp_to_iso_handles_missing_invalid_and_epoch_values(self):
-        self.assertEqual(self.scan._timestamp_to_iso(None), "")
-        self.assertEqual(self.scan._timestamp_to_iso("invalid"), "invalid")
-        converted = self.scan._timestamp_to_iso(0)
-        self.assertEqual(datetime.fromisoformat(converted).timestamp(), 0)
-
-    def test_format_scan_value_handles_numbers_text_and_none(self):
-        self.assertEqual(self.scan._format_scan_value(None), "")
-        self.assertEqual(self.scan._format_scan_value(1.25), "1.250000000000e+00")
-        self.assertEqual(self.scan._format_scan_value("ready"), "ready")
-
-    def test_update_current_row_cache_flattens_value_mappings(self):
-        row = self.scan.update_current_row_cache(
-            idx=3,
-            pos="4.5",
-            values=[{"value": 11.0, "timestamp": 0}, 12.0],
-            headers=["DET:A", "DET:B"],
-            provider_values=[],
-            line_ts_iso="line-time",
-        )
-
-        self.assertEqual(row["idx"], 3)
-        self.assertEqual(row["pos"], "4.5")
-        self.assertEqual(row["Position"], 4.5)
-        self.assertEqual(row["TS-ISO8601"], "line-time")
-        self.assertEqual(row["DET:A"], 11.0)
-        self.assertEqual(row["DET:B"], 12.0)
-        self.assertIn("TS-ISO8601-DET:A", row)
-
-    def test_update_current_row_cache_can_keep_existing_values(self):
-        self.scan._current_row_cache = {"old": 1}
-
-        row = self.scan.update_current_row_cache(
-            idx=2,
-            pos=None,
-            values=[],
-            provider_values=[],
-            clear=False,
-        )
-
-        self.assertEqual(row["old"], 1)
-        self.assertIsNone(row["Position"])
-
-    def test_extend_and_get_current_row_cache_use_defensive_copies(self):
-        self.scan._current_row_cache = {"Position": 1.0}
-
-        row = self.scan.extend_current_row_cache(
-            ["plugin"],
-            [{"value": 8.0, "timestamp": 0}],
-        )
-        returned = self.scan.get_current_row_cache()
-        returned["Position"] = 99.0
-
-        self.assertEqual(row["plugin"], 8.0)
-        self.assertIn("TS-plugin", row)
-        self.assertEqual(self.scan.get_current_row_value("plugin"), 8.0)
-        self.assertEqual(
-            self.scan.get_current_row_value("missing", "fallback"), "fallback"
-        )
-        self.assertEqual(self.scan.get_current_row_value("Position"), 1.0)
+        for name in (
+            "detectors:normalize",
+            "detectors:timestamps",
+            "detectors:cache_store",
+        ):
+            self.assertNotIn(name, self.scan.performance.samples)
 
     def test_get_value_supports_scalar_metadata_and_defaults(self):
         metadata = {"value": 12.5, "timestamp": 100.0}
-        self.scan._last_point = {"DET:A": metadata, "state": "ready"}
+        self.scan._point_pipeline.replace_last_point(
+            {"DET:A": metadata, "state": "ready"}
+        )
 
         self.assertEqual(self.scan.get_value("DET:A"), 12.5)
         self.assertIs(self.scan.get_value("DET:A", with_metadata=True), metadata)
@@ -295,31 +344,21 @@ class TestBaseScanOutputHelpers(unittest.TestCase):
         working = MagicMock()
         working.get_headers.return_value = ["mean"]
         working.get_values.return_value = [3.0]
-        self.scan._data_column_providers = [broken, working]
+        self.scan.add_column_provider(broken)
+        self.scan.add_column_provider(working)
 
-        with self.assertLogs("kiwi_scan.scan.common", level="ERROR"):
-            self.assertEqual(self.scan._get_data_column_headers(False), ["mean"])
-            self.assertEqual(self.scan._get_data_column_values(), [3.0])
+        with self.assertLogs("kiwi_scan.scan.point_pipeline", level="ERROR"):
+            self.assertEqual(
+                self.scan._point_pipeline.get_data_column_headers(False),
+                ["mean"],
+            )
+            self.assertEqual(
+                self.scan._point_pipeline.get_data_column_values(),
+                [3.0],
+            )
 
 
 class TestBaseScanRuntimeHelpers(unittest.TestCase):
-    def test_time_block_only_records_when_performance_reporting_is_enabled(self):
-        scan = DummyScan()
-        scan._perf = defaultdict(list)
-        scan._perf_enabled = False
-
-        with scan._time_block("read"):
-            pass
-        self.assertEqual(scan._perf["read"], [])
-
-        scan._perf_enabled = True
-        with patch(
-            "kiwi_scan.scan.common.time.perf_counter",
-            side_effect=[10.0, 10.25],
-        ), scan._time_block("read", idx=2):
-            pass
-        self.assertEqual(scan._perf["read"], [0.25])
-
     def test_manager_helpers_delegate_to_their_managers(self):
         scan = DummyScan()
         scan.subscription_manager = MagicMock()
@@ -343,21 +382,15 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan.sync_controller.arm.assert_called_once_with()
         scan.sync_controller.wait.assert_called_once_with(stop_event=stop_event)
 
-    def test_read_detectors_keeps_column_alignment_on_failures(self):
-        good = DummyDetector("DET:GOOD", {"value": 5.0})
-        missing = DummyDetector("DET:NONE", None)
-        broken = DummyDetector("DET:BAD", error=RuntimeError("read failed"))
+    def test_read_detectors_delegates_to_detector_reader(self):
         scan = DummyScan()
-        scan.detector_pvs = [good, missing, broken]
-        scan.detector_pvs_monitor = True
+        scan._detector_reader = MagicMock()
+        scan._detector_reader.read.return_value = [{"value": 5.0}]
 
-        with self.assertLogs("kiwi_scan.scan.common", level="WARNING"):
-            readings = scan.read_detectors()
+        readings = scan.read_detectors()
 
-        self.assertEqual(readings, [{"value": 5.0}, None, None])
-        self.assertTrue(good.use_monitor)
-        self.assertTrue(missing.use_monitor)
-        self.assertTrue(broken.use_monitor)
+        self.assertEqual(readings, [{"value": 5.0}])
+        scan._detector_reader.read.assert_called_once_with()
 
     def test_move_scan_step_moves_configured_actuators(self):
         scan = DummyScan()
@@ -405,66 +438,102 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         second.move.assert_not_called()
 
     def test_acquire_scan_point_processes_and_publishes_values(self):
-        scan = DummyScan()
-        scan._perf_enabled = False
+        scan = DummyScan(include_timestamps=False)
+        scan.performance.enabled = False
         scan._stop_requested = threading.Event()
-        scan._reset_data_column_provider_windows = MagicMock()
+        scan._point_pipeline.reset_data_column_provider_windows = MagicMock()
         scan._fire_triggers = MagicMock()
         scan.integration_time = 0.0
-        detector_values = [{"value": 3.0}]
+        detector_values = [{"value": 3.0, "timestamp": 101.0}]
         scan.read_detectors = MagicMock(return_value=detector_values)
-        scan.update_current_row_cache = MagicMock()
+        scan.detector_pvs = [SimpleNamespace(pvname="DetectorValue")]
+        scan._point_pipeline.set_detector_layout(
+            _DetectorLayout.from_headers(
+                pv.pvname for pv in scan.detector_pvs
+            )
+        )
+        scan._point_pipeline.replace_current_row_cache({})
+        scan._point_pipeline.replace_last_point({})
+        scan._point_pipeline.abort_active_point_frame()
         plugin = MagicMock()
-        plugin.on_scan_point.return_value = [{"value": 4.0}]
+        plugin.on_scan_point.return_value = [
+            {"value": 4.0, "timestamp": 102.0}
+        ]
         plugin.get_headers.return_value = ["PluginValue"]
         scan.plugins = [plugin]
-        scan.extend_current_row_cache = MagicMock()
-        scan.include_timestamps = False
-        scan.save_to_file = MagicMock(return_value=[2.0, 3.0, 4.0])
         monitor = MagicMock()
 
-        completed = scan._acquire_scan_point(5, 2.0, monitor)
+        completed = scan._acquire_daq_point_step(5, 2.0, monitor)
 
         self.assertTrue(completed)
         self.assertTrue(scan._daq_is_on)
         self.assertEqual(scan._position, 2.0)
-        scan._reset_data_column_provider_windows.assert_called_once_with()
+        scan._point_pipeline.reset_data_column_provider_windows.assert_called_once_with()
         scan._fire_triggers.assert_called_once_with("on_point")
-        scan.update_current_row_cache.assert_called_once_with(
-            idx=5,
-            pos=2.0,
-            values=detector_values,
-        )
         plugin.on_scan_point.assert_called_once_with(5, 2.0)
-        scan.extend_current_row_cache.assert_called_once_with(
-            ["PluginValue"],
-            [{"value": 4.0}],
-        )
-        scan.save_to_file.assert_called_once_with(
-            2.0,
-            [{"value": 3.0}, {"value": 4.0}],
-            False,
-        )
-        monitor.update.assert_called_once_with([2.0, 3.0, 4.0])
+        monitor_values = monitor.update.call_args.args[0]
+        self.assertEqual(monitor_values[0], 2.0)
+        self.assertEqual(monitor_values[2:], [3.0, 4.0])
+        self.assertEqual(scan.get_current_row_value("DetectorValue"), 3.0)
+        self.assertEqual(scan.get_current_row_value("PluginValue"), 4.0)
+        self.assertEqual(scan.get_value("DetectorValue"), 3.0)
+        self.assertEqual(scan.get_value("PluginValue"), 4.0)
+        self.assertIsNone(scan._point_pipeline.active_point_frame)
 
     def test_acquire_scan_point_stops_during_integration(self):
         scan = DummyScan()
-        scan._perf_enabled = False
+        scan.performance.enabled = False
         scan._stop_requested = threading.Event()
         scan._stop_requested.set()
-        scan._reset_data_column_provider_windows = MagicMock()
+        scan._point_pipeline.reset_data_column_provider_windows = MagicMock()
         scan._fire_triggers = MagicMock()
         scan.integration_time = 1.0
         scan.read_detectors = MagicMock()
 
-        completed = scan._acquire_scan_point(0, 1.0, None)
+        completed = scan._acquire_daq_point_step(0, 1.0, None)
 
         self.assertFalse(completed)
         scan.read_detectors.assert_not_called()
 
+    def test_parallel_writer_cleanup_delegates_to_pipeline(self):
+        scan = DummyScan()
+
+        with patch.object(
+            scan._point_pipeline,
+            "stop_parallel_writer",
+        ) as stop_writer:
+            error = scan._drain_parallel_writer_for_cleanup()
+
+        self.assertIsNone(error)
+        stop_writer.assert_called_once_with()
+
+    def test_parallel_writer_cleanup_captures_error_for_later_propagation(self):
+        scan = DummyScan()
+        writer_error = OSError("disk full")
+
+        with patch.object(
+            scan._point_pipeline,
+            "stop_parallel_writer",
+            side_effect=writer_error,
+        ):
+            captured = scan._drain_parallel_writer_for_cleanup()
+
+        self.assertIs(captured, writer_error)
+        with self.assertRaisesRegex(OSError, "disk full"):
+            scan._propagate_parallel_writer_error(
+                captured,
+                scan_failed=False,
+            )
+
+        with self.assertLogs("kiwi_scan.scan.common", level="ERROR"):
+            scan._propagate_parallel_writer_error(
+                captured,
+                scan_failed=True,
+            )
+
     def test_scan_cleanup_continues_and_preserves_original_error(self):
         scan = DummyScan()
-        scan._perf_enabled = False
+        scan.performance.enabled = False
         scan._stop_requested = threading.Event()
         scan.write_header_to_output_file = MagicMock(
             side_effect=RuntimeError("scan failed")
@@ -479,7 +548,7 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan._stop_subscriptions = MagicMock(
             side_effect=RuntimeError("subscription stop failed")
         )
-        scan._perf_report = MagicMock()
+        scan.performance.report = MagicMock()
         monitor = MagicMock()
         monitor.close.side_effect = RuntimeError("monitor close failed")
 
@@ -496,7 +565,7 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan._stop_metadata_monitor.assert_called_once_with()
         scan._stop_subscriptions.assert_called_once_with()
         monitor.close.assert_called_once_with()
-        scan._perf_report.assert_called_once_with()
+        scan.performance.report.assert_called_once_with()
         self.assertFalse(scan.busyflag)
 
     def test_metadata_drop_count_returns_zero_without_monitor(self):
@@ -529,8 +598,7 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
 
     def test_metadata_monitor_start_and_stop_are_idempotent(self):
         scan = DummyScan()
-        scan._data_writer_lock = threading.RLock()
-        scan._data_writing_enabled = True
+        scan.output_manager.set_data_writing_enabled(True)
         scan._meta_mon_started = False
         scan._meta_mon = MagicMock()
 
@@ -546,8 +614,7 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
 
     def test_metadata_monitor_failures_leave_consistent_started_state(self):
         scan = DummyScan()
-        scan._data_writer_lock = threading.RLock()
-        scan._data_writing_enabled = True
+        scan.output_manager.set_data_writing_enabled(True)
         scan._meta_mon_started = False
         scan._meta_mon = MagicMock()
         scan._meta_mon.start.side_effect = RuntimeError("start failed")
@@ -600,63 +667,44 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         self.assertEqual(prepared["down"], [20.25, 20.0, 10.0])
         self.assertEqual(prepared["plain"], [3.0, 3.0, 4.0])
 
-    def test_generate_and_create_file_uses_suffix_after_collision(self):
-        scan = DummyScan()
-        scan._output_timestamp = "20260825160000"
-
-        with tempfile.TemporaryDirectory() as tmp:
-            scan.data_dir = tmp
-            first = Path(tmp) / "scan-20260825160000.txt"
-            first.touch()
-            with patch(
-                "kiwi_scan.scan.common.random.choices",
-                return_value=list("ABC123"),
-            ):
-                result = scan.generate_and_create_file("scan.txt")
-
-            self.assertEqual(result, str(Path(tmp) / "scan-20260825160000_ABC123.txt"))
-            self.assertTrue(Path(result).is_file())
-
     def test_data_writing_toggle_starts_and_stops_metadata_monitor(self):
         scan = DummyScan()
-        scan._data_writer_lock = threading.RLock()
-        scan._data_writing_enabled = True
+        scan.output_manager.set_data_writing_enabled(True)
         scan.busyflag = True
         scan._start_metadata_monitor = MagicMock()
         scan._stop_metadata_monitor = MagicMock()
 
         scan.set_data_writing_enabled(False)
+        self.assertFalse(scan.get_data_writing_enabled())
         scan._stop_metadata_monitor.assert_called_once_with()
 
         scan.set_data_writing_enabled(True)
+        self.assertTrue(scan.get_data_writing_enabled())
         scan._start_metadata_monitor.assert_called_once_with()
 
-    def test_ensure_output_file_exists_is_lazy_and_idempotent(self):
+    def test_output_file_api_is_backed_by_output_manager(self):
         scan = DummyScan()
-        scan._data_writer_lock = threading.RLock()
-        scan._data_writing_enabled = True
-        scan._requested_output_file = "scan.txt"
-        scan.output_file = None
-        scan.generate_and_create_file = MagicMock(return_value="generated.txt")
 
-        self.assertEqual(scan._ensure_output_file_exists(), "generated.txt")
-        self.assertEqual(scan._ensure_output_file_exists(), "generated.txt")
-        scan.generate_and_create_file.assert_called_once_with("scan.txt")
+        scan.output_file = "scan-data.txt"
 
-        scan._data_writing_enabled = False
-        self.assertIsNone(scan._ensure_output_file_exists())
+        self.assertEqual(scan.output_file, "scan-data.txt")
+        self.assertEqual(scan.get_output_file(), "scan-data.txt")
+        self.assertEqual(scan.output_manager.output_file, "scan-data.txt")
 
     def test_write_header_to_output_file_writes_header_once(self):
-        scan = DummyScan()
-        scan._data_writer_lock = threading.RLock()
-        scan._data_writing_enabled = True
-        scan._data_header_written = False
-        scan.include_timestamps = False
-        scan.build_output_headers = MagicMock(return_value=["Position", "TS-ISO8601"])
+        scan = DummyScan(include_timestamps=False)
+        scan._point_pipeline.build_output_headers = MagicMock(
+            return_value=["Position", "TS-ISO8601"]
+        )
 
         with tempfile.TemporaryDirectory() as tmp:
+            scan.output_manager = OutputManager(
+                data_dir=tmp,
+                requested_output_file="scan.txt",
+                data_writing_enabled=True,
+                output_timestamp="20260901120000",
+            )
             scan.output_file = str(Path(tmp) / "scan.txt")
-            scan._ensure_output_file_exists = MagicMock(return_value=scan.output_file)
 
             scan.write_header_to_output_file()
             scan.write_header_to_output_file()
@@ -664,18 +712,17 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
             content = Path(scan.output_file).read_text(encoding="utf-8")
 
         self.assertEqual(content, "Position\tTS-ISO8601\n")
-        self.assertTrue(scan._data_header_written)
-        scan.build_output_headers.assert_called_once_with(False)
+        self.assertTrue(scan.output_manager.header_written)
+        scan._point_pipeline.build_output_headers.assert_called_once_with()
 
     def test_save_to_file_updates_cache_when_file_writing_is_disabled(self):
-        scan = DummyScan()
-        scan._data_writer_lock = threading.RLock()
-        scan._data_writing_enabled = False
-        scan._data_header_written = False
-        scan._data_column_providers = []
+        scan = DummyScan(include_timestamps=False)
         scan.detector_pvs = [SimpleNamespace(pvname="DET:A")]
         scan.plugins = []
-        scan._last_point = {}
+        scan._point_pipeline.set_detector_layout(
+            _DetectorLayout.from_headers(["DET:A"])
+        )
+        scan._point_pipeline.replace_last_point({})
 
         row = scan.save_to_file(
             2.0,
@@ -695,12 +742,14 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         broken.update_last_point.side_effect = RuntimeError("update failed")
         broken.reset_window.side_effect = RuntimeError("reset failed")
         without_reset = SimpleNamespace(update_last_point=MagicMock())
-        scan._data_column_providers = [working, broken, without_reset]
+        scan.add_column_provider(working)
+        scan.add_column_provider(broken)
+        scan.add_column_provider(without_reset)
         last = {"Position": 1.0}
 
-        with self.assertLogs("kiwi_scan.scan.common", level="ERROR"):
-            scan._update_data_column_provider_cache(last, True)
-            scan._reset_data_column_provider_windows()
+        with self.assertLogs("kiwi_scan.scan.point_pipeline", level="ERROR"):
+            scan._point_pipeline.update_data_column_provider_cache(last, True)
+            scan._point_pipeline.reset_data_column_provider_windows()
 
         working.update_last_point.assert_called_once_with(last, True)
         broken.update_last_point.assert_called_once_with(last, True)
@@ -819,10 +868,10 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
             pv="TEST:PV",
         )
 
-        scan._on_status_event(event, subscription)
-        scan._on_heartbeat_event(event, subscription)
-        scan._on_trigger_event(event, subscription)
-        scan._on_plugin_event(event, subscription)
+        scan.event_handler.on_status_event(event, subscription)
+        scan.event_handler.on_heartbeat_event(event, subscription)
+        scan.event_handler.on_trigger_event(event, subscription)
+        scan.event_handler.on_plugin_event(event, subscription)
 
         self.assertIs(scan._last_status, event)
         self.assertIs(scan._last_heartbeat, event)
@@ -834,7 +883,6 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan = DummyScan()
         scan.scan_dimensions = [SimpleNamespace(actuator="energy")]
         scan.sync_controller = MagicMock()
-        scan._last_sync = None
         scan._position = None
         scan._position_sync_subscription_set = False
 
@@ -846,9 +894,8 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
             source="rbv",
         )
 
-        scan._on_sync_event(event, subscription)
+        scan.event_handler.on_sync_event(event, subscription)
 
-        self.assertIs(scan._last_sync, event)
         scan.sync_controller.note_event.assert_called_once_with("energy_sync")
         self.assertEqual(scan._position, 12.5)
         self.assertTrue(scan._position_sync_subscription_set)
@@ -908,12 +955,12 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         )
 
         scan.busyflag = False
-        scan._on_stop_event(event, subscription)
+        scan.event_handler.on_stop_event(event, subscription)
         self.assertFalse(scan._stop_requested.is_set())
         actuator.stop.assert_not_called()
 
         scan.busyflag = True
-        scan._on_stop_event(event, subscription)
+        scan.event_handler.on_stop_event(event, subscription)
         self.assertTrue(scan._stop_requested.is_set())
         scan.sync_controller.wake.assert_called_once_with()
         actuator.stop.assert_called_once_with()

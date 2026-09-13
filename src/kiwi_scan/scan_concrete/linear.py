@@ -43,12 +43,12 @@ class LinearScan(BaseScan):
                       f"from {pts[0]} to {pts[-1]}")
             print(f"{self.positions}")
         
-        self.register_subscription_role("heartbeat", self._on_heartbeat_event)
+        self.register_subscription_role("heartbeat", self.event_handler.on_heartbeat_event)
         self.register_subscription_role("stat", self._on_stat_event)
-        self.register_subscription_role("status", self._on_status_event)
-        self.register_subscription_role("stop", self._on_stop_event)
-        self.register_subscription_role("trigger", self._on_trigger_event)
-        self.register_subscription_role("plugin", self._on_plugin_event)
+        self.register_subscription_role("status", self.event_handler.on_status_event)
+        self.register_subscription_role("stop", self.event_handler.on_stop_event)
+        self.register_subscription_role("trigger", self.event_handler.on_trigger_event)
+        self.register_subscription_role("plugin", self.event_handler.on_plugin_event)
 
         # Generic provider columns: one stats group per stat subscription.
         self.stats_collector = StatsCollector(

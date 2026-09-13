@@ -6,12 +6,11 @@ import os
 import time
 import weakref
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from kiwi_scan.actuator.single import PvEvent
 from kiwi_scan.data.loader import get_kiwi_data_dir_from_environ
-from kiwi_scan.scan.common import BaseScan
+from kiwi_scan.plugin.context import ScanPluginContext
 
 
 def wrap_values(values: List[Any]) -> List[Dict[str, Any]]:
@@ -41,7 +40,7 @@ class ScanPlugin(ABC):
     def __init__(self, 
                  name: str,
                  parameters: Optional[Dict[str, Any]] = None,
-                 scan: Optional["BaseScan"] = None):
+                 scan: Optional[ScanPluginContext] = None):
 
         self.name = name
         self.parameters = parameters or {}
@@ -54,8 +53,8 @@ class ScanPlugin(ABC):
         else: 
             current_file_dir = os.path.dirname(os.path.abspath(__file__))
             self.log_dir =  os.path.normpath(os.path.join(current_file_dir, '..', '..', '..', plugin_log_dir))
-        # Store reference to BaseScan from scan.base preventing reference cycles
-        self.scan: Optional[BaseScan] = (
+        # Keep the existing weak reference while exposing only the plugin context type
+        self.scan: Optional[ScanPluginContext] = (
             weakref.proxy(scan) if scan is not None else None
         )
 
@@ -145,21 +144,14 @@ class ScanPlugin(ABC):
         if not self.logger.isEnabledFor(logging.DEBUG):
             return
 
-        # Prefer ISO timestamp if available
-        ts = ev.timestamp
-        if ts is not None:
-            try:
-                ts_str = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
-            except Exception: # noqa BLE001
-                ts_str = str(ts)
-        else:
-            ts_str = "n/a"
+        # Keep monitor timestamps in their native POSIX representation.
+        ts = ev.timestamp if ev.timestamp is not None else "n/a"
 
         self.logger.info(
-            "[MON] pv=%s value=%r ts=%s sev=%r stat=%r src=%r",
+            "[MON] pv=%s value=%r ts=%r sev=%r stat=%r src=%r",
             ev.pvname,
             ev.value,
-            ts_str,
+            ts,
             ev.severity,
             ev.status,
             ev.source,

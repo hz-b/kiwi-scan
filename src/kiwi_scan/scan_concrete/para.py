@@ -58,12 +58,12 @@ class ParaScan(BaseScan):
         logger.info("Creating parasitical samplerate from scan dimensions: %s", self.scan_dimensions)
         self.set_samplerate(sample_rate_hz=20)
 
-        self.register_subscription_role("heartbeat", self._on_heartbeat_event)
+        self.register_subscription_role("heartbeat", self.event_handler.on_heartbeat_event)
         self.register_subscription_role("stat", self._on_stat_event)
-        self.register_subscription_role("status", self._on_status_event)
-        self.register_subscription_role("stop", self._on_stop_event)
-        self.register_subscription_role("trigger", self._on_trigger_event)
-        self.register_subscription_role("plugin", self._on_plugin_event)
+        self.register_subscription_role("status", self.event_handler.on_status_event)
+        self.register_subscription_role("stop", self.event_handler.on_stop_event)
+        self.register_subscription_role("trigger", self.event_handler.on_trigger_event)
+        self.register_subscription_role("plugin", self.event_handler.on_plugin_event)
         
         self._maxindex = 0
         if self.scan_dimensions:
@@ -263,8 +263,15 @@ class ParaScan(BaseScan):
             self._wait_cycle()
         return False
 
-    def _cleanup_scan(self, monitor: Optional[BaseMonitor]) -> None:
+    def _cleanup_scan(
+        self,
+        monitor: Optional[BaseMonitor],
+        *,
+        scan_failed: bool = False,
+    ) -> None:
         """Release passive-scan resources using its established semantics."""
+        writer_error = self._drain_parallel_writer_for_cleanup()
+        self._run_cleanup_step("detectors:stop", self._stop_detector_reader)
         self._daq_is_on = False
         self._stop_metadata_monitor()
         if monitor is not None:
@@ -277,7 +284,11 @@ class ParaScan(BaseScan):
             self._fire_triggers("after")
         finally:
             self.busyflag = False
-            self._perf_report()
+            self.performance.report()
+        self._propagate_parallel_writer_error(
+            writer_error,
+            scan_failed=scan_failed,
+        )
 
     def _acquire_point(
         self,
@@ -291,10 +302,10 @@ class ParaScan(BaseScan):
         self._position = current_position
         self._last_position_snapshot = dict(snapshot)
 
-        self._reset_data_column_provider_windows()
+        self._point_pipeline.reset_data_column_provider_windows()
         self._daq_is_on = True
         try:
-            with self._time_block("triggers:on_point", idx=index):
+            with self.performance.time_block("triggers:on_point", idx=index):
                 self._fire_triggers("on_point")
 
             if self.integration_time > 0.0:
@@ -310,31 +321,32 @@ class ParaScan(BaseScan):
             self._position = current_position
             self._last_position_snapshot = dict(snapshot)
 
-            with self._time_block("read_detectors", idx=index):
+            with self.performance.time_block("read_detectors", idx=index):
                 vals = self.read_detectors()
-            self.update_current_row_cache(
-                idx=index,
-                pos=current_position,
-                values=vals,
-            )
+            with self.performance.time_block("update_row_cache", idx=index):
+                self._begin_point_frame(
+                    idx=index,
+                    pos=current_position,
+                    values=vals,
+                )
 
-            with self._time_block("triggers:after_point", idx=index):
+            with self.performance.time_block("triggers:after_point", idx=index):
                 self._fire_triggers("after_point")
 
-            with self._time_block("plugins", idx=index):
+            with self.performance.time_block("plugins", idx=index):
                 plugin_data = self._collect_plugin_point_data(
                     index,
                     current_position,
                 )
-            vals = vals + plugin_data
+            monitor_values = vals + plugin_data
 
-            with self._time_block("write:data", idx=index):
-                self.save_to_file(current_position, vals, self.include_timestamps)
+            with self.performance.time_block("write:data", idx=index):
+                self._commit_point_async(current_position, vals)
 
-            with self._time_block("monitor:update", idx=index):
+            with self.performance.time_block("monitor:update", idx=index):
                 if monitor is not None:
-                    logger.debug("%s", vals)
-                    monitor.update(vals)
+                    logger.debug("%s", monitor_values)
+                    monitor.update(monitor_values)
 
             logger.info("ParaScan point %d recorded at %s=%r", index, primary_name, current_position)
         finally:
@@ -359,7 +371,9 @@ class ParaScan(BaseScan):
         index = 0
         have_recorded_inside_range = False
 
+        scan_failed = False
         try:
+            self._start_detector_reader()
             self._start_subscriptions()
             self._start_metadata_monitor()
             self._fire_triggers("before")
@@ -394,8 +408,11 @@ class ParaScan(BaseScan):
                 if not self._wait_for_external_motion():
                     break
 
+        except BaseException:
+            scan_failed = True
+            raise
         finally:
-            self._cleanup_scan(monitor)
+            self._cleanup_scan(monitor, scan_failed=scan_failed)
 
     def execute(self):
         self._execute_standard(None)

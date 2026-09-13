@@ -3,6 +3,7 @@
 
 import threading
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
@@ -41,9 +42,11 @@ class SequenceActuator:
 
 
 class CMScanTestCase(unittest.TestCase):
-    def make_scan(self, rbv_values=(0.0,), ready_values=(False,)):
+    def make_scan(
+        self, rbv_values=(0.0,), ready_values=(False,), scan_class=CMScan,
+    ):
         """Create an isolated CMScan without EPICS connections or worker threads."""
-        scan = object.__new__(CMScan)
+        scan = object.__new__(scan_class)
         actuator = SequenceActuator(rbv_values, ready_values)
 
         scan.cfg = SimpleNamespace(sample_rate_hz=1.0)
@@ -57,16 +60,18 @@ class CMScanTestCase(unittest.TestCase):
         scan._maxindex = 0
         scan._original_velocities = {}
         scan._position = None
-        scan._last_sync = None
         scan._position_sync_subscription_set = False
         scan._stop_requested = threading.Event()
         scan._daq_is_on = True
-        scan._perf_enabled = False
-        scan._perf = {}
+        scan.performance = Mock()
+        scan.performance.time_block.side_effect = (
+            lambda *_args, **_kwargs: nullcontext()
+        )
         scan.include_timestamps = False
         scan.busyflag = False
         scan.plugins = []
         scan.sync_controller = Mock()
+        scan._initialize_event_handler()
 
         scan.write_header_to_output_file = Mock()
         scan.get_stop_pv = Mock(return_value=0)
@@ -74,9 +79,10 @@ class CMScanTestCase(unittest.TestCase):
         scan._wait_for_sync = Mock(return_value=True)
         scan._fire_triggers = Mock()
         scan.read_detectors = Mock(return_value=[10.0])
-        scan.update_current_row_cache = Mock()
-        scan.extend_current_row_cache = Mock()
-        scan.save_to_file = Mock(return_value=["saved-row"])
+        scan._detector_reader = Mock()
+        scan._begin_point_frame = Mock()
+        scan._point_pipeline = Mock()
+        scan._commit_point_async = Mock(return_value=["saved-row"])
 
         scan._start_plugins = Mock()
         scan._end_plugins = Mock()
@@ -85,7 +91,8 @@ class CMScanTestCase(unittest.TestCase):
         scan._stop_metadata_monitor = Mock()
         scan._start_subscriptions = Mock()
         scan._stop_subscriptions = Mock()
-        scan._perf_report = Mock()
+        scan._drain_parallel_writer_for_cleanup = Mock(return_value=None)
+        scan._propagate_parallel_writer_error = Mock()
 
         return scan, actuator
 
@@ -102,6 +109,7 @@ class TestCMScanInitialization(CMScanTestCase):
         }
         scan.subscription_manager = Mock()
         scan.sync_controller = Mock()
+        scan._initialize_event_handler()
 
     @staticmethod
     def _config(start=0.0, stop=10.0, dimensions=True):
@@ -159,18 +167,17 @@ class TestCMScanSynchronization(CMScanTestCase):
         )
 
         numeric_event = PvEvent("MOTOR:RBV", "2.5", source="rbv")
-        scan._on_sync_event(numeric_event, subscription)
+        scan.event_handler.on_sync_event(numeric_event, subscription)
         self.assertEqual(scan._position, 2.5)
         self.assertTrue(scan._position_sync_subscription_set)
 
         raw_event = PvEvent("MOTOR:RBV", "invalid", source="rbv")
-        scan._on_sync_event(raw_event, subscription)
+        scan.event_handler.on_sync_event(raw_event, subscription)
         self.assertEqual(scan._position, "invalid")
 
         unrelated_event = PvEvent("OTHER:RBV", 8.0, source="rbv")
-        scan._on_sync_event(unrelated_event, subscription)
+        scan.event_handler.on_sync_event(unrelated_event, subscription)
         self.assertEqual(scan._position, "invalid")
-        self.assertIs(scan._last_sync, unrelated_event)
         self.assertEqual(
             scan.sync_controller.note_event.call_args_list,
             [call("motor_sync"), call("motor_sync"), call("motor_sync")],
@@ -188,9 +195,11 @@ class TestCMScanSynchronization(CMScanTestCase):
 
         subscription = SimpleNamespace(name="motor_sync")
         scan._is_position_sync_subscription = Mock(return_value=True)
-        scan._arm_sync_controller.side_effect = lambda: scan._on_sync_event(
-            PvEvent("MOTOR:RBV", "2.5", source="rbv"),
-            subscription,
+        scan._arm_sync_controller.side_effect = (
+            lambda: scan.event_handler.on_sync_event(
+                PvEvent("MOTOR:RBV", "2.5", source="rbv"),
+                subscription,
+            )
         )
 
         scan.run_daq(monitor)
@@ -198,13 +207,20 @@ class TestCMScanSynchronization(CMScanTestCase):
         # The one RBV read is the initial snapshot. The acquired point comes
         # from the sync event and must not be replaced by another RBV read.
         self.assertEqual(actuator.rbv_reads, 1)
-        scan.update_current_row_cache.assert_called_once_with(
+        scan._begin_point_frame.assert_called_once_with(
             idx=0,
             pos=2.5,
             values=[10.0],
         )
         plugin.on_scan_point.assert_called_once_with(0, 2.5)
-        scan.save_to_file.assert_called_once_with(2.5, [10.0, 20.0], False)
+        scan._point_pipeline.append_plugin_point_values.assert_called_once_with(
+            ["PluginValue"],
+            [20.0],
+        )
+        scan._commit_point_async.assert_called_once_with(
+            2.5,
+            [10.0],
+        )
         monitor.update.assert_called_once_with(["saved-row"])
         base_stop.assert_called_once_with()
 
@@ -217,21 +233,20 @@ class TestCMScanSynchronization(CMScanTestCase):
 
         self.assertEqual(actuator.rbv_reads, 2)
         self.assertEqual(scan._position, 3.0)
-        scan.save_to_file.assert_called_once_with(3.0, [10.0], False)
+        scan._commit_point_async.assert_called_once_with(3.0, [10.0])
         base_stop.assert_called_once_with()
 
 
 class TestCMScanDaq(CMScanTestCase):
     def test_run_daq_honors_stop_requested_before_iteration(self):
         scan, _actuator = self.make_scan()
-        scan._stop_requested = Mock()
-        scan._stop_requested.is_set.return_value = True
+        scan._stop_requested.set()
 
         scan.run_daq()
 
-        scan._stop_requested.clear.assert_called_once_with()
+        self.assertTrue(scan._stop_requested.is_set())
         scan.get_stop_pv.assert_not_called()
-        scan.save_to_file.assert_not_called()
+        scan._commit_point_async.assert_not_called()
 
     def test_run_daq_skips_until_range_and_stops_after_confirmed_exit(self):
         scan, _actuator = self.make_scan(
@@ -240,7 +255,10 @@ class TestCMScanDaq(CMScanTestCase):
 
         scan.run_daq()
 
-        saved_positions = [args[0] for args, _kwargs in scan.save_to_file.call_args_list]
+        saved_positions = [
+            args[0]
+            for args, _kwargs in scan._commit_point_async.call_args_list
+        ]
         self.assertEqual(saved_positions, [0.0, 11.0])
         self.assertEqual(scan.read_detectors.call_count, 2)
 
@@ -253,7 +271,7 @@ class TestCMScanDaq(CMScanTestCase):
 
         base_stop.assert_called_once_with()
         scan._arm_sync_controller.assert_not_called()
-        scan.save_to_file.assert_not_called()
+        scan._commit_point_async.assert_not_called()
 
     def test_run_daq_stops_when_actuator_is_ready(self):
         scan, _actuator = self.make_scan(ready_values=(True,))
@@ -261,7 +279,7 @@ class TestCMScanDaq(CMScanTestCase):
         scan.run_daq()
 
         scan.read_detectors.assert_not_called()
-        scan.save_to_file.assert_not_called()
+        scan._commit_point_async.assert_not_called()
 
     def test_run_daq_honors_stop_requested_while_waiting(self):
         scan, _actuator = self.make_scan()
@@ -272,7 +290,7 @@ class TestCMScanDaq(CMScanTestCase):
         scan.run_daq()
 
         scan.read_detectors.assert_not_called()
-        scan.save_to_file.assert_not_called()
+        scan._commit_point_async.assert_not_called()
 
     def test_run_daq_honors_stop_requested_while_arming(self):
         scan, _actuator = self.make_scan()
@@ -282,7 +300,7 @@ class TestCMScanDaq(CMScanTestCase):
 
         scan._wait_for_sync.assert_not_called()
         scan.read_detectors.assert_not_called()
-        scan.save_to_file.assert_not_called()
+        scan._commit_point_async.assert_not_called()
 
 
 class TestCMScanVelocityHandling(CMScanTestCase):
@@ -310,17 +328,6 @@ class TestCMScanVelocityHandling(CMScanTestCase):
 
         restored.set_velocity.assert_called_once_with(4.0)
         failing.set_velocity.assert_called_once_with(5.0)
-
-    @patch.object(BaseScan, "stop")
-    def test_stop_requests_base_stop_and_restores_velocities(self, base_stop):
-        scan, _actuator = self.make_scan()
-        scan._restore_original_velocities = Mock()
-
-        scan.stop()
-
-        base_stop.assert_called_once_with()
-        scan._restore_original_velocities.assert_called_once_with()
-
 
 class TestCMScanExecution(CMScanTestCase):
     def test_scan_runs_forward_and_reverse_moves_and_cleans_up(self):
@@ -377,7 +384,7 @@ class TestCMScanExecution(CMScanTestCase):
             [call("before"), call("after")],
         )
         self.assertFalse(scan.busyflag)
-        scan._perf_report.assert_called_once_with()
+        scan.performance.report.assert_called_once_with()
 
     def test_scan_logs_actuator_failures_and_reaches_daq(self):
         scan, _unused_actuator = self.make_scan()
@@ -431,7 +438,7 @@ class TestCMScanExecution(CMScanTestCase):
         monitor.close.assert_called_once_with()
         scan._fire_triggers.assert_called_once_with("after")
         self.assertFalse(scan.busyflag)
-        scan._perf_report.assert_called_once_with()
+        scan.performance.report.assert_called_once_with()
 
     def test_execute_uses_standard_execution(self):
         scan, _actuator = self.make_scan()
@@ -440,6 +447,77 @@ class TestCMScanExecution(CMScanTestCase):
         scan.execute()
 
         scan._execute_standard.assert_called_once_with(None)
+
+
+class TestCMScanLifecycleHooks(CMScanTestCase):
+    def test_scan_calls_extension_hooks_in_lifecycle_order(self):
+        scan, actuator = self.make_scan()
+        events = Mock()
+        names = (
+            "_start_detector_reader", "_start_plugins", "init_scan",
+            "_prepare_sweep", "_start_metadata_monitor", "_fire_triggers",
+            "_start_sweep", "_start_subscriptions", "run_daq",
+            "_drain_parallel_writer_for_cleanup", "_stop_detector_reader",
+            "_restore_sweep_state",
+        )
+        for name in names:
+            method = Mock(return_value=None)
+            setattr(scan, name, method)
+            events.attach_mock(method, name)
+
+        scan.scan(None)
+
+        self.assertEqual(events.mock_calls, [
+            call._start_detector_reader(), call._start_plugins(),
+            call.init_scan(), call._prepare_sweep(),
+            call._start_metadata_monitor(), call._fire_triggers("before"),
+            call._start_sweep(), call._start_subscriptions(), call.run_daq(None),
+            call._drain_parallel_writer_for_cleanup(),
+            call._stop_detector_reader(), call._restore_sweep_state(),
+            call._fire_triggers("after"),
+        ])
+        actuator.run_move.assert_not_called()
+        actuator.get_velocity.assert_not_called()
+        actuator.set_velocity.assert_not_called()
+
+    def test_stop_reset_precedes_init_and_preserves_later_stop(self):
+        scan, _actuator = self.make_scan()
+        scan._stop_requested.set()
+
+        def initialize():
+            self.assertFalse(scan._stop_requested.is_set())
+            scan._stop_requested.set()
+
+        scan.init_scan = Mock(side_effect=initialize)
+        scan._prepare_sweep = Mock()
+        scan._start_sweep = Mock()
+        scan.scan(None)
+
+        scan.init_scan.assert_called_once_with()
+        self.assertTrue(scan._stop_requested.is_set())
+        scan._arm_sync_controller.assert_not_called()
+        scan._commit_point_async.assert_not_called()
+
+    def test_initialization_failure_runs_cleanup_and_preserves_error(self):
+        scan, _actuator = self.make_scan()
+        scan.init_scan = Mock(side_effect=RuntimeError("init failed"))
+        scan._prepare_sweep = Mock()
+        scan._start_sweep = Mock()
+        scan._restore_sweep_state = Mock()
+        scan.run_daq = Mock()
+
+        with self.assertRaisesRegex(RuntimeError, "init failed"):
+            scan.scan(None)
+
+        scan._prepare_sweep.assert_not_called()
+        scan._start_sweep.assert_not_called()
+        scan.run_daq.assert_not_called()
+        scan._drain_parallel_writer_for_cleanup.assert_called_once_with()
+        scan._restore_sweep_state.assert_called_once_with()
+        scan._propagate_parallel_writer_error.assert_called_once_with(
+            None, scan_failed=True,
+        )
+        self.assertFalse(scan.busyflag)
 
 
 if __name__ == "__main__":

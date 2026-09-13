@@ -395,11 +395,30 @@ class TestScanConfigParsing(unittest.TestCase):
 
 class TestLinearScan(unittest.TestCase):
     def setUp(self):
-        # patch out EPICS connections
-        patcher1 = patch.object(LinearScan, '_connect_actuators', return_value=None)
+        # Patch out EPICS connections while preserving the initialization
+        # contract of the real connection helpers.
+        def connect_actuators(scan):
+            scan.actuators = {
+                name: object()
+                for name in scan.cfg.actuators
+            }
+
+        def connect_detectors(scan):
+            scan.detector_pvs = []
+            scan.detector_pvs_monitor = scan.cfg.detector_pvs_monitor
+
+        patcher1 = patch.object(
+            LinearScan,
+            "_connect_actuators",
+            connect_actuators,
+        )
         self.addCleanup(patcher1.stop)
         patcher1.start()
-        patcher2 = patch.object(LinearScan, '_connect_detectors', return_value=None)
+        patcher2 = patch.object(
+            LinearScan,
+            "_connect_detectors",
+            connect_detectors,
+        )
         self.addCleanup(patcher2.stop)
         patcher2.start()
         # Comment out to test unique file creation per scan object
@@ -456,11 +475,29 @@ class TestLinearScan(unittest.TestCase):
 
 class TestApproachMove(unittest.TestCase):
     def setUp(self):
-        patcher1 = patch.object(ApproachMove, '_connect_actuators', return_value=None)
+        def connect_actuators(scan):
+            scan.actuators = {
+                name: object()
+                for name in scan.cfg.actuators
+            }
+
+        def connect_detectors(scan):
+            scan.detector_pvs = []
+            scan.detector_pvs_monitor = scan.cfg.detector_pvs_monitor
+
+        patcher1 = patch.object(
+            ApproachMove,
+            "_connect_actuators",
+            connect_actuators,
+        )
         self.addCleanup(patcher1.stop)
         patcher1.start()
 
-        patcher2 = patch.object(ApproachMove, '_connect_detectors', return_value=None)
+        patcher2 = patch.object(
+            ApproachMove,
+            "_connect_detectors",
+            connect_detectors,
+        )
         self.addCleanup(patcher2.stop)
         patcher2.start()
 

@@ -3,6 +3,7 @@
 
 import threading
 import unittest
+from contextlib import nullcontext
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
@@ -60,6 +61,7 @@ class PollScanTestCase(unittest.TestCase):
         """Create an isolated PollScan without EPICS connections or workers."""
         scan = object.__new__(PollScan)
         actuator = actuator or SequenceActuator()
+        scan.first_actuator = actuator
         scan.scan_dimensions = [
             ScanDimension("motor", start, stop, maxindex)
         ]
@@ -68,13 +70,19 @@ class PollScanTestCase(unittest.TestCase):
         scan._stop = stop
         scan._maxindex = maxindex
         scan._position = None
-        scan._last_sync = None
         scan._position_sync_subscription_set = False
         scan._stop_requested = threading.Event()
+        scan.performance = Mock()
+        scan.performance.time_block.side_effect = (
+            lambda *_args, **_kwargs: nullcontext()
+        )
         scan.include_timestamps = False
         scan.busyflag = False
         scan.plugins = []
+        scan._point_pipeline = Mock()
+        scan._point_pipeline.append_plugin_point_values = Mock()
         scan.sync_controller = Mock()
+        scan._initialize_event_handler()
 
         scan.write_header_to_output_file = Mock()
         scan._start_metadata_monitor = Mock()
@@ -87,9 +95,11 @@ class PollScanTestCase(unittest.TestCase):
         scan._wait_for_sync = Mock()
         scan._is_position_sync_subscription = Mock(return_value=False)
         scan.read_detectors = Mock(return_value=[10.0])
-        scan.update_current_row_cache = Mock()
-        scan.extend_current_row_cache = Mock()
-        scan.save_to_file = Mock()
+        scan._detector_reader = Mock()
+        scan._begin_point_frame = Mock()
+        scan._commit_point_async = Mock()
+        scan._drain_parallel_writer_for_cleanup = Mock(return_value=None)
+        scan._propagate_parallel_writer_error = Mock()
 
         return scan, actuator
 
@@ -106,6 +116,7 @@ class TestPollScanInitialization(PollScanTestCase):
         }
         scan.subscription_manager = Mock()
         scan.sync_controller = Mock()
+        scan._initialize_event_handler()
 
     @staticmethod
     def _config(dimensions=True):
@@ -159,18 +170,17 @@ class TestPollScanSynchronization(PollScanTestCase):
         scan._is_position_sync_subscription.side_effect = [True, True, False]
 
         numeric_event = PvEvent("MOTOR:RBV", "2.5", source="rbv")
-        scan._on_sync_event(numeric_event, subscription)
+        scan.event_handler.on_sync_event(numeric_event, subscription)
         self.assertEqual(scan._position, 2.5)
         self.assertTrue(scan._position_sync_subscription_set)
 
         raw_event = PvEvent("MOTOR:RBV", "invalid", source="rbv")
-        scan._on_sync_event(raw_event, subscription)
+        scan.event_handler.on_sync_event(raw_event, subscription)
         self.assertEqual(scan._position, "invalid")
 
         unrelated_event = PvEvent("OTHER:RBV", 8.0, source="rbv")
-        scan._on_sync_event(unrelated_event, subscription)
+        scan.event_handler.on_sync_event(unrelated_event, subscription)
         self.assertEqual(scan._position, "invalid")
-        self.assertIs(scan._last_sync, unrelated_event)
         self.assertEqual(
             scan.sync_controller.note_event.call_args_list,
             [call("motor_sync"), call("motor_sync"), call("motor_sync")],
@@ -192,29 +202,33 @@ class TestPollScanLoop(PollScanTestCase):
 
     @patch.object(BaseScan, "stop")
     def test_scan_polls_position_and_runs_full_point_pipeline(self, base_stop):
-        actuator = SequenceActuator(rbv_values=(2.0, 3.0))
+        actuator = SequenceActuator(rbv_values=(2.0,))
         scan, _actuator = self.make_scan(actuator=actuator, maxindex=1)
         plugin = Mock()
         plugin.on_scan_point.return_value = [20.0]
+        scan._commit_point_async.return_value = [10.0, 20.0]
         plugin.get_headers.return_value = ["PluginValue"]
         scan.plugins = [plugin]
         monitor = Mock()
 
         scan.scan(None, monitor)
 
-        self.assertEqual(actuator.rbv_reads, 2)
-        self.assertEqual(scan._position, 3.0)
-        scan.update_current_row_cache.assert_called_once_with(
+        self.assertEqual(actuator.rbv_reads, 1)
+        self.assertEqual(scan._position, 2.0)
+        scan._begin_point_frame.assert_called_once_with(
             idx=0,
             pos=2.0,
             values=[10.0],
         )
         plugin.on_scan_point.assert_called_once_with(0, 2.0)
-        scan.extend_current_row_cache.assert_called_once_with(
+        scan._point_pipeline.append_plugin_point_values.assert_called_once_with(
             ["PluginValue"],
             [20.0],
         )
-        scan.save_to_file.assert_called_once_with(2.0, [10.0, 20.0], False)
+        scan._commit_point_async.assert_called_once_with(
+            2.0,
+            [10.0],
+        )
         monitor.update.assert_called_once_with([10.0, 20.0])
         monitor.close.assert_called_once_with()
         self.assertEqual(
@@ -232,20 +246,22 @@ class TestPollScanLoop(PollScanTestCase):
         scan, _actuator = self.make_scan(actuator=actuator, maxindex=1)
         scan._is_position_sync_subscription.return_value = True
         subscription = SimpleNamespace(name="motor_sync")
-        scan._arm_sync_controller.side_effect = lambda: scan._on_sync_event(
-            PvEvent("MOTOR:RBV", "2.5", source="rbv"),
-            subscription,
+        scan._arm_sync_controller.side_effect = (
+            lambda: scan.event_handler.on_sync_event(
+                PvEvent("MOTOR:RBV", "2.5", source="rbv"),
+                subscription,
+            )
         )
 
         scan.scan(None)
 
         self.assertEqual(actuator.rbv_reads, 0)
-        scan.update_current_row_cache.assert_called_once_with(
+        scan._begin_point_frame.assert_called_once_with(
             idx=0,
             pos=2.5,
             values=[10.0],
         )
-        scan.save_to_file.assert_called_once_with(2.5, [10.0], False)
+        scan._commit_point_async.assert_called_once_with(2.5, [10.0])
         base_stop.assert_called_once_with()
 
     def test_scan_skips_missing_position(self):

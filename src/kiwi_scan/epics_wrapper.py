@@ -55,7 +55,7 @@ class EpicsPV:
         self.connection_timeout = float(connection_timeout) if connection_timeout is not None else max(10.0, self.timeout)
 
         self._pv: Optional[epics.PV] = None
-        self._callback_refs: list[Callable[..., None]] = []  # prevent callback GC
+        self._callback_refs: Dict[int, Callable[..., None]] = {}
         self.last_written: Any = None
 
         logger.debug("Creating PV %s", pvname)
@@ -142,6 +142,11 @@ class EpicsPV:
         # TODO: change to simply self.timeout if timeout is None?
         t = min(self.timeout, 1.0) if timeout is None else float(timeout)
         return pv.get(timeout=t, use_monitor=use_monitor)
+    
+    def get_fast(self) -> Optional[Dict[str, Any]]:
+        if self._pv is None:
+            return None
+        return self._pv.get_with_metadata(use_monitor=True)
 
     def get_with_metadata(self, *, use_monitor: bool = False, timeout: Optional[float] = None, full: Optional[bool] = False) -> Optional[Dict[str, Any]]:
         """ Return dict with value + timestamp-ish metadata. TODO: how about full meta data? """
@@ -199,7 +204,6 @@ class EpicsPV:
     def add_callback(self, callback: Callable[..., None], **kwargs: Any) -> int:
         pv = self._require_pv()
         wrapped = self._wrap_callback(callback)
-        self._callback_refs.append(wrapped)
 
         def _do_add() -> int:
             # Ensure monitoring (best effort)
@@ -221,6 +225,7 @@ class EpicsPV:
                 raise RuntimeError(
                     f"Adding callback to PV {self.pvname!r} returned no callback index"
                 )
+            self._callback_refs[cb_index] = wrapped
             return cb_index
 
         return self._ca(_do_add)
@@ -228,7 +233,12 @@ class EpicsPV:
     def remove_callback(self, index: int) -> None:
         """Remove one callback by the index returned from add_callback()."""
         pv = self._require_pv()
-        self._ca(lambda: pv.remove_callback(index))
+
+        def _do_remove() -> None:
+            pv.remove_callback(index)
+            self._callback_refs.pop(index, None)
+
+        self._ca(_do_remove)
 
     def disconnect(self) -> None:
         """Disconnect this PV from Channel Access."""
@@ -243,10 +253,10 @@ class EpicsPV:
                 pv.clear_callbacks()
             except Exception:
                 logger.debug("Failed to clear callbacks for PV %s", self.pvname, exc_info=True)
+            self._callback_refs.clear()
             _safe_poll()
 
         self._ca(_do_clear)
-        self._callback_refs.clear()
 
     def check_pv(self) -> None:
         if not self._pv:
@@ -267,7 +277,7 @@ class EpicsPV:
         obj.timeout = float(kwargs.get("timeout", 1.0))
         obj.queueing_delay = float(kwargs.get("queueing_delay", 0.01))
         obj.connection_timeout = float(kwargs.get("connection_timeout", 10.0))
-        obj._callback_refs = []
+        obj._callback_refs = {}
         obj.last_written = None
 
         # create PV WITHOUT waiting
@@ -396,4 +406,3 @@ def has_alarm( severity: Optional[int]) -> bool:
         return True
 
     return severity != NO_ALARM
-

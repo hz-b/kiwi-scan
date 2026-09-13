@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Mapping, Optional, Union
 
 from kiwi_scan.actuator.single import AbstractActuator, PvEvent
 from kiwi_scan.datamodels import ActuatorConfig, SubscriptionConfig
@@ -30,12 +30,11 @@ class SubscriptionManager:
     when possible. If no actuator backend offers monitors, the manager falls
     back to creating direct ``EpicsPV`` monitors.
     """
-
     def __init__(
         self,
         subscriptions: Optional[List[SubscriptionConfig]] = None,
         *,
-        actuator_configs: Optional[Dict[str, ActuatorConfigLike]] = None,
+        actuator_configs: Optional[Mapping[str, ActuatorConfigLike]] = None,
         actuators: Optional[Dict[str, AbstractActuator]] = None,
     ) -> None:
         """Store subscription definitions and runtime dependencies.
@@ -51,10 +50,10 @@ class SubscriptionManager:
             Live actuator instances. They are inspected to find a backend that
             supports monitors.
         """
-        self._subscriptions: List[SubscriptionConfig] = list(subscriptions or [])
-        self._actuator_configs: Dict[str, ActuatorConfigLike] = dict(actuator_configs or {})
-        self._actuators: Dict[str, AbstractActuator] = dict(actuators or {})
-
+        self._subscriptions: List[SubscriptionConfig] = list( subscriptions or [])
+        self._actuator_configs: Dict[str, ActuatorConfigLike] = dict( actuator_configs or {})
+        self._actuators: Dict[str, AbstractActuator] = dict( actuators or {})
+        
         self._role_handlers: Dict[str, RoleHandler] = {}
 
         self._provider: Optional[AbstractActuator] = None

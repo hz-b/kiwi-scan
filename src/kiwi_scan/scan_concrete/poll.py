@@ -35,11 +35,12 @@ class PollScan(BaseScan):
         self.set_samplerate()
         self._start = self.scan_dimensions[0].start
         self._stop = self.scan_dimensions[0].stop
+        self.first_actuator = self.actuators[self.scan_dimensions[0].actuator]
 
-        self.register_subscription_role("heartbeat", self._on_heartbeat_event)
-        self.register_subscription_role("sync", self._on_sync_event)
-        self.register_subscription_role("status", self._on_status_event)
-        self.register_subscription_role("stop", self._on_stop_event)
+        self.register_subscription_role("heartbeat", self.event_handler.on_heartbeat_event)
+        self.register_subscription_role("sync", self.event_handler.on_sync_event)
+        self.register_subscription_role("status", self.event_handler.on_status_event)
+        self.register_subscription_role("stop", self.event_handler.on_stop_event)
         
         self._maxindex = 0
         if self.scan_dimensions:
@@ -52,29 +53,6 @@ class PollScan(BaseScan):
             logger.debug("Wait for actuator to start")
             time.sleep(0.05)
 
-    def _scan_stop_requested(self) -> bool:
-        """Return whether an event or the configured stop PV ended the scan."""
-        if self._stop_requested.is_set():
-            logger.debug("Stop event set")
-            return True
-        if self.get_stop_pv() != 1:
-            return False
-        logger.debug("Stop PV set")
-        return True
-
-    def _wait_for_scan_cycle(self) -> bool:
-        """Arm and wait for one synchronized acquisition cycle."""
-        self._arm_sync_controller()
-        if self._stop_requested.is_set():
-            logger.debug("Stop event set")
-            return False
-
-        self._wait_for_sync(stop_event=self._stop_requested)
-        if self._stop_requested.is_set():
-            logger.debug("Stop event set")
-            return False
-        return True
-
     def _read_daq_position(self, actuator):
         """Return the synchronized position, polling RBV as a fallback."""
         if self._position_sync_subscription_set:
@@ -84,31 +62,15 @@ class PollScan(BaseScan):
         self._position = position
         return position
 
-    def _acquire_poll_point(
+    def _cleanup_scan(
         self,
-        index: int,
-        position,
         monitor: Optional[BaseMonitor] = None,
+        *,
+        scan_failed: bool = False,
     ) -> None:
-        """Acquire and publish one polling scan point."""
-        self._fire_triggers("on_point")
-        values = self.read_detectors()
-        self.update_current_row_cache(
-            idx=index,
-            pos=position,
-            values=values,
-        )
-        self._fire_triggers("after_point")
-
-        plugin_values = self._collect_plugin_point_data(index, position)
-        values = values + plugin_values
-        self.save_to_file(position, values, self.include_timestamps)
-
-        if monitor is not None:
-            monitor.update(values)
-
-    def _cleanup_scan(self, monitor: Optional[BaseMonitor] = None) -> None:
         """Release polling-scan resources using its established semantics."""
+        writer_error = self._drain_parallel_writer_for_cleanup()
+        self._run_cleanup_step("detectors:stop", self._stop_detector_reader)
         self._stop_metadata_monitor()
         if monitor is not None:
             monitor.close()
@@ -118,7 +80,53 @@ class PollScan(BaseScan):
             logger.exception("Error clearing scan subscriptions")
         self._fire_triggers("after")
         self.busyflag = False
+        self._run_cleanup_step("performance:report", self.performance.report)
+        self._propagate_parallel_writer_error(
+            writer_error,
+            scan_failed=scan_failed,
+        )
 
+    def run_daq(self, monitor: Optional[BaseMonitor] = None):
+        """ DAQ loop driven by sync-controller """
+        with self.performance.time_block("write:header"):
+            self.write_header_to_output_file()
+        index = 0
+        # initial snapshot; may quickly be overwritten by sync subscription indicated by flag
+        self._position_sync_subscription_set = False
+        range_exit = RangeExitDetector(
+            self._start,
+            self._stop,
+            eps=0.001,   # TODO: parameter to overwrite default 
+            out_threshold=6,
+        )
+        while True:
+            logger.debug("run_daq: Entered scan loop")
+            if self._daq_stop_requested():
+                break
+
+            if not self._wait_for_scan_cycle(index):
+                break
+
+            position = self._read_daq_position(self.first_actuator)
+            if position is None:
+                continue
+            
+            range_exit_detected = range_exit.update(position)
+            first_actuator_ready = self.first_actuator.is_ready() 
+            if range_exit_detected and first_actuator_ready and self._start != self._stop:
+                logger.info("Scan termination detected at pos=%s", position)
+                break
+            if first_actuator_ready:
+                continue
+
+            self._acquire_daq_point_continuous(index, position, monitor)
+            index += 1
+
+            if self._maxindex > 0 and index >= self._maxindex:
+                super().stop()
+                break
+
+    
     def scan(self, positions, monitor: Optional[BaseMonitor] = None):
         """
         Poll detector values.
@@ -127,61 +135,24 @@ class PollScan(BaseScan):
 
         del positions
 
-        self.write_header_to_output_file()
-        index = 0
-
-        first_actuator = self.actuators[self.scan_dimensions[0].actuator]
         self._start_metadata_monitor()
         self._fire_triggers("before")
-        range_exit = RangeExitDetector(
-            self._start,
-            self._stop,
-            eps=0.001,
-            out_threshold=6,
-        )
-        self._wait_for_motion_start(first_actuator)
+        self._wait_for_motion_start(self.first_actuator)
 
+        self.busyflag = True
         self._stop_requested.clear()
+        scan_failed = False
         try:
+            self._start_detector_reader()
             self._start_subscriptions()
-            self.busyflag = True
-            self._position_sync_subscription_set = False
-            while True:
-                if self._scan_stop_requested():
-                    break
-
-                if not self._wait_for_scan_cycle():
-                    break
-
-                position = self._read_daq_position(first_actuator)
-                if position is None:
-                    continue
-                
-                range_exit_detected = range_exit.update(position)
-                first_actuator_ready = first_actuator.is_ready() 
-                if range_exit_detected and first_actuator_ready and self._start != self._stop:
-                    logger.info(
-                        "Scan termination detected at pos=%s",
-                        position,
-                    )
-                    break
-                if first_actuator_ready:
-                    continue
-
-                self._acquire_poll_point(index, position, monitor)
-                index += 1
-                logger.debug("Poll %d @ pos=%r", index, position)
-
-                # refresh from actuator rbv if no sync subscription is used
-                # (keeps range check honest for non-subscribed setups)
-                if self._last_sync is None:
-                    self._position = first_actuator.rbv
-                
-                if self._maxindex > 0 and index >= self._maxindex:
-                    super().stop()
-                    break
+            with self.performance.time_block("daq:run"):
+                self.run_daq(monitor)
+        
+        except BaseException:
+            scan_failed = True
+            raise
         finally:
-            self._cleanup_scan(monitor)
-
+            self._cleanup_scan(monitor, scan_failed=scan_failed)
+    
     def execute(self) -> None:
         self._execute_standard(None) 
