@@ -25,6 +25,7 @@ A scan still needs at least one `scan_dimensions` entry when a scan object is cr
 actuators: {}
 detector_pvs: []
 detector_pvs_monitor: True
+detector_reader_strategy: direct
 scan_dimensions: []
 parallel_scans: []
 nested_scans: []
@@ -35,6 +36,7 @@ stop_pv: null
 data_dir: .
 output_file: scan_results.txt
 include_timestamps: False
+timestamp_output_format: iso8601
 integration_time: 0.0
 sample_rate_hz: 1.0
 debug: False
@@ -65,6 +67,37 @@ monitor:
 For `tsv` and `csv`, one header row is written followed by one row per scan point. For `json`, one JSON object is written per scan point. Diagnostic messages use normal logging, so stdout remains a machine-readable data stream.
 
 `monitor_type: plot` uses optional `monitor.print` settings for stdout and `monitor.plots` for plot panels. See [monitor.md](monitor.md).
+
+### Detector acquisition
+
+`detector_reader_strategy` selects how detector values are collected:
+
+| Value | Meaning |
+|---|---|
+| `direct` | Default. Read every detector sequentially through `get_with_metadata()`. `detector_pvs_monitor` selects cached CA monitor values or direct polling. |
+| `snapshot` | Maintain detector values with monitor callbacks and copy the complete local cache under one lock for each point. |
+
+The snapshot is a fast atomic read of the detector cache and should be preferred for high data rates.
+
+### Timestamp output
+
+The row timestamp is always included. `include_timestamps` controls additional
+timestamp columns contributed by detectors and data-column providers. Plugin
+values do not receive individual scan-file timestamp columns.
+
+`timestamp_output_format` controls timestamp format in the main scan file:
+
+| Value | Row header | Detector header | Representation |
+|---|---|---|---|
+| `iso8601` | `TS-ISO8601` | `TS-ISO8601-<PV>` | Timezone-aware ISO-8601 text |
+| `unix` | `TS-UNIX` | `TS-UNIX-<PV>` | POSIX seconds |
+
+### Validation and normalization
+
+`ScanConfig.validate()` partly normalizes mappings.
+Unknown fields in dataclass-based YAML blocks remain ignored for forward
+compatibility, so spelling mistakes in otherwise optional fields may still be
+reported only through debug logging.
 
 ### ActuatorConfig
 
@@ -151,6 +184,7 @@ When `actuator` is used, `source` selects which actuator PV is subscribed.
 | `pv` | string | Direct PV subscription target. |
 | `actuator` | string | Actuator name used for indirect PV lookup. |
 | `source` | string | Source selector like `rbv`, `status`, `stop`, or `velocity`. |
+| `timeout` | float | Optional per-cycle timeout in seconds for a `sync` source. A timeout satisfies that source as a fallback. Must be non-negative. |
 
 Examples:
 
@@ -172,7 +206,7 @@ Plugin declaration with type, name, and parameters.
 | Field | Type | Meaning |
 |---|---|---|
 | `type` | string | Registered plugin type name. |
-| `name` | string | Instance name used in logs and runtime. |
+| `name` | string | Optional instance name used in logs and runtime. Defaults to `type`. |
 | `parameters` | mapping | Plugin-specific untyped configuration block. |
 
 ### ScanDimension
@@ -212,6 +246,8 @@ stop_pv: ${IOC_MONO}:SCAN_STOP
 output_file: energy_scan.txt
 data_dir: scans
 include_timestamps: true
+timestamp_output_format: iso8601
+detector_reader_strategy: direct
 integration_time: 1.0
 
 triggers:
@@ -290,4 +326,3 @@ export KIWI_SCAN_REPLACE_IOC_MONO=ue521sgm1:mono
 export KIWI_SCAN_REPLACE_DET_PV1=ue521sgm1:detA
 export KIWI_SCAN_REPLACE_DET_PV2=ue521sgm1:detB
 ```
-

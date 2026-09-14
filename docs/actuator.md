@@ -201,13 +201,34 @@ undulator.jog([gap_velocity, shift_velocity])
 
 CAN-specific variant of the undulator actuator.
 
-It packs two signed 16-bit velocities into one 32-bit integer:
+It packs gap and shift velocity multipliers in the range `0.0` to `1.0` into one 32-bit integer.
+Each multiplier is converted into an unsigned 16-bit value (`0x0000` to `0xFFFF`)
 
 ```text
-packed = (shift_velocity << 16) | gap_velocity
+packed = (scaled_shift << 16) | scaled_gap
 ```
 
 The packed value is written to the configured jog command PV.
+
+Values outside `0.0 .. 1.0` raise `ValueError` instead of being clipped.
+
+## Actuator helper API
+
+Construct and monitor actuators:
+
+```python
+from kiwi_scan.actuator.factory import create_actuator, create_actuators
+from kiwi_scan.actuator.tools import load_actuators, run_monitors
+from kiwi_scan.datamodels import MonitorSpec
+```
+
+- `create_actuator(config)` creates one actuator from `ActuatorConfig`.
+- `create_actuators(configs)` creates a named mapping from `ActuatorConfig`
+  objects or raw mappings.
+- `load_actuators(config_file, replacements=None)` loads the YAML actuator
+  block and creates the mapping.
+- `run_monitors(actuators, monitor_specs, ...)` manages monitor subscriptions,
+  formatted event output, completion conditions, and cleanup.
 
 ## Minimal YAML examples
 

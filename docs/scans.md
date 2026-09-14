@@ -149,6 +149,10 @@ Unlike `linear`, `poll` does not generate a fixed list of move targets for every
 
 It can use heartbeat and sync subscriptions. Without events, the configured sample time acts as a timeout fallback.
 
+For `poll`, a positive `steps` value is the maximum number of acquired points.
+When `steps <= 0`, acquisition continues until motion/range detection or a stop
+request ends it.
+
 Typical use cases:
 
 - continuous readout during a move
@@ -165,11 +169,27 @@ It moves the configured actuator or actuators to the start position, stores thei
 
 The DAQ loop can be driven by heartbeat subscriptions, with the sample time used as a timeout fallback. The scan position can come from a sync subscription or fall back to the actuator readback.
 
+For `cm`, a positive `steps` value is the maximum number of acquired points.
+When `steps <= 0`, the motion, range detector, or a stop request determines the
+end of acquisition. Original actuator velocities are restored during cleanup.
+
+Without external `sync` subscriptions, both `cm` and `poll` use fixed absolute
+timer slots derived from `sample_rate_hz`. See [sync-controller.md](sync-controller.md).
+
 
 ## External scan-types
 
 External scan types are registered with `register_scan(...)` and discovered from files or directories listed in `KIWI_SCAN_SCAN_PATH`.
-New scan classes must be derived from the interface defined in [scan abstraction](../src/kiwi_scan/scan/scan_abs.py).
+New scan classes must be derived from the interface defined in [scan abstraction](../src/kiwi_scan/scan/scan_abs.py)
+and should use the documented `ScanABC`/`BaseScan` API.
+
+When a custom scan registers subscription roles, use the event-handler object:
+
+```python
+self.register_subscription_role("sync", self.event_handler.on_sync_event)
+self.register_subscription_role("status", self.event_handler.on_status_event)
+self.register_subscription_role("stop", self.event_handler.on_stop_event)
+```
 
 ### Custom type example
 

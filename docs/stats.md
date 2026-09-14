@@ -22,9 +22,9 @@ In scans, the statistics are written as additional scan-file columns and `pollst
 
 ## Main components
 
-### `kiwi_scan.stats`
+### `kiwi_scan.tools`
 
-`kiwi_scan.stats` contains the lightweight online statistics building blocks used by the scan engine:
+`kiwi_scan.tools` exports the lightweight online statistics building blocks used by the scan engine:
 
 - `Mean`
 - `Var`
@@ -89,26 +89,25 @@ reset_window() -> None
 
 ## Use in scan output
 
-`BaseScan` owns a list of data column providers. A scan type registers a provider with:
+The `PointPipeline` owns the data column providers. 
+A scan type registers a provider through the public `BaseScan` API:
 
 ```python
 self.add_column_provider(provider)
 ```
 
-During header writing, `BaseScan` asks each provider for headers and inserts them after `Position` and before the row timestamp:
+During header writing, the point pipeline asks each provider for headers and
+inserts them after `Position` and before the row timestamp:
 
 ```text
-Position    <provider columns...>    TS-ISO8601    <detector columns...>    <plugin columns...>
+Position    <provider columns...>    <row timestamp>    <detector columns...>    <plugin columns...>
 ```
 
-During row writing, `BaseScan` asks each provider for values and writes them in the same order.
+The row timestamp header is `TS-ISO8601` or `TS-UNIX`, depending on
+`timestamp_output_format`. During row construction, the pipeline asks each
+provider for values and preserves the same order.
 
-Before each scan point, the scan engine should reset provider windows:
-
-```python
-self._reset_data_column_provider_windows()
-```
-
+Built-in step scans reset provider windows before each acquisition. 
 ## YAML configuration
 
 Statistics are driven by `subscriptions`.

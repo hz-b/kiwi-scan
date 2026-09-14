@@ -15,7 +15,8 @@ Plugins can:
 - read additional PVs or actuator state
 - log diagnostics during a scan
 - react to subscription events through `on_monitor()`
-- access the scan object, including actuators, through `self.scan`
+- access the supported scan context, including actuators and point values,
+  through `self.scan`
 
 ## Plugin discovery
 
@@ -98,7 +99,17 @@ The base class stores:
 - `self.log_dir`
 - `self.scan`
 
-`self.scan` gives access to the running scan object. For example, a plugin can call `self.scan.get_actuator("energy")`.
+`self.scan` is typed as `ScanPluginContext`, provides not the complete `BaseScan`
+implementation. It exposes the following resources:
+
+- `scan.cfg`
+- `scan.get_value()` for the last completed point
+- `scan.get_current_row_value()` for one value in the point being assembled
+- `scan.get_current_row_cache()` for a defensive copy of that point
+- `scan.get_actuator()` and `scan.get_actuators()`
+
+For example, a plugin can call `self.scan.get_actuator("energy")`. Plugins
+should not depend on other `BaseScan` attributes or private methods.
 
 ### `get_headers(timestamps: bool)`
 
@@ -110,7 +121,7 @@ Example:
 
 ```python
 def get_headers(self, timestamps: bool):
-    return self.expand_headers(["LatestDrift", "DriftAlarm"], timestamps)
+    return ["LatestDrift", "DriftAlarm"]
 ```
 
 ### `get_values(idx, pos)`
@@ -141,30 +152,30 @@ subscriptions:
 
 The event is passed as a `PvEvent` object with fields such as `pvname`, `value`, `timestamp`, `severity`, and `status`.
 
+### Other lifecycle hooks
+
+- `on_start()` runs before point acquisition starts.
+- `on_end()` runs during scan cleanup.
+- `close()` for releasing plugin-owned resources.
+
 ## Timestamp column handling
 
-When the scan config has `include_timestamps: true`, plugin timestamp columns can be added next to plugin value columns.
+Plugin output columns are value-only in scan files. The file contains one
+common row timestamp, while `include_timestamps: true` adds individual detector
+timestamps. 
 
-Use `self.expand_headers(headers, timestamps)` in `get_headers()`:
+Return only the headers matching `get_values()`:
 
 ```python
 def get_headers(self, timestamps: bool):
-    return self.expand_headers(["ValueA", "ValueB"], timestamps)
+    del timestamps
+    return ["ValueA", "ValueB"]
 ```
 
-This expands:
 
-```text
-ValueA ValueB
-```
-
-into:
-
-```text
-ValueA TS-ValueA ValueB TS-ValueB
-```
-
-Plugin values returned by `get_values()` are wrapped by the base class with the current time. The scan writer uses these wrapped timestamps when timestamp output is enabled.
+Detector values and earlier plugin results are inserted into the current point
+before the next plugin runs. Plugins execute in configuration order, so a later
+plugin can read an earlier result.
 
 ## Built-in plugins
 
@@ -283,12 +294,15 @@ Output column:
 ControllerSetpoint
 ```
 
-When timestamps are enabled, a timestamp column is also added.
+No individual timestamp column is added to the scan file.
 
 ### TimestampPerformancePlugin
 
-This is a simple plugin convinient for performance measurements.
-It requires `include_timestamps: true` where kiwi-scan adds the `TS-...` columns next to each plugin output column.
+This is a simple plugin convenient for performance measurements. It reads the
+raw, representation-neutral detector timestamp keys (`TS-<PV>`) from the
+current point cache. It does not require plugin timestamp columns.
+
+Set `include_timestamps: true` only when the detector timestamps should also be saved.
 
 For each configured detector PV `<PV>`, the plugin adds then:
 
@@ -330,8 +344,8 @@ class DriftWatchPlugin(ScanPlugin):
         self.latest_drift = None
 
     def get_headers(self, timestamps: bool):
-        headers = ["LatestDrift", "DriftAlarm"]
-        return self.expand_headers(headers, timestamps)
+        del timestamps
+        return ["LatestDrift", "DriftAlarm"]
 
     def get_values(self, idx: int, pos: Dict[str, Any]) -> List[Any]:
         if self.latest_drift is None:

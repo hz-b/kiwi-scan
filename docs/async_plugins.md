@@ -15,7 +15,8 @@ With event-driven data streaming, the DAQ rate of a Kiwi scan can be quite high.
 - Network communication without blocking data acquisition
 
 
-`AsyncScanPlugin` inherits from `ScanPlugin` and provides access to the current scan object through the self.scan weak reference. 
+`AsyncScanPlugin` inherits from `ScanPlugin` and provides a weak reference to
+the supported `ScanPluginContext` through `self.scan`. Plugins should not depend on `BaseScan` internals.
 
 This allows async plugins to access scan data, for example:
 
@@ -74,7 +75,7 @@ def process_data_snapshot(self, data_snapshot: Any) -> List[Any]:
         row_cache = data_snapshot["row_cache"]
         index = data_snapshot["scanIndex"]
 
-        time.sleep(1,0)
+        time.sleep(1.0)
         result = position * 2.0  # some slow heavy processing
         
         return [
@@ -92,3 +93,4 @@ def process_data_snapshot(self, data_snapshot: Any) -> List[Any]:
 - Return a stable number of values matching the headers.
 - Status column: `pending`, `ready`, or `error`.
 - Source index column so delayed results are traceable.
+- Plugin result columns do not have individual timestamp columns in the scan file. 

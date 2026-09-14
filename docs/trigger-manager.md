@@ -64,6 +64,10 @@ Each trigger action has these fields:
 | `value` | yes | Value written to the PV. Scalars and simple list-like values are supported. |
 | `delay` | no | Delay in seconds after the write. Defaults to `0.0`. |
 
+Trigger PV objects are created without an implicit EPICS `queueing_delay`.
+Add a post-trigger `delay` only when hardware requires settling time. 
+It should not be used for performance-sensitive synchonous trigger actions that do not require a delay.
+
 Example with multiple actions:
 
 ```yaml

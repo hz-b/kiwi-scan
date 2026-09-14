@@ -32,6 +32,8 @@ Building scan configurations in Python:
 - `kiwi_scan.datamodels.TriggerAction`
 - `kiwi_scan.datamodels.ScanTriggers`
 - `kiwi_scan.datamodels.SubscriptionConfig`
+- `kiwi_scan.datamodels.PluginConfig`
+- `kiwi_scan.datamodels.MonitorSpec`
 
 Loading scan configurations from YAML:
 
@@ -60,6 +62,7 @@ Derived scan classes implement the following methods and properties:
 - `scan.get_value(name, default=None, with_metadata=False)`
 - `scan.get_current_row_cache()`
 - `scan.get_current_row_value(key, default=None)`
+- `scan.get_last_point_keys()`
 - `scan.get_actuator(name)`
 - `scan.get_actuators()`
 - `scan.set_data_writing_enabled(enabled)`
@@ -70,8 +73,11 @@ Derived scan classes implement the following methods and properties:
 
 ### 4. Generic IOC controller API
 
-`kiwi_scan.ioc.controller.ScanIOCController` is the Python-only scan wrapper originally craeted for the generic scan IOC and it does not depend on `pythonSoftIOC`.
-While it is not part of the core scan API, it is an reusable application layer between the EPICS records and the kiwi-scan runtime API that handles everything that is not EPICS specific.
+`kiwi_scan.ioc.controller.ScanIOCController` is the Python-only scan wrapper
+originally created for the generic scan IOC and it does not depend on
+`pythonSoftIOC`. While it is not part of the core scan API, it is a reusable
+application layer between the EPICS records and the kiwi-scan runtime API that
+handles everything that is not EPICS-specific.
 
 The controller manages scan objects for each run, and exposes thread-safe state and data access methods.
 
@@ -147,22 +153,49 @@ The data-writing setting is kept as the default for future scans and is also for
 - `kiwi_scan.load_all_plugins()` - search and load plugins; set `KIWI_SCAN_PLUGIN_PATH` for custom plugins
 - `kiwi_scan.load_all_scan_types()` - search and load scan types; set `KIWI_SCAN_SCAN_PATH` for custom scan engines
 
+Plugins receive a `kiwi_scan.plugin.context.ScanPluginContext`. This is the
+supported plugin-to-scan interface and exposes:
+
+- `cfg`
+- `get_value()`
+- `get_current_row_cache()` and `get_current_row_value()`
+- `get_actuator()` and `get_actuators()`
+
+The runtime cache uses representation-neutral raw POSIX timestamp keys:
+
+- `TS` for the row timestamp
+- `TS-<PV>` for a detector timestamp
+- `TS-<PluginHeader>` when plugin metadata contains a timestamp
+
+These are different from formatted scan-file headers such as `TS-ISO8601` or
+`TS-UNIX`.
+
+Actuator construction and monitoring helpers:
+
+- `kiwi_scan.actuator.factory.create_actuator()`
+- `kiwi_scan.actuator.factory.create_actuators()`
+- `kiwi_scan.actuator.tools.load_actuators()`
+- `kiwi_scan.actuator.tools.run_monitors()`
+- `kiwi_scan.datamodels.MonitorSpec`
+
 
 ### 6. Data loader API
 
 Load scan data:
 
-- `kiwi_scan.dataloader.DataLoader`
-- `kiwi_scan.metadata_loader.parse_metadata_file()`
+- `kiwi_scan.data.DataLoader`
+- `kiwi_scan.data.parse_metadata_file()`
+- `kiwi_scan.data.ManifestWriter`
+- `kiwi_scan.data.ManifestResolver`
 
 ### 7. Export converters
 API:
 
-- `kiwi_scan.io.ExportScan`
-- `kiwi_scan.io.ExportBundle`
-- `kiwi_scan.io.load_export_bundle_from_scan_file()`
-- `kiwi_scan.io.load_export_bundle_from_manifest()`
-- `kiwi_scan.io.load_export_bundle_from_latest_manifest()`
+- `kiwi_scan.export.ExportScan`
+- `kiwi_scan.export.ExportBundle`
+- `kiwi_scan.export.load_export_bundle_from_scan_file()`
+- `kiwi_scan.export.load_export_bundle_from_manifest()`
+- `kiwi_scan.export.load_export_bundle_from_latest_manifest()`
 
 Custom export converters can add support for exporting to additional file formats. The package comes with the kiwi2spec converter.
 Registered converters can be selected by name.
@@ -170,10 +203,17 @@ Registered converters can be selected by name.
 - `kiwi_scan.export.ExportWriter` - Base class for implementing a new export format.
 - `register_writer()`- Registers the converter.
 
+### 8. Running statistics
+
+- `kiwi_scan.tools.Mean`
+- `kiwi_scan.tools.Var`
+
 ## What is not public API
 
 - CLI entry-point modules such as `scan_runner`, `scanplotter_cli`, and `actuator_runner`
 - implementation packages such as `scan_concrete.*`, `actuator_concrete.*`, and `monitor_concrete.*`
+- point-pipeline implementation classes such as `PointPipeline`,
+  `OutputManager`, `_PointFrame`, and `_ParallelPointWriter`
 - raw registry dictionaries such as `SCAN_REGISTRY`,`PLUGIN_REGISTRY`, `MONITOR_TYPES`
 - any name starting with `_`
 
@@ -238,7 +278,7 @@ try:
         print("busy:", scan.busy)
         print("position:", scan.position)
         print("last detector value:", scan.get_value("IOC:DET:COUNTS"))
-        print("last scan timestamp:", scan.get_value("TS-ISO8601"))
+        print("last scan timestamp:", scan.get_value("TS"))
         time.sleep(0.5)
 finally:
     worker.join()

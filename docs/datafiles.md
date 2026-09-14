@@ -13,8 +13,12 @@ data_dir: test
 # A timestamp is inserted before the extension.
 output_file: test.txt
 
-# Configure timestamps (true/false) for individual detector and plugin values.
+# Configure timestamps (true/false) for individual detector values and
+# timestamp-aware data-column providers.
 include_timestamps: true
+
+# Render timestamps as timezone-aware ISO-8601 text or POSIX seconds.
+timestamp_output_format: iso8601
 
 # Enable/disable data writing (true by default)
 data_writing_enabled: true
@@ -52,13 +56,19 @@ If that file already exists, a short unique suffix is added.
 
 ### `include_timestamps`
 
-Controls timestamps for individual detector and plugin values.
+Controls additional timestamps for detector values and timestamp-aware
+data-column providers. Plugin values do not receive individual scan-file
+timestamp columns.
 
-A scan-line timestamp column `TS-ISO8601` is always generated. 
+A scan-line timestamp column is always generated. Its name and representation
+are controlled by `timestamp_output_format`:
+
+- `iso8601` produces `TS-ISO8601` and `TS-ISO8601-<PV>` columns.
+- `unix` produces `TS-UNIX` and `TS-UNIX-<PV>` columns.
+
 When `include_timestamps` is enabled, additional timestamp columns are added:
 
 - detector value `TEST:DET` -> `TS-ISO8601-TEST:DET`
-- plugin value `CalculatedValue` -> `TS-CalculatedValue`
 
 Example with `include_timestamps: false`:
 
@@ -69,8 +79,14 @@ Position  TS-ISO8601  TEST:DET  CalculatedValue
 With `include_timestamps: true` it becomes:
 
 ```text
-Position  TS-ISO8601  TEST:DET  TS-ISO8601-TEST:DET  CalculatedValue  TS-CalculatedValue
+Position  TS-ISO8601  TEST:DET  TS-ISO8601-TEST:DET  CalculatedValue
 ```
+
+With `timestamp_output_format: unix`, the same header begins with
+`Position TS-UNIX` and the detector timestamp is `TS-UNIX-TEST:DET`.
+
+Internally, timestamps remain raw POSIX values throughout acquisition and
+plugin processing. 
 
 ### `data_writing_enabled`
 
@@ -113,9 +129,9 @@ The main scan file is a tab-separated text file. Its columns are assembled in th
 
 1. `Position`
 2. columns supplied by registered column providers, such as statistics
-3. `TS-ISO8601`, the timestamp of the scan row
+3. `TS-ISO8601` or `TS-UNIX`, the timestamp of the scan row
 4. detector values and optional detector timestamps
-5. plugin-generated values and optional plugin timestamps
+5. plugin-generated values
 
 A minimal detector-free scan still contains:
 
@@ -123,6 +139,15 @@ A minimal detector-free scan still contains:
 Position  TS-ISO8601
 ```
 Numeric values are written in scientific notation. Non-numeric values are written as text.
+
+## Point writer
+
+Normal scan acquisition sends each point data to a background FIFO writer. 
+This keeps file formatting and disk I/O out of the DAQ hot path.
+
+- Accepted points are drained before scan cleanup completes.
+- If the queue is full, submission blocks and is not dropping scan points.
+- `save_to_file()` behaves unchanged as synchronous write.
 
 ## Metadata sidecar file
 

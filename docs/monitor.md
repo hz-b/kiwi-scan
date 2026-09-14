@@ -5,7 +5,7 @@ The kiwi-scan monitor layer provides optional live output for scan data while a 
 Two monitors are currently available:
 
 - `print`: writes scan rows to stdout in a machine-readable format.
-- `plot` / `queueplotter`: writes the same optional stdout stream and opens live matplotlib plots.
+- `plot`: writes the same optional stdout stream and opens live matplotlib plots.
 
 ## Configuration overview
 
@@ -64,7 +64,7 @@ The print options are read from `monitor.print`:
 | `enabled` | bool | `true` | Enables or disables stdout output. |
 | `format` | string | `tsv` | Output format: `tsv`, `csv`, or `json`. |
 | `include_header` | bool | `true` | Writes a header row for `tsv` and `csv`. Ignored for JSON lines. |
-| `include_timestamps` | bool | `false` | Adds ISO-8601 timestamp columns when timestamp metadata is available. |
+| `include_timestamps` | bool | `false` | TS formatter option.
 | `float_format` | string | `.12e` | Python float format used for scalar numeric values. |
 
 ### Output formats
@@ -95,7 +95,13 @@ Each row is represented by key–value pairs.
 {"energyMean": 300.0, "IOC_NAME:GetGA1": 1.234}
 ```
 
-When `include_timestamps: true` is set, timestamp columns/fields are added as `TS-ISO8601-<name>`. 
+During a standard scan, the monitor receives the already assembled pipeline
+row and exact scan header. Timestamp columns are therefore controlled by the
+scan-level `include_timestamps` and `timestamp_output_format` settings, and the
+monitor does not add a second set of timestamp fields.
+
+The scan-file writer performs ISO-8601 conversion outside the DAQ thread. Live
+monitor rows receive the raw POSIX timestamp values before that conversion. 
 
 ## Queue plotter monitor
 
