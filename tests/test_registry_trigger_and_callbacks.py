@@ -15,7 +15,12 @@ if "epics" not in sys.modules:
 
 import kiwi_scan
 from kiwi_scan.actuator_concrete.single_epics import EpicsActuator
-from kiwi_scan.datamodels import ActuatorConfig, PluginConfig, ScanTriggers
+from kiwi_scan.datamodels import (
+    ActuatorConfig,
+    ConfigError,
+    PluginConfig,
+    ScanTriggers,
+)
 from kiwi_scan.plugin.base import ScanPlugin
 from kiwi_scan.plugin.registry import PLUGIN_REGISTRY, create_plugin, register_plugin
 from kiwi_scan.scan.registry import SCAN_REGISTRY, load_all_scan_types
@@ -125,6 +130,36 @@ class TestScanRegistry(unittest.TestCase):
 
 
 class TestTriggerParsing(unittest.TestCase):
+    def test_trigger_action_reports_missing_value_with_config_path(self):
+        with self.assertLogs("kiwi_scan.datamodels", level="DEBUG") as logs, \
+                self.assertRaisesRegex(
+                    ConfigError,
+                    r"Invalid triggers\.before\[0\]: missing required key\(s\): "
+                    r"value.*same mapping",
+                ):
+            ScanTriggers.from_dict(
+                {
+                    "before": [
+                        {"pv": "PV:TRIGGER"},
+                        {"value": 9},
+                    ]
+                }
+            )
+
+        self.assertTrue(
+            any(
+                "Invalid trigger action at triggers.before[0]" in message
+                for message in logs.output
+            )
+        )
+
+    def test_trigger_action_must_be_mapping(self):
+        with self.assertRaisesRegex(
+            ConfigError,
+            r"Invalid triggers\.after\[0\]: expected a mapping",
+        ):
+            ScanTriggers.from_dict({"after": ["PV:TRIGGER=5"]})
+
     @patch("kiwi_scan.scan.trigger_manager.EpicsPV", FakeTriggerPV)
     def test_trigger_parsing_keeps_monitor_and_custom_phases(self):
         triggers = ScanTriggers.from_dict(

@@ -7,6 +7,10 @@ from typing import Any, Dict, List, Optional, Union
 
 logger = logging.getLogger(__name__)
 
+
+class ConfigError(ValueError):
+    """Raised when raw scan configuration data is invalid."""
+
 def filter_known_fields(cls, data: Dict[str, Any]) -> Dict[str, Any]:
     """Filter out unknown fields from a dict for a given dataclass."""
     known_fields = {f.name for f in fields(cls)}
@@ -255,9 +259,41 @@ class ScanTriggers:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "ScanTriggers":
+        if not isinstance(data, dict):
+            logger.debug("Invalid triggers block: expected mapping, got %r", data)
+            raise ConfigError("Invalid triggers: expected a mapping")
+
         def parse_action_list(key: str) -> List[TriggerAction]:
             raw = data.get(key, [])
-            return [TriggerAction(**a) for a in raw if isinstance(a, dict)]
+            path = f"triggers.{key}"
+            if not isinstance(raw, list):
+                logger.debug("Invalid trigger phase at %s: expected list, got %r", path, raw)
+                raise ConfigError(f"Invalid {path}: expected a list of mappings")
+            if raw:
+                logger.debug("Parsing trigger phase %r with %d action(s)", key, len(raw))
+
+            actions = []
+            for index, action in enumerate(raw):
+                action_path = f"{path}[{index}]"
+                if not isinstance(action, dict):
+                    logger.debug("Invalid trigger action at %s: expected mapping, got %r", action_path, action)
+                    raise ConfigError(f"Invalid {action_path}: expected a mapping")
+
+                missing = [name for name in ("pv", "value") if name not in action]
+                if missing:
+                    logger.debug("Invalid trigger action at %s: missing=%s, action=%r", action_path, missing, action)
+                    raise ConfigError(
+                        f"Invalid {action_path}: missing required key(s): "
+                        f"{', '.join(missing)}. Each trigger action must contain "
+                        "'pv' and 'value' in the same mapping."
+                    )
+
+                try:
+                    actions.append(TriggerAction(**action))
+                except TypeError as exc:
+                    logger.debug("Invalid trigger action at %s: %s", action_path, exc)
+                    raise ConfigError(f"Invalid {action_path}: {exc}") from exc
+            return actions
 
         triggers = cls(
             before=parse_action_list("before"),
@@ -265,10 +301,9 @@ class ScanTriggers:
             after=parse_action_list("after"),
             monitor=parse_action_list("monitor"),
         )
-
-        for key, raw in data.items():
+        for key in data:
             if key not in {"before", "on_point", "after", "monitor"}:
-                setattr(triggers, key, [TriggerAction(**a) for a in raw if isinstance(a, dict)])
+                setattr(triggers, key, parse_action_list(key))
 
         return triggers
 
