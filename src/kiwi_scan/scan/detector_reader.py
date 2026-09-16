@@ -35,6 +35,7 @@ class DetectorPV(Protocol):
         """Remove one callback previously returned by ``add_callback``."""
         ...
 
+
 class DetectorReadStrategy(ABC):
     """Strategy interface used by :class:`DetectorReader`."""
 
@@ -65,6 +66,8 @@ class DirectDetectorReadStrategy(DetectorReadStrategy):
 
     def start(self) -> None:
         """Direct acquisition does not own additional resources."""
+        logger.debug( "Starting direct detector acquisition: detectors=%d use_monitor=%s",
+            len(self._detector_pvs), self._use_monitor)
 
     def read(self) -> List[Any]:
         readings: List[Any] = []
@@ -74,19 +77,18 @@ class DirectDetectorReadStrategy(DetectorReadStrategy):
                     use_monitor=self._use_monitor
                 )
                 if reading is None:
-                    logger.warning("Received None for PV %s", pv.pvname)
+                    # HOT PATH (blocks scan loop)                    
+                    logger.warning("Detector read returned no data: pv=%s", pv.pvname)
                 readings.append(reading)
             except Exception as exc:  # noqa: BLE001
-                logger.error(
-                    "Failed to read metadata for PV %s, %s",
-                    pv.pvname,
-                    exc,
-                )
+                # HOT PATH (blocks scan loop)
+                logger.error("Detector read failed: pv=%s error=%s", pv.pvname, exc)
                 readings.append(None)
         return readings
 
     def stop(self) -> None:
         """Direct acquisition does not own additional resources."""
+        logger.debug("Stopped direct detector acquisition")
 
 
 class MonitorSnapshotDetectorReadStrategy(DetectorReadStrategy):
@@ -130,10 +132,12 @@ class MonitorSnapshotDetectorReadStrategy(DetectorReadStrategy):
         with self._lifecycle_lock:
             with self._lock:
                 if self._started:
+                    logger.debug("Detector snapshot acquisition already started")
                     return
                 cleanup_required = bool(self._callback_handles)
 
             if cleanup_required:
+                logger.debug("Cleaning up %d stale detector callbacks before start", len(self._callback_handles))
                 self.stop()
 
             with self._lock:
@@ -152,14 +156,21 @@ class MonitorSnapshotDetectorReadStrategy(DetectorReadStrategy):
                     with self._lock:
                         self._callback_handles.append((pv, callback_id))
             except Exception:
+                logger.exception("Detector snapshot startup failed: registered=%d detectors=%d",
+                    len(self._callback_handles), len(self._detector_pvs))
                 try:
                     self.stop()
                 except Exception:
-                    logger.exception(
-                        "Failed to clean up detector callbacks after "
-                        "startup error"
-                    )
+                    logger.exception("Failed to clean up detector callbacks after startup error")
                 raise
+
+            logger.debug(
+                "Started detector snapshot acquisition: detectors=%d "
+                "callbacks=%d generation=%d",
+                len(self._detector_pvs),
+                len(self._callback_handles),
+                generation,
+            )
 
     def read(self) -> List[Any]:
         with self._lock:
@@ -183,11 +194,7 @@ class MonitorSnapshotDetectorReadStrategy(DetectorReadStrategy):
                 try:
                     pv.remove_callback(callback_id)
                 except Exception as exc:  # noqa: BLE001
-                    logger.error(
-                        "Failed to remove detector callback for PV %s: %s",
-                        pv.pvname,
-                        exc,
-                    )
+                    logger.error("Failed to remove detector callback for PV %s: %s", pv.pvname, exc)
                     failed_handles.append((pv, callback_id))
                     if first_error is None:
                         first_error = exc
@@ -199,6 +206,8 @@ class MonitorSnapshotDetectorReadStrategy(DetectorReadStrategy):
                 raise RuntimeError(
                     "Failed to stop one or more detector callbacks"
                 ) from first_error
+
+            logger.debug("Stopped detector snapshot acquisition: callbacks=%d", len(callback_handles))
 
 
 class DetectorReader:
@@ -244,6 +253,14 @@ def create_detector_reader(
         raise ValueError(
             f"Unknown detector reader strategy {strategy_name!r}"
         )
+
+    logger.debug(
+        "Configured detector reader: strategy=%s detectors=%d "
+        "use_monitor=%s",
+        normalized,
+        len(detector_pvs),
+        use_monitor,
+    )
     return DetectorReader(strategy)
 
 
