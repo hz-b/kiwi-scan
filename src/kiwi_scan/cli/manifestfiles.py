@@ -44,6 +44,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     action_group = parser.add_mutually_exclusive_group()
     action_group.add_argument(
+        "--last-scan",
+        action="store_true",
+        help=(
+            "Print only files of scan index 0 (newest) from manifest index 0, "
+            "or from one explicit --manifest-file."
+        ),
+    )
+    action_group.add_argument(
         "--create",
         nargs="+",
         metavar="DATA_FILE",
@@ -99,6 +107,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     
     args = parser.parse_args(argv)
+
+    if args.last_scan and len(args.manifest_file) > 1:
+        parser.error("--last-scan accepts at most one --manifest-file")
     
     if args.log_level is not None:
         set_valid_logging_level(args.log_level)
@@ -165,13 +176,28 @@ def main(argv: Optional[List[str]] = None) -> int:
                 return 1
             return 0
 
+        if args.last_scan:
+            ref = resolver.select_scan_ref(str(manifests[0]), scan_index=0)
+            candidates = [ref.data_file]
+            if args.include_meta:
+                candidates.append(ref.metadata_file)
+            if args.include_manifest:
+                candidates.insert(0, ref.manifest_file)
+            files = iter(dict.fromkeys(
+                path.expanduser().resolve(strict=False)
+                for path in candidates
+                if path is not None and (args.missing or path.exists())
+            ))
+        else:
+            files = resolver.iterate_files(
+                manifests,
+                include_meta=args.include_meta,
+                include_manifest=args.include_manifest,
+                missing=args.missing,
+            )
+
         count = 0
-        for path in resolver.iterate_files(
-            manifests,
-            include_meta=args.include_meta,
-            include_manifest=args.include_manifest,
-            missing=args.missing,
-        ):
+        for path in files:
             print(path)
             count += 1
 
