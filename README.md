@@ -11,17 +11,25 @@ Results are written to timestamped text files. Optional metadata sidecars can re
 
 ## Overview of Features
 
-- **YAML configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots and plugin parameters.
-- **Pluggable scan engines** such as `linear`, `approach`, `poll`, `para`, and `cm`, plus externally registered scan types.
-- **Pluggable runtime extensions** - Plugins hook into scan logic and events that can add computed columns or act to monitor events.
-Base classes are provided for synchonous and asynchronous plugin processing.
-- **EPICS integration** via pyepics wrapper for or a **simulated actuator backend** for tests and development.
-- **Structured outputs** including the main scan file, optional metadata sidecar logging and waveform support, and post-mortem plotting tools.
-- **Event handling** - Subscriptions route monitored events into defined roles.
-- **Triggers** - Triggers run configured PV writes at named scan phases or on monitor events.
-- **IOC** - pythonSoftIOC-based generic scan IOC.
-- **Monitors** - Flexible machine readable formatted text output and live plotting tool.
-- **Data Export** - Extensible export framework for converting kiwi-scan data to external formats, with built-in support for the SPEC file format.
+-   **YAML configuration** for actuators, detectors, scan dimensions, triggers, metadata PVs/constants, subscriptions, plots, and plugin parameters.
+-   **Pluggable scan engines** such as `linear`, `approach`, `poll`, `para`, and `cm`, plus externally registered scan types.
+-   **Pluggable runtime extensions** - Plugins hook into scan logic and events and can add computed columns or act on monitor events. 
+      Base classes are provided for synchronous and asynchronous plugin processing.
+- **Column provider** framework for providing extra data from scan engines with build in statistical calculations 
+-   **Synchronized acquisition** from multiple sources, with an absolute timer fallback when no external synchronization PV is configured.
+-   **Selectable detector acquisition** using direct reads or atomic snapshots of a monitor-fed local cache.
+-   **High-rate point pipeline** that assembles provider, detector, and plugin values while ordered file output runs through a background writer via queue.
+-   **EPICS integration** via a pyepics wrapper, or a **simulated actuator backend** for tests and development.
+-   **Event handling** - Subscriptions route monitored events into defined roles.
+-   **Triggers** - Triggers run configured PV writes at named scan phases or on monitor events.
+-   **Flexible data output** with timestamped tab-separated scan files, ISO-8601 or Unix timestamps, optional per-detector timestamps, metadata sidecars, waveform support, 
+      and runtime enable/disable control.
+-   **Data Export** - Extensible export framework for converting kiwi-scan data to external formats, with built-in support for the SPEC file format.
+-   **Manifest-based file management** for grouping, listing, archiving, and deleting scan-related files, including selection of the most recent scans.
+-   **Monitoring, diagnostics, and visualization** with machine-readable console output, live and post-mortem plotting, online statistics,
+      and built-in **performance measurements**.
+-   **Control-system integration** through a generic EPICS pythonSoftIOC **scan IOC** and a **PVA server** that publishes scan data as `NTTable` structures.
+-   **Python and command-line APIs**
 
 ## Installation
 
