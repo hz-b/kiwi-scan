@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import random
 import string
@@ -13,18 +14,21 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Callable, Iterable, Iterator, Optional
 
+logger = logging.getLogger(__name__)
+
 
 class OutputManager:
-    """Own main scan-file state without owning scan orchestration.
+    """
+    Own main scan-file state without owning scan orchestration.
 
     The manager owns the output filename, lazy file creation, header state,
     runtime data-writing flag, and the lock that serializes changes to those
-    values. BaseScan remains responsible for deciding *when* metadata
-    monitoring, point persistence, and other scan lifecycle actions occur.
+    values. 
 
-    Point persistence uses :meth:`point_write`, which holds the output lock once
-    across the enabled/file/header checks and the caller's enqueue/write step.
-    Internal helpers used inside that context never reacquire the lock.
+    BaseScan remains responsible for deciding *when* metadata
+    monitoring, point persistence, and other scan lifecycle actions occur.
+    TODO: atomic file creation for multiple scan tasks
+    TODO: clean up redundant checks (header written, writing enabled etc.)
     """
 
     def __init__(
@@ -47,6 +51,9 @@ class OutputManager:
         self._output_file: Optional[str] = None
         self._header_factory = header_factory
 
+        logger.debug("Output manager initialized: data_dir=%s, requested_file=%s, writing_enabled=%s",
+            self.data_dir, self.requested_output_file, self._data_writing_enabled)
+
     @contextmanager
     def locked(self) -> Iterator[None]:
         """Serialize a BaseScan orchestration section using the output lock."""
@@ -55,13 +62,16 @@ class OutputManager:
 
     @contextmanager
     def point_write(self) -> Iterator[Optional[str]]:
-        """Prepare one point write under a single lock acquisition.
+        """
+        Prepare the output file for writing one scan point.
 
-        The returned path is ``None`` when runtime data writing is disabled.
-        Otherwise the output file exists and its header has been written before
-        control is yielded to the caller. The lock remains held until the caller
-        leaves the context, keeping runtime enable/disable changes synchronized
-        with point enqueue/write operations.
+        Only one thread may prepare or write a point at a time.
+
+        If data writing is disabled, this returns ``None`` and nothing is written.
+        Otherwise, it creates the output file when necessary and writes the header before returning the filename.
+
+        If the filename already exists, a different filename is used.
+        Data writing is locked and cannot be enabled or disabled in the middle of this operation.
         """
         with self._lock:
             if not self._data_writing_enabled:
@@ -78,6 +88,8 @@ class OutputManager:
                     raise RuntimeError("Output header factory is not configured")
                 self._write_header_unlocked(self._header_factory())
 
+            ## HOT PATH
+            #logger.debug("Point write prepared: %s", output_file)
             yield output_file
 
     def set_header_factory(
@@ -98,6 +110,7 @@ class OutputManager:
         with self._lock:
             normalized = None if path is None else str(path)
             if normalized != self._output_file:
+                logger.debug("Output file changed: old=%s, new=%s", self._output_file, normalized)
                 self._header_written = False
             self._output_file = normalized
 
@@ -116,6 +129,7 @@ class OutputManager:
         with self._lock:
             if self._data_writing_enabled == enabled:
                 return False
+            logger.debug("Runtime data writing changed: %s -> %s", self._data_writing_enabled, enabled)
             self._data_writing_enabled = enabled
             return True
 
@@ -138,8 +152,10 @@ class OutputManager:
             if not os.path.exists(new_filename):
                 with open(new_filename, "w", encoding="utf-8"):
                     pass
+                logger.debug("Created output file: %s", new_filename)
                 return new_filename
 
+            logger.info("Output filename already exists; adding a random suffix: %s", new_filename)
             random_suffix = "".join(
                 random.choices(  # nosec B311
                     string.ascii_letters + string.digits,
@@ -153,6 +169,7 @@ class OutputManager:
             if not os.path.exists(new_filename):
                 with open(new_filename, "w", encoding="utf-8"):
                     pass
+                logger.debug("Created output file: %s", new_filename)
                 return new_filename
 
     def generate_and_create_file(
@@ -189,6 +206,7 @@ class OutputManager:
         with open(output_file, "w", encoding="utf-8") as file:
             file.write("\t".join(str(header) for header in headers) + "\n")
         self._header_written = True
+        logger.debug("Wrote output header: %s", output_file)
         return output_file
 
     def write_header(self, headers: Iterable[str]) -> Optional[str]:

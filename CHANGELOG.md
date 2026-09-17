@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Added a point pipeline that owns point frames, caches, column construction.
+- Added an absolute timer to `SyncController` for scans without external `sync` subscriptions.
+- Added `detector_reader_strategy` for `direct` or atomic local-cache `snapshot` acquisition strategies.
+- Added `timestamp_output_format` for `iso8601` and `unix` time-stamp file output selection.
+- Added reusable actuator helpers: `create_actuators()`, `load_actuators()`, `run_monitors()`, and `MonitorSpec`.
+- Added the `kiwi-pva-server` cli and PVA `NTTable` (scan data) service.
+- Added --last-scan option to manifestfiles cli
+
+### Changed
+
+- Scan point data writer now runs through a background writer task.
+- Plugin columns no longer add one scan-file timestamp column per value.
+  Detector and plugin timestamps are available as raw POSIX values in the runtime point caches.
+- Plugin constructors now receive `ScanPluginContext`, a subset of the  `BaseScan` API.
+- The `cm` and `poll` scan types use a positive `steps` value as a maximum acquired-point count. 
+Non-positive values leave termination as before to motion, range, or stop conditions.
+- Cleanup: data and export APIs moved to `kiwi_scan.data` and `kiwi_scan.export`; running statistics moved to `kiwi_scan.tools`.
+- Trigger writes no longer inherit an implicit EPICS queueing delay. 
+- Avoiding timestamp formatting in the DAQ hot path.
+- Improved error handling
+
+### Fixed
+
+- CAN undulator velocities encoding in unsigned 16-bit fields.
+
+### Migration notes
+
+- Replace `kiwi_scan.dataloader` and `kiwi_scan.metadata_loader` imports with imports from `kiwi_scan.data`.
+- Replace `kiwi_scan.io` imports with imports from `kiwi_scan.export`.
+- Replace `kiwi_scan.stats` imports with imports from `kiwi_scan.tools`.
+- Plugins must use the `ScanPluginContext` protocol.
+
 ## [0.5.1] - 2026-07-30
 
 ### Added

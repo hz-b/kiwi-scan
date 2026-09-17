@@ -13,8 +13,8 @@ configured per-cycle timeout:
 2. Subscription callbacks mark received events with `note_event()`.
 3. wait until all required sync sources have updated with `wait()`
 
-Events received before a cycle is armed do not satisfy that cycle. A timeout is
-a successful fallback for its individual source; `wait()` returns `False` only
+Events received before a cycle is armed do not satisfy that cycle. 
+A timeout is a successful fallback for its individual source; `wait()` returns `False` only
 when the supplied stop event is set.
 
 ```yaml

@@ -45,7 +45,7 @@ pip install "kiwi-scan[ioc]"
 Install a specific version
 
 ```bash
-pip install "kiwi-scan[ioc]==0.4.0"
+pip install "kiwi-scan[ioc]==0.6.0"
 ```
 
 For development, clone the repository and install it in editable mode:
@@ -78,6 +78,8 @@ detector_pvs: []
 data_dir: .
 output_file: sim_scan.txt
 include_timestamps: true
+timestamp_output_format: iso8601
+detector_reader_strategy: direct
 ```
 
 Run a 5-point linear scan:
@@ -112,6 +114,9 @@ For detailed description check the kiwi scan type documentation
 Built-in performance measurement can measure scan operations.
 
 See [Performance testing](https://github.com/hz-b/kiwi-scan/blob/master/docs/performance.md)
+
+The scan point lifecycle, detector snapshot strategies, runtime caches, and
+background writer are described in the [point-pipeline documentation](https://github.com/hz-b/kiwi-scan/blob/master/docs/point-pipeline.md).
 
 ## SyncController
 
@@ -194,7 +199,7 @@ For running kiwi-scan as a generic EPICS soft IOC, see [ioc.md](https://github.c
 
 ## PVA Server
 
-kiwi-scan provides a command line tool (`kiwi-pva_server`) to start a PVA service for receiving scan data refrenced by the manifest index. See the [PVA server documentation](https://github.com/hz-b/kiwi-scan/blob/master/docs/pva_server.md).
+kiwi-scan provides a command line tool (`kiwi-pva-server`) to start a PVA service for receiving scan data referenced by the manifest index. See the [PVA server documentation](https://github.com/hz-b/kiwi-scan/blob/master/docs/pva_server.md).
 
 ## kiwi2spec Data Export
 
@@ -214,12 +219,9 @@ After installation, the command line tools are available:
 - `scantrigger_cli` - execute triggers from YAML config
 - `manifestfiles` - list, create, archive, or delete manifest-related files
 - `scanioc` - run the generic scan IOC based on pythonSoftIOC
-- `kiwi-pva_server` - run the PVA server
+- `kiwi-pva-server` - run the PVA server
 - `kiwi-convert` - convert scan data through the generic export framework
 - `kiwi2spec` - export one or more scan data files, including metadata, to SPEC
-- `scantrigger_cli`- execute triggers from YAML config
-- `manifestfiles` - a simple tool to list files referenced in manifests
-- `kiwi2spec`- export one or more scan data files, including metadata
 
 Examples:
 
@@ -231,7 +233,7 @@ scantrigger_cli --help
 pollstats_cli --help
 manifestfiles --help
 scanioc --help
-kiwi-pva_server --help
+kiwi-pva-server --help
 kiwi-convert --help
 kiwi2spec --help
 ```
@@ -270,6 +272,7 @@ User and developer documentation:
 - [PVA Server](https://github.com/hz-b/kiwi-scan/blob/master/docs/pva_server.md) - PVA server capability and command-line tool
 - [Converter](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi2spec.md) - data export
 - [Performance testing](https://github.com/hz-b/kiwi-scan/blob/master/docs/performance.md) - performance reports
+- [Point pipeline](https://github.com/hz-b/kiwi-scan/blob/master/docs/point-pipeline.md) - detector acquisition, point assembly, caches, and persistence
 - [README.md](https://github.com/hz-b/kiwi-scan/blob/master/README.md) - current readme
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hz-b/kiwi-scan)
