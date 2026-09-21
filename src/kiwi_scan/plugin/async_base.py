@@ -70,8 +70,8 @@ class AsyncScanPlugin(ScanPlugin):
             result_values = list(result_values)
             error = None
             self.logger.debug("Async plugin %s completed, %d result values", self.name, len(result_values))
-        except Exception as exc:
-            self.logger.exception("Async plugin %s processing failed", self.name)
+        except Exception as exc: # noqa: BLE001  - Framework boundary
+            self.logger.error("Async plugin %s processing failed: %s", self.name, exc)
             result_values = list(self.get_async_default_values())
             error = str(exc)
 
