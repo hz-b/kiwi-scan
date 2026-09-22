@@ -35,7 +35,7 @@ Depending on the scan type, the report can include:
 
 The report also prints non-timing diagnostics:
 
-- Dropped metata data queueed events.
+- Dropped meta-data queueed events.
 - Largest observed number of queued scan points for data writer.
 - Longest time a point waited before the writer processed it.
 

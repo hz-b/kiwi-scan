@@ -8,6 +8,8 @@ Loading order:
 1. Built-in
 2. Optional
 
+### TODO: 3. support package directories (my_plugin/__init__.py plus sibling modules)
+
 __all__:
 - Plugin classes register themselves via decorators at import time.
 - If a module is not imported, its class is not registered.

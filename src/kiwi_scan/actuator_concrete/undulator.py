@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import logging
-from typing import Sequence
+from typing import Optional, Sequence
 
 from kiwi_scan.actuator.multi import MultiActuator
 from kiwi_scan.actuator.single import AbstractActuator
@@ -13,14 +13,15 @@ logger = logging.getLogger(__name__)
 
 class UndulatorViaEPICS(MultiActuator):
     """
-    Gap/Shift of undulator (2-axis).
+    Gap/Shift undulator; axis2 may be None for a gap-only device.
+    The jog protocol still uses two slots, with zero in the disabled shift slot.
     """
 
     def __init__(self,
                  axis1: AbstractActuator,
-                 axis2: AbstractActuator,
+                 axis2: Optional[AbstractActuator],
                  config: ActuatorConfig):
-        super().__init__([axis1, axis2], config)
+        super().__init__([axis1] if axis2 is None else [axis1, axis2], config)
         self._axis1 = axis1
         self._axis2 = axis2
 
@@ -42,7 +43,7 @@ class UndulatorViaEPICS(MultiActuator):
 
     @property
     def pvname(self) -> Sequence[str]:
-        return [self._axis1.pvname, self._axis2.pvname]
+        return [axis.pvname for axis in self._axes]
 
     def run_move(self,
                  positions: Sequence[float],
@@ -98,6 +99,8 @@ class UndulatorViaEPICS(MultiActuator):
     def jog(self, velocities: Sequence[float], sync: bool = True) -> None:
         if len(velocities) != 2:
             raise ValueError("Undulator needs two velocities (gap, shift)")
+        if self._axis2 is None and velocities[1] != 0.0:
+            raise ValueError("Gap-only undulator requires zero shift velocity")
         logger.info(f"Velocities: {velocities}")
         ok = self._write_jog_velocities(velocities)
         if not ok:

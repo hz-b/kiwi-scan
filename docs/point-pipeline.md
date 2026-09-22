@@ -4,7 +4,7 @@ The point pipeline coordinates the per-point data flow:
 
 - point snapshots 
 - frame construction 
-- through provider and plugin values
+- provider and plugin values
 - file writing. 
 
 It keeps data acquisition and file I/O out of the high-rate scan loop.
