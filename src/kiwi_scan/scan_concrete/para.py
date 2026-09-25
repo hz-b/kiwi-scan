@@ -4,9 +4,8 @@
 """
 Parasitical step-scan engine.
 
-This scan engine does not command actuator motion. It observes externally
-moved actuators and records one scan point whenever all configured actuators
-are inside their scan ranges and all actuators report ready.
+This scan engine does not command actuator motion. 
+It observes externally moved actuators and records one scan point per status cycle
 """
 
 from __future__ import annotations
@@ -60,14 +59,10 @@ class ParaScan(BaseScan):
         self.register_subscription_role("plugin", self.event_handler.on_plugin_event)
         
         self._maxindex = 0
-        if self.scan_dimensions:
-            self._maxindex = self.scan_dimensions[0].steps
+        self._maxindex = self.scan_dimensions[0].steps
 
         # Generic provider columns: one stats group per stat subscription.
-        self.stats_collector = StatsCollector(
-            getattr(self.cfg, "subscriptions", None) or [],
-            role="stat",
-        )
+        self.stats_collector = StatsCollector(self.cfg.subscriptions, role="stat")
         self.add_column_provider(self.stats_collector)
 
         self._last_position_snapshot: Dict[str, Any] = {}
@@ -185,7 +180,9 @@ class ParaScan(BaseScan):
         return False
 
     def _wait_cycle(self) -> None:
-        """Wait for heartbeat/sync events or fall back to the configured sample time."""
+        """ 
+        TODO: remove obsolete heartbeat logic and replace by sync role 
+        Wait for heartbeat/sync events or fall back to the configured sample time."""
         self._arm_sync_controller()
         if self._stop_requested.is_set():
             return
