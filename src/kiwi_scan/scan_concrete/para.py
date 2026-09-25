@@ -33,14 +33,8 @@ class ParaScan(BaseScan):
     external process or operator to move one or more configured actuators,
     then waits until all actuators report ready before acquiring a scan point.
 
-    Once a point is stable, the scan runs the same per-point acquisition
-    pipeline used by LinearScan: triggers, detector reads, plugin processing,
-    monitor updates, statistics, and file writing.
-
-    Each scan point is recorded from the current actuator readbacks. The first
-    configured scan dimension remains the canonical ``Position`` column for
-    compatibility with existing writers, while the full actuator readback state
-    remains available on the scan object for plugins and runtime consumers.
+    The scan runs the same per-point acquisition pipeline used by LinearScan: 
+    triggers, detector reads, plugin processing, monitor updates, statistics, and file writing.
 
     In practice, the scan cycles as follows:
       1. wait for external motion
@@ -81,19 +75,9 @@ class ParaScan(BaseScan):
     def _on_stat_event(self, ev: PvEvent, subscription: SubscriptionConfig) -> None:
         """Record stat events and feed the per-subscription StatsCollector."""
 
-        self.stats_collector.update(
-            ev,
-            subscription,
-            collect=bool(getattr(self, "_daq_is_on", False)),
-        )
+        self.stats_collector.update(ev, subscription, collect=self._daq_is_on)
+        logger.debug("[stat] %s=%r daq=%s sub=%s", ev.pvname, ev.value, self._daq_is_on, subscription.name)
 
-        logger.debug(
-            "[stat] %s=%r daq=%s sub=%s",
-            ev.pvname,
-            ev.value,
-            getattr(self, "_daq_is_on", False),
-            subscription.name,
-        )
 
     @staticmethod
     def _dim_in_range(dim, value: Any) -> bool:
@@ -137,8 +121,7 @@ class ParaScan(BaseScan):
         tolerances: Dict[str, float] = {}
         for dim in self.scan_dimensions:
             span = abs(float(dim.stop) - float(dim.start))
-            # Prefer a tiny fraction of the configured range.  For degenerate
-            # ranges fall back to a conservative absolute tolerance.
+            # TODO: yaml interface, handle tiny fraction of range for now
             tolerances[dim.actuator] = max(span * 1e-9, 1e-12)
         return tolerances
 
@@ -187,7 +170,7 @@ class ParaScan(BaseScan):
         snapshot: Dict[str, Any],
         range_exits: Dict[str, RangeExitDetector],
     ) -> bool:
-        """Return True once an already-entered actuator range is left past its stop."""
+        """ Return True once an already-entered actuator range is left past its stop."""
         for dim in self.scan_dimensions:
             value = snapshot.get(dim.actuator)
             if value is None:
@@ -231,23 +214,13 @@ class ParaScan(BaseScan):
     ) -> bool:
         """Return whether a ready snapshot represents a new external step."""
         if not self._all_actuators_ready():
-            logger.debug(
-                "Actuators in range but not ready yet: %s",
-                snapshot,
-            )
+            logger.debug("Actuators in range but not ready yet: %s", snapshot)
             return False
 
-        if self._position_changed(
-            snapshot,
-            self._last_position_snapshot,
-            tolerances,
-        ):
+        if self._position_changed(snapshot, self._last_position_snapshot, tolerances):
             return True
 
-        logger.debug(
-            "Skipping duplicate ready position snapshot: %s",
-            snapshot,
-        )
+        logger.debug( "Skipping duplicate ready position snapshot: %s", snapshot)
         return False
 
     def _wait_for_external_motion(self) -> bool:
@@ -323,25 +296,18 @@ class ParaScan(BaseScan):
 
             with self.performance.time_block("read_detectors", idx=index):
                 vals = self.read_detectors()
+
             with self.performance.time_block("update_row_cache", idx=index):
-                self._begin_point_frame(
-                    idx=index,
-                    pos=current_position,
-                    values=vals,
-                )
+                self._begin_point_frame(idx=index, pos=current_position, values=vals)
 
             with self.performance.time_block("triggers:after_point", idx=index):
                 self._fire_triggers("after_point")
 
             with self.performance.time_block("plugins", idx=index):
-                plugin_data = self._collect_plugin_point_data(
-                    index,
-                    current_position,
-                )
-            monitor_values = vals + plugin_data
+                self._collect_plugin_point_data( index, current_position)
 
             with self.performance.time_block("write:data", idx=index):
-                self._commit_point_async(current_position, vals)
+                monitor_values = self._commit_point_async(current_position, vals)
 
             with self.performance.time_block("monitor:update", idx=index):
                 if monitor is not None:

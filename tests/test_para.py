@@ -391,6 +391,8 @@ class TestParaScanAcquisition(ParaScanTestCase):
         plugin.get_headers.return_value = ["PluginValue"]
         scan.plugins = [plugin]
         monitor = Mock()
+        completed_row = [2.5, 123.0, 10.0, 20.0]
+        scan._commit_point_async.return_value = completed_row
 
         scan._acquire_point(3, {"motor": 2.0}, monitor)
 
@@ -416,7 +418,7 @@ class TestParaScanAcquisition(ParaScanTestCase):
             2.5,
             [10.0],
         )
-        monitor.update.assert_called_once_with([10.0, 20.0])
+        monitor.update.assert_called_once_with(completed_row)
         self.assertFalse(scan._daq_is_on)
 
     def test_acquire_point_clears_daq_flag_when_detector_read_fails(self):
