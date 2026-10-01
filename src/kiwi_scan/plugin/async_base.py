@@ -58,6 +58,7 @@ class AsyncScanPlugin(ScanPlugin):
             async_job = self._async_job
 
         if async_job is None:
+            self.logger.debug("Async plugin %s has no pending job", self.name)
             return
         if not async_job.done():
             self.logger.debug("Async plugin %s has no finished result yet", self.name)
@@ -95,10 +96,10 @@ class AsyncScanPlugin(ScanPlugin):
                 self.logger.debug("Async plugin %s closed, ignore submission", self.name)
                 return
 
-            busy = self._async_job is not None and not self._async_job.done()
-            if busy:
+            # until the result  is collected by _update_async_data()
+            if self._async_job is not None:
                 self._dropped_snapshots += 1
-                self.logger.debug("Async plugin %s dropped snapshot: idx=%s - job still running", self.name, idx)
+                self.logger.debug("Async plugin %s dropped snapshot: idx=%s - previous job not collected", self.name, idx)
                 return
 
             self._async_job = self._async_executor.submit(self.process_data_snapshot, data_snapshot)
