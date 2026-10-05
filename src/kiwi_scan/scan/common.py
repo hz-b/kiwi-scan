@@ -327,6 +327,7 @@ class BaseScan(ScanABC):
             )
             logger.debug("Created detector PV: %s", pvname)
             self.detector_pvs.append(pv)
+        logger.info("PVs connected: %d", len(self.detector_pvs))
         self._detector_reader: DetectorReader = create_detector_reader(
             self.cfg.detector_reader_strategy,
             self.detector_pvs,
