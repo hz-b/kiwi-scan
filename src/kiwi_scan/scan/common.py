@@ -799,7 +799,6 @@ class BaseScan(ScanABC):
         """Initialize services required by a scan."""
         self.write_header_to_output_file()
         self._start_detector_reader()
-        self._detector_reader.start()
         self._start_plugins()
         self._start_subscriptions()
         logger.debug("Actuators: %s, positions: %s", list(self.actuators), positions)
