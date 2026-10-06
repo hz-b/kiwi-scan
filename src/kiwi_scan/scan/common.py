@@ -178,7 +178,7 @@ class BaseScan(ScanABC):
             get_plugins=lambda: tuple(self.plugins),
             performance_enabled=lambda: self.performance.enabled,
             record_perf_sample=self.performance.record_sample,
-            writer_queue_size=1024,
+            writer_queue_size=1024,    # TODO: optimal size
         )
         self.output_manager.set_header_factory(self._point_pipeline.build_output_headers)
 
