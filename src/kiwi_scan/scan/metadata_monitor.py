@@ -42,7 +42,6 @@ class MetadataCAMonitor:
         self._dropped_events = 0
         self._last_drop_warning_monotonic = 0.0
 
-    # ---------- public API ----------
     def start(self) -> None:
         if not self._pvspecs and not self._constants:
             logger.info("MetadataCAMonitor: nothing to start (no PVs/constants).")
