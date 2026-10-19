@@ -120,10 +120,13 @@ class SubscriptionManager:
         event: PvEvent,
         subscription: SubscriptionConfig,
     ) -> None:
-        """Dispatch one subscription event to the registered role handler."""
+        """
+        Dispatch one subscription event to the registered role handler.
+        Events for a role with no handler are dropped. 
+        """
         handler = self._role_handlers.get(role)
         if handler is None:
-            logger.debug("No handler registered for subscription role '%s' (subscription '%s')", role, subscription.name)
+            logger.warning("No handler registered for subscription role '%s' (subscription '%s')", role, subscription.name)
             return
 
         handler(event, subscription)

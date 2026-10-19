@@ -38,8 +38,9 @@ class ParaScan(BaseScan):
     In practice, the scan cycles as follows:
       1. wait for external motion
       2. wait until all configured actuators are ready
-      3. execute the normal DAQ point pipeline
-      4. return to the wait state for the next externally initiated step
+      3. wait for subscriptions (data sync)
+      4. execute the normal DAQ point pipeline
+      5. return to the wait state for the next externally initiated step
     """
 
     def __init__(self, config: ScanConfig, data_dir: Optional[str] = None):
@@ -57,7 +58,7 @@ class ParaScan(BaseScan):
         self.register_subscription_role("stop", self.event_handler.on_stop_event)
         self.register_subscription_role("trigger", self.event_handler.on_trigger_event)
         self.register_subscription_role("plugin", self.event_handler.on_plugin_event)
-        # TODO: sync subscription handling        
+        self.register_subscription_role("sync", self.event_handler.on_sync_event)
         self._maxindex = 0
         self._maxindex = self.scan_dimensions[0].steps
 
@@ -76,6 +77,10 @@ class ParaScan(BaseScan):
 
     @staticmethod
     def _dim_in_range(dim, value: Any) -> bool:
+        """ 
+        - True if in range
+        - start==stop means infinite range and returns True
+        """
         if value is None:
             return False
         try:
@@ -86,6 +91,7 @@ class ParaScan(BaseScan):
 
         start = float(dim.start)
         stop = float(dim.stop)
+        if start == stop: return True
         return start <= pos <= stop if start <= stop else stop <= pos <= start
 
     @staticmethod
@@ -365,7 +371,7 @@ class ParaScan(BaseScan):
 
                 self._acquire_point(index, snapshot, monitor)
                 index += 1
-                if index >= self._maxindex:
+                if 0 < self._maxindex <= index:
                     break
 
                 if not self._wait_for_external_motion():
