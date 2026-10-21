@@ -17,6 +17,12 @@ class MultiActuator(AbstractActuator):
         super().__init__(config)
         self._axes = list(actuators)
 
+    def set_queueing_delay(self, delay: float) -> None:
+        """Explicitly override command delays for this group and its children."""
+        super().set_queueing_delay(delay)
+        for axis in self._axes:
+            axis.set_queueing_delay(self.q_delay)
+
     @property
     def pvname(self) -> Sequence[str]:
         return [ax.pvname for ax in self._axes]

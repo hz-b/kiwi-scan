@@ -5,7 +5,7 @@ import logging
 from typing import Optional, Sequence
 
 from kiwi_scan.actuator.multi import MultiActuator
-from kiwi_scan.actuator.single import AbstractActuator
+from kiwi_scan.actuator.single import AbstractActuator, _close_created_pvs
 from kiwi_scan.datamodels import ActuatorConfig
 from kiwi_scan.epics_wrapper import EpicsPV
 
@@ -25,21 +25,39 @@ class UndulatorViaEPICS(MultiActuator):
         self._axis1 = axis1
         self._axis2 = axis2
 
-        jog_cfg = self.config.jog
-        if jog_cfg is not None:
-            self.jog_velocity_pv = (
-                EpicsPV(jog_cfg.velocity_pv)
-                if jog_cfg.velocity_pv
-                else None
-            )
-            self.jog_command_pv = (
-                EpicsPV(jog_cfg.command_pv)
-                if jog_cfg.command_pv
-                else None
-            )
-        else:
-            self.jog_velocity_pv = None
-            self.jog_command_pv = None
+        created_pvs = []
+
+        def create_pv(pvname: str, **kwargs):
+            pv = EpicsPV(pvname, **kwargs)
+            created_pvs.append(pv)
+            return pv
+
+        try:
+            jog_cfg = self.config.jog
+            if jog_cfg is not None:
+                self.jog_velocity_pv = (
+                    create_pv(jog_cfg.velocity_pv, queueing_delay=self.q_delay)
+                    if jog_cfg.velocity_pv
+                    else None
+                )
+                self.jog_command_pv = (
+                    create_pv(jog_cfg.command_pv, queueing_delay=self.q_delay)
+                    if jog_cfg.command_pv
+                    else None
+                )
+            else:
+                self.jog_velocity_pv = None
+                self.jog_command_pv = None
+        except BaseException:
+            _close_created_pvs(created_pvs)
+            raise
+
+    def set_queueing_delay(self, delay: float) -> None:
+        """Set child delays and the shared EPICS/CAN output-PV delays."""
+        super().set_queueing_delay(delay)
+        for pv in (self.jog_velocity_pv, self.jog_command_pv):
+            if pv is not None:
+                pv.queueing_delay = self.q_delay
 
     @property
     def pvname(self) -> Sequence[str]:
@@ -101,12 +119,13 @@ class UndulatorViaEPICS(MultiActuator):
             raise ValueError("Undulator needs two velocities (gap, shift)")
         if self._axis2 is None and velocities[1] != 0.0:
             raise ValueError("Gap-only undulator requires zero shift velocity")
-        logger.info(f"Velocities: {velocities}")
+        logger.debug("Jog speed multipliers: %s", velocities)
         ok = self._write_jog_velocities(velocities)
         if not ok:
             raise RuntimeError(f"Failed to write jog velocities {velocities}.")
 
-        self._write_jog_command(velocities)
+        if not self._write_jog_command(velocities):
+            raise RuntimeError("Failed to write undulator jog start command")
 
         if sync:
             logger.debug("Jog sync=True: no sync implementation (override if needed)")

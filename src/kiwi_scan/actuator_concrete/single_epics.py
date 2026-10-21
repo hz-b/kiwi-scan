@@ -6,7 +6,11 @@ import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from kiwi_scan.actuator.single import AbstractActuator, MonitorCallback
+from kiwi_scan.actuator.single import (
+    AbstractActuator,
+    MonitorCallback,
+    _close_created_pvs,
+)
 from kiwi_scan.datamodels import ActuatorConfig
 from kiwi_scan.epics_wrapper import EpicsPV
 
@@ -20,40 +24,64 @@ class EpicsActuator(AbstractActuator):
     def __init__(self, config: ActuatorConfig):
         super().__init__(config)
 
-        self.pv = EpicsPV(config.pv) if config.pv else None
-        self.ca_timeout = config.ca_timeout if config.ca_timeout else 1.0
-        self.auto_monitor = config.auto_monitor 
-        logger.debug(f"Actuator CA settings:  ca_timeout: {self.ca_timeout}, auto_monitor: {self.auto_monitor}")
-        self.rel_pv = EpicsPV(config.rel_pv) if config.rel_pv else None
-        self.rb_pv = EpicsPV(config.rb_pv, auto_monitor=self.auto_monitor, queueing_delay=0.0) if config.rb_pv else None
-        self.cmd_pv = EpicsPV(config.cmd_pv) if config.cmd_pv else None
-        self.cmdvel_pv = EpicsPV(config.cmdvel_pv) if config.cmdvel_pv else None
-        self.start_pv = EpicsPV(config.start_pv) if config.start_pv else None
-        self.stop_pv = EpicsPV(config.stop_pv) if config.stop_pv else None
-        self.status_pv = EpicsPV(config.status_pv, auto_monitor=self.auto_monitor, queueing_delay=0.0) if config.status_pv else None
-        self.velocity_pv = EpicsPV(config.velocity_pv) if config.velocity_pv else None
-        self.get_velocity_pv = EpicsPV(config.get_velocity_pv) if config.get_velocity_pv else None
-        # pvname -> list of callback indices (pyepics returns an int id per add_callback)
-        self._epics_cb_indices: Dict[str, List[int]] = {}
+        created_pvs = []
 
-        jog_cfg = self.config.jog
-        if jog_cfg:
-            self.jog_velocity_pv = EpicsPV(jog_cfg.velocity_pv) if jog_cfg.velocity_pv else None
-            self.jog_command_pv = EpicsPV(jog_cfg.command_pv) if jog_cfg.command_pv else None
+        def create_pv(pvname: str, **kwargs):
+            pv = EpicsPV(pvname, **kwargs)
+            created_pvs.append(pv)
+            return pv
 
-        # Config parameters
-        self.in_pos_band = config.in_position_band
-        self.dwell_time = config.dwell_time
-        self.ready_value = config.ready_value
-        self.ready_bitmask = config.ready_bitmask
-        self.q_delay = config.queueing_delay
-        self.startup_timeout = config.startup_timeout
-        self.backlash = config.backlash
-        self.velocity = config.velocity
-        self.start_command = config.start_command
+        try:
+            self.pv = create_pv(config.pv, queueing_delay=self.q_delay) if config.pv else None
+            self.ca_timeout = config.ca_timeout if config.ca_timeout else 1.0
+            self.auto_monitor = config.auto_monitor 
+            logger.debug(f"Actuator CA settings:  ca_timeout: {self.ca_timeout}, auto_monitor: {self.auto_monitor}")
+            self.rel_pv = create_pv(config.rel_pv, queueing_delay=self.q_delay) if config.rel_pv else None
+            self.rb_pv = create_pv(config.rb_pv, auto_monitor=self.auto_monitor, queueing_delay=0.0) if config.rb_pv else None
+            self.cmd_pv = create_pv(config.cmd_pv, queueing_delay=self.q_delay) if config.cmd_pv else None
+            self.cmdvel_pv = create_pv(config.cmdvel_pv, queueing_delay=self.q_delay) if config.cmdvel_pv else None
+            self.start_pv = create_pv(config.start_pv, queueing_delay=self.q_delay) if config.start_pv else None
+            self.stop_pv = create_pv(config.stop_pv, queueing_delay=self.q_delay) if config.stop_pv else None
+            self.status_pv = create_pv(config.status_pv, auto_monitor=self.auto_monitor, queueing_delay=0.0) if config.status_pv else None
+            self.velocity_pv = create_pv(config.velocity_pv, queueing_delay=self.q_delay) if config.velocity_pv else None
+            self.get_velocity_pv = create_pv(config.get_velocity_pv) if config.get_velocity_pv else None
+            # pvname -> list of callback indices (pyepics returns an int id per add_callback)
+            self._epics_cb_indices: Dict[str, List[int]] = {}
 
-        # Validate PV connections
-        self._check_pvs()
+            self.jog_velocity_pv = None
+            self.jog_command_pv = None
+            jog_cfg = self.config.jog
+            if jog_cfg:
+                self.jog_velocity_pv = create_pv(jog_cfg.velocity_pv, queueing_delay=self.q_delay) if jog_cfg.velocity_pv else None
+                self.jog_command_pv = create_pv(jog_cfg.command_pv, queueing_delay=self.q_delay) if jog_cfg.command_pv else None
+
+            # Config parameters
+            self.in_pos_band = config.in_position_band
+            self.dwell_time = config.dwell_time
+            self.ready_value = config.ready_value
+            self.ready_bitmask = config.ready_bitmask
+            self.q_delay = config.queueing_delay
+            self.startup_timeout = config.startup_timeout
+            self.backlash = config.backlash
+            self.velocity = config.velocity
+            self.start_command = config.start_command
+
+            # Validate PV connections
+            self._check_pvs()
+        except BaseException:
+            _close_created_pvs(created_pvs)
+            raise
+
+    def set_queueing_delay(self, delay: float) -> None:
+        """Update actuator pacing and every owned command-PV put delay."""
+        super().set_queueing_delay(delay)
+        for pv in (
+            self.pv, self.rel_pv, self.cmd_pv, self.cmdvel_pv,
+            self.start_pv, self.stop_pv, self.velocity_pv,
+            self.jog_velocity_pv, self.jog_command_pv,
+        ):
+            if pv is not None:
+                pv.queueing_delay = self.q_delay
 
     # --------------------- monitor backend ---------------------------------
     def supports_monitors(self) -> bool:

@@ -2,14 +2,30 @@
 # SPDX-License-Identifier: MIT
 
 import logging
+import math
 import threading
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Mapping, Optional
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence
 
 from kiwi_scan.datamodels import ActuatorConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _close_created_pvs(pvs: Sequence[Any]) -> None:
+    """Release only channels successfully created by a failed constructor."""
+    for pv in reversed(pvs):
+        try:
+            close = getattr(pv, "close", None)
+            if not callable(close):
+                close = getattr(pv, "disconnect", None)
+            if callable(close):
+                close()
+        except Exception:
+            # Cleanup must not replace the original construction error.
+            logger.debug("Failed to release a partially initialized PV", exc_info=True)
+
 
 @dataclass(frozen=True)
 class PvEvent:
@@ -56,6 +72,18 @@ class AbstractActuator(ABC):
         self._monitor_callbacks: Dict[str, list[MonitorCallback]] = {}
         self._last_events: Dict[str, PvEvent] = {}
         self._monitor_lock = threading.RLock()
+
+    def set_queueing_delay(self, delay: float) -> None:
+        """Set the runtime command delay in seconds.
+
+        Configure delays before starting commands. Backends override this
+        method to update their already-created output channels as well.
+        """
+        delay = float(delay)
+        if not math.isfinite(delay) or delay < 0.0:
+            raise ValueError("queueing_delay must be finite and non-negative")
+        self.q_delay = delay
+        logger.debug("%s queueing delay set to %.6g s", type(self).__name__, delay)
 
     # --------------------- monitor/event helpers ----------------------------
 
