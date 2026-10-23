@@ -214,8 +214,12 @@ class AbstractActuator(ABC):
         """Relative move, optionally waiting for startup or completion."""
 
     @abstractmethod
-    def jog(self, velocity: float, sync: bool = True) -> None:
-        """Continuous jog at given velocity."""
+    def jog(self, velocity: float, sync: bool = True) -> Optional[bool]:
+        """
+        Return values:
+        ``False`` reports a rejected command. Legacy backends may return
+        ``None`` on success; communication errors may also raise exceptions.
+        """
 
     @abstractmethod
     def is_ready(self) -> bool:

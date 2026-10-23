@@ -174,7 +174,55 @@ class UndulatorViaCAN(UndulatorViaEPICS):
             logger.error("No jog_command_pv configured for this UndulatorViaCAN")
             return False
 
+class UndulatorViaAxes(MultiActuator):
+    """
+    Write CAN-scaled speed multipliers through individual axis jog PVs.
+    Outputs one or two normalized multipliers (gap, shift) in the range 0..65535
+    """
+
+    def __init__(
+        self,
+        axis1: AbstractActuator,
+        axis2: Optional[AbstractActuator],
+        config: ActuatorConfig,
+    ):
+        super().__init__([axis1] if axis2 is None else [axis1, axis2], config)
+        self._axis1 = axis1
+        self._axis2 = axis2
+        self._axis_names = ("gap",) if axis2 is None else ("gap", "shift")
+        for name, axis in zip(self._axis_names, self._axes):
+            jog_cfg = axis.config.jog
+            if jog_cfg is None or not jog_cfg.velocity_pv:
+                raise ValueError(name + ".jog.velocity_pv is required for subtype axes")
+            logger.debug(
+                "Undulator axis %s: jog velocity PV=%s, command PV=%s, scale=%d",
+                name, jog_cfg.velocity_pv, jog_cfg.command_pv, 0xFFFF,
+            )
+
+    def jog(self, velocities: Sequence[float], sync: bool = True) -> None:
+        """ Write all enabled axes """
+        if len(velocities) != 2:
+            raise ValueError("Undulator needs two velocities (gap, shift)")
+        if self._axis2 is None and velocities[1] != 0.0:
+            raise ValueError("Gap-only undulator requires zero shift velocity")
+
+        # Validate BOTH, invalid shift must not leave only the gap updated.
+        encoded = []
+        for value in velocities:
+            if not 0.0 <= value <= 1.0:
+                raise ValueError("Speed multiplier must be between 0.0 and 1.0, got " + str(value))
+            encoded.append(round(value * 0xFFFF))
+
+        logger.debug("Per-axis jog multipliers %s -> %s", velocities, encoded)
+        for name, axis, value in zip(self._axis_names, self._axes, encoded):
+            if axis.jog(value, sync=False) is False:
+                raise RuntimeError("Failed to write " + name + " jog output")
+        if sync:
+            logger.debug("Jog sync=True: per-axis output writes do not wait for motion")
+
+
 UNDULATOR_TYPES = {
     "epics": UndulatorViaEPICS,
     "can": UndulatorViaCAN,
+    "axes": UndulatorViaAxes,
 }

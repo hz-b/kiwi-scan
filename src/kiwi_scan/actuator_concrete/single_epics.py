@@ -407,37 +407,38 @@ class EpicsActuator(AbstractActuator):
     def rel_move(self, delta: float) -> None:
         self._issue_rel_move(delta)
 
-    def jog(self, velocity: float, sync: bool = True) -> None:
-        
-        logger.info(f"Jog with velocity {velocity}")
-
+    def jog(self, velocity: float, sync: bool = True) -> bool:
+        """Write jog settings, returning False if an output write fails."""
+        logger.debug("Jog with velocity %s", velocity)
         jog_cfg = self.config.jog
-        logger.info(f"jog_cfg = {jog_cfg}")
         if not jog_cfg:
             raise ValueError("Jog feature is not configured for this actuator")
         
         # 1) If a velocity PV is provided, write the desired velocity
-        if self.jog_velocity_pv:
+        if self.jog_velocity_pv is not None:
             if jog_cfg.abs_velocity:
                 cmd_velocity = abs(velocity)
             else:
                 cmd_velocity = velocity
             success = self.jog_velocity_pv.put(cmd_velocity)
             if not success:
-                logger.error(f"Failed to set velocity via {self.jog_velocity_pv.pvname}")
+                logger.error("Failed to set velocity via %s", self.jog_velocity_pv.pvname)
+                return False
         
         # 2) If a command PV is provided, determine the command value
-        if self.jog_command_pv:
+        if self.jog_command_pv is not None:
             if jog_cfg.command_pos is not None and jog_cfg.command_neg is not None:
                 cmd = jog_cfg.command_pos if velocity >= 0 else jog_cfg.command_neg
             else:
-                # single-command mode: any nonzero velocity triggers same command
-                cmd = jog_cfg.command_pos or 1.0
+                # configured command value: zero
+                cmd = jog_cfg.command_pos if jog_cfg.command_pos is not None else 1.0
             success = self.jog_command_pv.put(cmd)
             if not success:
-                logger.error(f"Failed to set {self.jog_command_pv.pvname}")
+                logger.error("Failed to set %s", self.jog_command_pv.pvname)
+                return False
         if sync:
             self.wait_for_startup_and_done()
+        return True
     
     def _read_status_value(self) -> Optional[Any]:
         """Read the status PV using monitor cache with one CA fallback poll."""

@@ -524,7 +524,7 @@ class TestEpicsActuatorJog(EpicsActuatorTestCase):
         self.assertEqual(actuator.jog_velocity_pv.put_calls, [3.5, 2.0])
         self.assertEqual(actuator.jog_command_pv.put_calls, [-1, 1])
 
-    def test_jog_supports_signed_velocity_and_single_command(self):
+    def test_jog_supports_signed_velocity_and_zero_command(self):
         actuator = self.make_actuator(
             jog=JogConfig(
                 velocity_pv="MOTOR:JOGVELO",
@@ -533,12 +533,13 @@ class TestEpicsActuatorJog(EpicsActuatorTestCase):
             )
         )
 
-        actuator.jog(-2.0, sync=False)
+        result = actuator.jog(-2.0, sync=False)
 
+        self.assertIs(result, True)
         self.assertEqual(actuator.jog_velocity_pv.put_calls, [-2.0])
-        self.assertEqual(actuator.jog_command_pv.put_calls, [1.0])
+        self.assertEqual(actuator.jog_command_pv.put_calls, [0])
 
-    def test_jog_failures_are_logged_and_sync_waits(self):
+    def test_jog_velocity_failure_is_logged_and_skips_command_and_wait(self):
         actuator = self.make_actuator(
             jog=JogConfig(
                 velocity_pv="MOTOR:JOGVELO",
@@ -552,10 +553,65 @@ class TestEpicsActuatorJog(EpicsActuatorTestCase):
         with self.assertLogs(MODULE, level="ERROR") as captured, patch.object(
             actuator, "wait_for_startup_and_done"
         ) as wait:
-            actuator.jog(1.0)
+            result = actuator.jog(1.0)
 
-        self.assertEqual(len(captured.output), 2)
+        self.assertIs(result, False)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("MOTOR:JOGVELO", captured.output[0])
+        self.assertEqual(actuator.jog_velocity_pv.put_calls, [1.0])
+        self.assertEqual(actuator.jog_command_pv.put_calls, [])
+        wait.assert_not_called()
+
+    def test_jog_command_failure_is_logged_and_skips_wait(self):
+        actuator = self.make_actuator(
+            jog=JogConfig(
+                velocity_pv="MOTOR:JOGVELO",
+                command_pv="MOTOR:JOG",
+                command_pos=1,
+            )
+        )
+        actuator.jog_command_pv.put_result = False
+
+        with self.assertLogs(MODULE, level="ERROR") as captured, patch.object(
+            actuator, "wait_for_startup_and_done"
+        ) as wait:
+            result = actuator.jog(1.0)
+
+        self.assertIs(result, False)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("Failed to set MOTOR:JOG", captured.output[0])
+        self.assertEqual(actuator.jog_velocity_pv.put_calls, [1.0])
+        self.assertEqual(actuator.jog_command_pv.put_calls, [1])
+        wait.assert_not_called()
+
+    def test_jog_success_returns_true_and_sync_waits(self):
+        actuator = self.make_actuator(
+            jog=JogConfig(
+                velocity_pv="MOTOR:JOGVELO",
+                command_pv="MOTOR:JOG",
+                command_pos=1,
+            )
+        )
+
+        with patch.object(actuator, "wait_for_startup_and_done") as wait:
+            result = actuator.jog(1.0)
+
+        self.assertIs(result, True)
+        self.assertEqual(actuator.jog_velocity_pv.put_calls, [1.0])
+        self.assertEqual(actuator.jog_command_pv.put_calls, [1])
         wait.assert_called_once_with()
+
+    def test_jog_defaults_command_only_when_unspecified(self):
+        actuator = self.make_actuator(
+            jog=JogConfig(
+                velocity_pv="MOTOR:JOGVELO",
+                command_pv="MOTOR:JOG",
+                command_pos=None,
+            )
+        )
+
+        self.assertIs(actuator.jog(1.0, sync=False), True)
+        self.assertEqual(actuator.jog_command_pv.put_calls, [1.0])
 
 
 class TestEpicsActuatorStatus(EpicsActuatorTestCase):
