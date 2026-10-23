@@ -177,7 +177,7 @@ class TestParaScanInitialization(ParaScanTestCase):
         ]
         self.assertEqual(
             registered_roles,
-            ["heartbeat", "stat", "status", "stop", "trigger", "plugin"],
+            ["heartbeat", "stat", "status", "stop", "trigger", "plugin", "sync"],
         )
 
     def test_stat_event_only_collects_during_daq(self):
