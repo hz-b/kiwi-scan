@@ -7,7 +7,7 @@ import logging
 import os
 import signal
 import sys
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import kiwi_scan
 from kiwi_scan.data.manifestwriter import ManifestWriter
@@ -143,29 +143,38 @@ def _safe_load_config_index(config_dir: str) -> dict:
     except FileNotFoundError:
         return {}
 
-def main():
-
-    config_dir = os.environ.get("KIWI_SCAN_CONFIG_DIR", get_scan_config_dir())
+def main(argv: Optional[List[str]] = None) -> int:
     data_dir = os.environ.get("KIWI_SCAN_DATA_DIR")
 
-    # manifest first (optional single argument)
-    pre_parser = argparse.ArgumentParser(add_help=False)
-    pre_parser.add_argument("--newmanifest", nargs="?", const=True, default=None)
+    # Parse common options first so standalone manifest creation needs no scan config.
+    pre_parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
+    pre_parser.add_argument(
+        "--new-manifest",
+        "--newmanifest",
+        dest="new_manifest",
+        action="store_true",
+        help="Create and activate an automatically named manifest; optionally run a scan.",
+    )
+    pre_parser.add_argument(
+        "--log-level",
+        type=int,
+        choices=range(6),
+        metavar="0-5",
+        help="MBBO record level (0..5) to set log verbosity via scanlib helper",
+    )
+    pre_args, remaining_argv = pre_parser.parse_known_args(argv)
 
-    pre_args, _remaining_argv = pre_parser.parse_known_args()
-
-    if pre_args.newmanifest is not None:
-        if pre_args.newmanifest is True:
+    if pre_args.new_manifest and not remaining_argv:
+        if pre_args.log_level is not None:
+            set_valid_logging_level(pre_args.log_level)
+        try:
             path = ManifestWriter.newmanifest(directory=data_dir)
-        else:
-            path = ManifestWriter.newmanifest(pre_args.newmanifest)
-
+        except (OSError, ValueError) as exc:
+            pre_parser.error(f"failed to create manifest: {exc}")
         logger.info("New manifest: %s", path)
+        return 0
 
-        # If ONLY --newmanifest exit immediately
-        if len(sys.argv) <= 2:
-            return
-
+    config_dir = os.environ.get("KIWI_SCAN_CONFIG_DIR", get_scan_config_dir())
     # load scan types and scan configs before argparse builds choices
     load_all_scan_types()
 
@@ -179,8 +188,9 @@ def main():
                     "--dim actuator=gap,start=1.0,stop=2.0,steps=3\n\n"
                     "scan_runner --scan_type linear --config-file /path/to/mono.yaml \\\n"
                     "--dim actuator=energy,start=100,stop=200,steps=5 \n\n"
-                    "scan_runner --newmanifest",
-        formatter_class=argparse.RawTextHelpFormatter
+                    "scan_runner --new-manifest",
+        formatter_class=argparse.RawTextHelpFormatter,
+        parents=[pre_parser],
     )
 
     parser.add_argument(
@@ -214,15 +224,7 @@ def main():
         help="List of replacements in the form KEY=NEW_FIELD_VALUE",
         default=[]
     )
-    parser.add_argument(
-        "--log-level",
-        type=int,
-        choices=range(6),
-        metavar="0-5",
-        help="MBBO record level (0..5) to set log verbosity via scanlib helper"
-    )
-
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     if args.log_level is not None:
         set_valid_logging_level(args.log_level)
@@ -304,6 +306,14 @@ def main():
 
     # Override YAML scan_dimensions with CLI scan dimensions (existing behavior)
     config.scan_dimensions = scan_dimensions
+
+    # Validate the scan request before changing the active manifest.
+    if args.new_manifest:
+        try:
+            path = ManifestWriter.newmanifest(directory=data_dir)
+        except (OSError, ValueError) as exc:
+            parser.error(f"failed to create manifest: {exc}")
+        logger.info("New manifest: %s", path)
 
     try:
         kiwi_scan.load_all_plugins()
