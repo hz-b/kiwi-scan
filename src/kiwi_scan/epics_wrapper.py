@@ -161,7 +161,7 @@ class EpicsPV:
 
         def _do() -> Optional[Dict[str, Any]]:
             if full:
-                meta = pv.get_with_metadata(use_monitor=use_monitor)
+                meta = pv.get_with_metadata(use_monitor=use_monitor, timeout=t)
                 return meta
             else:
                 """ Thread safe usage: self._ca(_do) """

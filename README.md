@@ -227,6 +227,7 @@ After installation, the command line tools are available:
 - `scantrigger_cli` - execute triggers from YAML config
 - `manifestfiles` - list, create, archive, or delete manifest-related files
 - `scanioc` - run the generic scan IOC based on pythonSoftIOC
+- `kiwi-get` - read and print detector PVs
 - `kiwi-pva-server` - run the PVA server
 - `kiwi-convert` - convert scan data through the generic export framework
 - `kiwi2spec` - export one or more scan data files, including metadata, to SPEC
@@ -241,6 +242,7 @@ scantrigger_cli --help
 pollstats_cli --help
 manifestfiles --help
 scanioc --help
+kiwi-get --help
 kiwi-pva-server --help
 kiwi-convert --help
 kiwi2spec --help

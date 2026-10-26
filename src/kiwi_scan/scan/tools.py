@@ -104,6 +104,7 @@ def create_scan_with_config(
 
     """
     Scan factory
+    TODO: Propagate the initialization errors
     """
     logger.debug("Updated ScanConfig: %s", yaml.safe_dump(asdict(config), sort_keys=False))
 

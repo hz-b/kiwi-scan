@@ -14,6 +14,7 @@ yaml:
 from __future__ import annotations
 
 import logging
+import math
 import threading
 from abc import ABC, abstractmethod
 from typing import Any, Callable, List, Optional, Protocol, Sequence, Tuple
@@ -30,7 +31,12 @@ class DetectorPV(Protocol):
         """Raise if the PV is uninitialized or disconnected."""
         ...
 
-    def get_with_metadata(self, *, use_monitor: bool) -> Optional[Any]:
+    def get_with_metadata(
+        self,
+        *,
+        use_monitor: bool,
+        timeout: Optional[float] = None,
+    ) -> Optional[Any]:
         """Return the current value and metadata."""
         ...
 
@@ -64,27 +70,53 @@ class DetectorReadStrategy(ABC):
         """Release acquisition resources."""
 
 
+def _normalize_read_timeout(read_timeout: Optional[float]) -> Optional[float]:
+    """ Normalize an explicit per-PV read timeout (outside of DAQ). """
+    if read_timeout is None:
+        return None
+    if isinstance(read_timeout, bool):
+        raise TypeError("read_timeout must be a finite number greater than zero")
+    try:
+        timeout = float(read_timeout)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("read_timeout must be a finite number greater than zero") from exc
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("read_timeout must be a finite number greater than zero")
+    return timeout
+
+
 class DirectDetectorReadStrategy(DetectorReadStrategy):
-    """Read every detector through the established synchronous wrapper API."""
+    """
+    Read detectors synchronously with an optional per-PV read timeout.
+    ``None`` preserves each PV wrapper's existing read defaults.     
+    """
 
     def __init__(
         self,
         detector_pvs: Sequence[DetectorPV],
         *,
         use_monitor: bool,
+        read_timeout: Optional[float] = None,
     ) -> None:
         self._detector_pvs = tuple(detector_pvs)
         self._use_monitor = use_monitor
+        self._read_timeout = _normalize_read_timeout(read_timeout)
 
     def start(self) -> None:
         """Direct acquisition does not own additional resources."""
-        logger.debug( "Starting direct detector acquisition: detectors=%d use_monitor=%s", len(self._detector_pvs), self._use_monitor)
+        logger.debug(
+            "Starting direct detector acquisition: detectors=%d use_monitor=%s read_timeout=%s",
+            len(self._detector_pvs), self._use_monitor, self._read_timeout,
+        )
 
     def read(self) -> List[Any]:
         readings: List[Any] = []
         for pv in self._detector_pvs:
             try:
-                reading = pv.get_with_metadata(use_monitor=self._use_monitor)
+                reading = pv.get_with_metadata(
+                    use_monitor=self._use_monitor,
+                    timeout=self._read_timeout,
+                )
                 if reading is None:
                     # HOT PATH (blocks scan loop)                    
                     logger.info("Detector read returned no data: pv=%s", pv.pvname)
@@ -270,8 +302,12 @@ def create_detector_reader(
     detector_pvs: Sequence[DetectorPV],
     *,
     use_monitor: bool,
+    read_timeout: Optional[float] = None,
 ) -> DetectorReader:
-    """Create a detector reader for one of the built-in strategy names."""
+    """
+    Create a detector reader with CA read timeout.
+    Timeout is ignored by snapshot strategy.    
+    """
     normalized = str(strategy_name).strip().lower().replace("-", "_")
     if normalized == "monitor_snapshot":
         normalized = "snapshot"
@@ -280,8 +316,12 @@ def create_detector_reader(
         strategy: DetectorReadStrategy = DirectDetectorReadStrategy(
             detector_pvs,
             use_monitor=use_monitor,
+            read_timeout=read_timeout,
         )
     elif normalized == "snapshot":
+        if read_timeout is not None:
+            timeout = _normalize_read_timeout(read_timeout)
+            logger.debug("Ignoring read_timeout=%s for snapshot detector acquisition", timeout)
         strategy = MonitorSnapshotDetectorReadStrategy(
             detector_pvs,
             use_monitor=use_monitor,

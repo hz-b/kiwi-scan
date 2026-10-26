@@ -310,6 +310,12 @@ class BaseScan(ScanABC):
                 raise ValueError(f"ScanDimension refers to unknown actuator: '{dim.actuator}'")
 
     def _connect_detectors(self):
+        """ 
+        TODO: 
+        - close all detector PVs already created on connection failure
+        - abort scan initialization. 
+        - preserve exception (failed PV name).
+        """
         logger.debug(f"Detector PVs: {self.cfg.detector_pvs}")
         logger.debug("Init Detectors")
         logger.debug(f"Monitor: {self.cfg.detector_pvs_monitor}")
@@ -332,6 +338,7 @@ class BaseScan(ScanABC):
             self.cfg.detector_reader_strategy,
             self.detector_pvs,
             use_monitor=self.detector_pvs_monitor,
+            read_timeout=self.cfg.detector_read_timeout,
         )
 
     def _connect_actuators(self) -> None:

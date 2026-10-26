@@ -12,6 +12,7 @@ SCRIPTS = \
     actuator_runner \
     scanplotter_cli \
     scantrigger_cli \
+    kiwi-get \
     pollstats_cli \
     manifestfiles \
     scanioc \

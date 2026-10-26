@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import logging
+import math
 from dataclasses import dataclass, field, fields
 from typing import Any, Dict, Iterable, List, Optional, Set, Union
 
@@ -496,6 +497,7 @@ class ScanConfig:
     metadata_file: str = "scan_metadata.txt"                        # sidecar filename
     subscriptions: List[SubscriptionConfig] = field(default_factory=list)
     detector_reader_strategy: str = "direct"
+    detector_read_timeout: Optional[float] = None
 
     def validate(self) -> None:
         """ Validate and normalize configuration via API """
@@ -518,6 +520,9 @@ class ScanConfig:
 
         self.detector_reader_strategy = self._normalize_detector_reader_strategy(
             self.detector_reader_strategy
+        )
+        self.detector_read_timeout = self._normalize_detector_read_timeout(
+            self.detector_read_timeout
         )
         self.timestamp_output_format = self._normalize_timestamp_output_format(
             self.timestamp_output_format
@@ -576,6 +581,22 @@ class ScanConfig:
                 f"(got {strategy!r})"
             )
         return normalized
+
+    @staticmethod
+    def _normalize_detector_read_timeout(value: Any) -> Optional[float]:
+        """Keep legacy read timing unless an explicit positive timeout is set."""
+        if value is None:
+            return None
+        message = "detector_read_timeout must be a finite number greater than zero"
+        if isinstance(value, bool):
+            raise TypeError(message)
+        try:
+            timeout = float(value)
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise ValueError(message) from exc
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise ValueError(message)
+        return timeout
 
     @staticmethod
     def _parse_dimensions(
@@ -700,6 +721,9 @@ class ScanConfig:
             metadata_constants=config_dict.get("metadata_constants", {}),
             metadata_file=config_dict.get("metadata_file", "scan_metadata.txt"),
             subscriptions=subscriptions,
+            detector_read_timeout=cls._normalize_detector_read_timeout(
+                config_dict.get("detector_read_timeout")
+            ),
         )
 
 

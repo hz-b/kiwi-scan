@@ -1,0 +1,26 @@
+_kiwi_get()
+{
+    local cur prev words cword
+    _init_completion || return
+    local opts="--help -h --config-file --replace --format --timestamps --timeout --connection-timeout"
+    COMPREPLY=()
+    case "$prev" in
+        --config-file)
+            _filedir '@(yaml|yml)'
+            return
+            ;;
+        --format)
+            COMPREPLY=( $(compgen -W "tsv csv json" -- "$cur") )
+            return
+            ;;
+        --timeout|--connection-timeout)
+            return
+            ;;
+        --replace|*=*)
+            [[ "$cur" == -* ]] || return
+            ;;
+    esac
+    COMPREPLY=( $(compgen -W "$opts" -- "$cur") )
+}
+
+complete -F _kiwi_get kiwi-get
