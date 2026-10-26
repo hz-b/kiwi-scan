@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from typing import List, Optional
 
 from kiwi_scan.data.manifestwriter import (
@@ -18,10 +19,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
         prog="manifestfiles",
         description=(
-            "List files referenced in manifest files, or create a small manifest.\n\n"
+            "List manifest-related files, create manifests, or archive and delete files.\n\n"
             "By default, all manifest*.yaml files in KIWI_SCAN_DATA_DIR are scanned, "
             "and only scan data files are printed.\n\n"
             "Examples:\n"
+            "  manifestfiles --new-manifest\n"
+            "  manifestfiles --new-manifest experiment.yaml\n"
             "  manifestfiles --create scan1.txt scan2.txt\n"
             "  manifestfiles --create scan1.txt --manifest-file manifest_for_spec.yaml\n"
             "  manifestfiles --delete --manifest-file manifest.yaml --include-meta --dry-run\n"
@@ -43,6 +46,19 @@ def main(argv: Optional[List[str]] = None) -> int:
         ),
     )
     action_group = parser.add_mutually_exclusive_group()
+    action_group.add_argument(
+        "--new-manifest",
+        "--newmanifest",
+        dest="new_manifest",
+        nargs="?",
+        const=True,
+        default=None,
+        metavar="FILE",
+        help=(
+            "Create and activate a new manifest, optionally with an explicit filename, "
+            "then print its path. Use --data-dir to choose its directory."
+        ),
+    )
     action_group.add_argument(
         "--last-scan",
         action="store_true",
@@ -110,11 +126,23 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     if args.last_scan and len(args.manifest_file) > 1:
         parser.error("--last-scan accepts at most one --manifest-file")
+
+    if args.new_manifest is not None and args.manifest_file:
+        parser.error("--new-manifest does not accept --manifest-file; use --new-manifest FILE")
     
     if args.log_level is not None:
         set_valid_logging_level(args.log_level)
 
     try:
+        if args.new_manifest is not None:
+            filename = None if args.new_manifest is True else args.new_manifest
+            directory = args.data_dir
+            if filename is None and directory is None:
+                directory = os.environ.get("KIWI_SCAN_DATA_DIR")
+            manifest_path = ManifestWriter.newmanifest(filename, directory=directory)
+            print(manifest_path)
+            return 0
+
         if args.create:
             if len(args.manifest_file) > 1:
                 parser.error("--create accepts at most one --manifest-file output path")
@@ -204,8 +232,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         if count == 0:
             parser.exit(1, "No matching file references found. Use --include-meta or --missing if needed.\n")
         return 0
-    except (FileNotFoundError, ValueError, IndexError) as exc:
+    except (OSError, ValueError, IndexError) as exc:
         parser.exit(2, f"manifestfiles: error: {exc}\n")
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

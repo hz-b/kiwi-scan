@@ -3,9 +3,16 @@ _manifestfiles()
     local cur prev words cword
     _init_completion || return
 
-    local opts="-h --help --data-dir --manifest-file --last-scan --include-meta --include-manifest --missing --create --delete --dry-run --yes --log-level --bundle-dir"
+    local opts="-h --help --data-dir --manifest-file --new-manifest --last-scan --include-meta --include-manifest --missing --create --delete --dry-run --yes --log-level --bundle-dir"
 
     case "$prev" in
+        --new-manifest)
+            # FILE is optional: offer paths unless another option is being typed.
+            if [[ "$cur" != -* ]]; then
+                _filedir '@(yaml|yml)'
+                return
+            fi
+            ;;
         --data-dir)
             _filedir -d
             return
@@ -26,7 +33,7 @@ _manifestfiles()
         return
     fi
 
-    # Positional arguments are not used by manifestfiles.
+    # No other positional arguments are used by manifestfiles.
     COMPREPLY=()
 }
 
