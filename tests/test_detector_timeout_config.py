@@ -88,7 +88,7 @@ class TestDetectorReadTimeoutScanWiring(unittest.TestCase):
                 scan = SimpleNamespace(cfg=config)
                 reader = object()
                 with patch(
-                    "kiwi_scan.scan.common.EpicsPV", side_effect=test_support.FakePV,
+                    "kiwi_scan.scan.detector_reader.EpicsPV", side_effect=test_support.FakePV,
                 ) as create_pv, patch(
                     "kiwi_scan.scan.common.create_detector_reader", return_value=reader,
                 ) as create_reader:

@@ -70,7 +70,7 @@ class TestDetectorTools(unittest.TestCase):
                 self.instances.clear()
                 self.attempted_names.clear()
                 out = io.StringIO()
-                with patch("kiwi_scan.tools.detectors.EpicsPV", self.factory(initialization_failures=failures)):
+                with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory(initialization_failures=failures)):
                     result = print_detector_values(self.config(names), out=out)
                 rows = list(csv.reader(io.StringIO(out.getvalue()), delimiter="\t"))
                 self.assertEqual(result, 1)
@@ -84,7 +84,7 @@ class TestDetectorTools(unittest.TestCase):
     def test_read_failures_and_missing_data_keep_alignment_and_read_later_pvs(self):
         names = ["DET:A", "DET:B", "DET:C", "DET:D"]
         out = io.StringIO()
-        with patch("kiwi_scan.tools.detectors.EpicsPV", self.factory(
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory(
             values={"DET:A": 2, "DET:B": None, "DET:D": 4},
             read_errors={"DET:C": RuntimeError("read failed")},
         )):
@@ -105,7 +105,7 @@ class TestDetectorTools(unittest.TestCase):
             with self.subTest(yaml_options=yaml_options, override=override):
                 self.instances.clear()
                 config = ScanConfig.from_dict(dict({"detector_pvs": ["DET:A", "DET:B"]}, **yaml_options))
-                with patch("kiwi_scan.tools.detectors.EpicsPV", self.factory()):
+                with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory()):
                     result = print_detector_values(config, read_timeout=override, out=io.StringIO())
                 self.assertEqual(result, 0)
                 self.assertEqual([pv.get_calls for pv in self.instances], [
@@ -116,7 +116,7 @@ class TestDetectorTools(unittest.TestCase):
 
     def test_snapshot_scan_configuration_still_uses_direct_gets_without_monitors(self):
         config = self.config(detector_reader_strategy="snapshot", detector_pvs_monitor=True)
-        with patch("kiwi_scan.tools.detectors.EpicsPV", self.factory()):
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory()):
             result = print_detector_values(config, connection_timeout=2.5, read_timeout=0.5, out=io.StringIO())
         self.assertEqual(result, 0)
         for pv in self.instances:
@@ -134,7 +134,7 @@ class TestDetectorTools(unittest.TestCase):
             with self.subTest(output_format=output_format):
                 self.instances.clear()
                 out = io.StringIO()
-                with patch("kiwi_scan.tools.detectors.EpicsPV", self.factory(
+                with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory(
                     values={"DET:A": 2.5, "DET:TEXT": 'one,two\n"three"'},
                 )):
                     result = print_detector_values(
@@ -150,7 +150,7 @@ class TestDetectorTools(unittest.TestCase):
 
     def test_json_uses_original_monitor_object_layout_and_native_values(self):
         out = io.StringIO()
-        with patch("kiwi_scan.tools.detectors.EpicsPV", self.factory(values={"DET:A": 2.5, "DET:B": None})):
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory(values={"DET:A": 2.5, "DET:B": None})):
             result = print_detector_values(self.config(), output_format="json", include_timestamps=True, out=out)
         self.assertEqual(result, 1)
         self.assertEqual(json.loads(out.getvalue()), {
@@ -163,25 +163,25 @@ class TestDetectorTools(unittest.TestCase):
         for keyword in ("read_timeout", "connection_timeout"):
             for value in (0, -1, float("nan"), float("inf"), True, "invalid"):
                 with self.subTest(keyword=keyword, value=value), \
-                        patch("kiwi_scan.tools.detectors.EpicsPV") as factory, \
+                        patch("kiwi_scan.scan.detector_reader.EpicsPV") as factory, \
                         self.assertRaises((TypeError, ValueError)):
                     print_detector_values(self.config(), out=io.StringIO(), **{keyword: value})
                 factory.assert_not_called()
 
     def test_invalid_yaml_timeout_on_direct_config_fails_before_pv_creation(self):
         config = self.config(detector_read_timeout=-1)
-        with patch("kiwi_scan.tools.detectors.EpicsPV") as factory, self.assertRaises(ValueError):
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV") as factory, self.assertRaises(ValueError):
             print_detector_values(config, out=io.StringIO())
         factory.assert_not_called()
 
     def test_invalid_format_fails_before_any_pv_initialization(self):
-        with patch("kiwi_scan.tools.detectors.EpicsPV") as factory, self.assertRaises(ValueError):
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV") as factory, self.assertRaises(ValueError):
             print_detector_values(self.config(), output_format="invalid", out=io.StringIO())
         factory.assert_not_called()
 
     def test_read_interrupt_closes_every_created_pv_and_propagates(self):
         out = io.StringIO()
-        with patch("kiwi_scan.tools.detectors.EpicsPV", self.factory(read_errors={"DET:A": KeyboardInterrupt()})), \
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory(read_errors={"DET:A": KeyboardInterrupt()})), \
                 self.assertRaises(KeyboardInterrupt):
             print_detector_values(self.config(), out=out)
         self.assertEqual(out.getvalue(), "")
@@ -196,7 +196,7 @@ class TestDetectorTools(unittest.TestCase):
                 raise KeyboardInterrupt()
             return good_factory(name, **kwargs)
 
-        with patch("kiwi_scan.tools.detectors.EpicsPV", factory), self.assertRaises(KeyboardInterrupt):
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV", factory), self.assertRaises(KeyboardInterrupt):
             print_detector_values(self.config(), out=io.StringIO())
         self.assertEqual(len(self.instances), 1)
         self.assert_closed()
@@ -206,13 +206,13 @@ class TestDetectorTools(unittest.TestCase):
             def write(self, text):
                 raise OSError("output unavailable")
 
-        with patch("kiwi_scan.tools.detectors.EpicsPV", self.factory()), self.assertRaises(OSError):
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory()), self.assertRaises(OSError):
             print_detector_values(self.config(), out=BrokenOutput())
         self.assert_closed()
 
     def test_empty_detector_list_succeeds_and_owns_no_connections(self):
         out = io.StringIO()
-        with patch("kiwi_scan.tools.detectors.EpicsPV") as factory:
+        with patch("kiwi_scan.scan.detector_reader.EpicsPV") as factory:
             result = print_detector_values(self.config([]), output_format="json", out=out)
         self.assertEqual(result, 0)
         self.assertEqual(json.loads(out.getvalue()), {})
@@ -220,7 +220,7 @@ class TestDetectorTools(unittest.TestCase):
 
     def test_invalid_detector_names_fail_before_opening_connections(self):
         for names in ("DET:A", None, [""], ["   "], [7]):
-            with self.subTest(names=names), patch("kiwi_scan.tools.detectors.EpicsPV") as factory, \
+            with self.subTest(names=names), patch("kiwi_scan.scan.detector_reader.EpicsPV") as factory, \
                     self.assertRaises((TypeError, ValueError)):
                 config = ScanConfig(actuators={}, detector_pvs=names)
                 print_detector_values(config, out=io.StringIO())

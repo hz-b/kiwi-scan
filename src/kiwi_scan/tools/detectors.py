@@ -10,9 +10,8 @@ from contextlib import ExitStack
 from typing import Optional, TextIO
 
 from kiwi_scan.datamodels import ScanConfig
-from kiwi_scan.epics_wrapper import EpicsPV
 from kiwi_scan.monitor.row_format import MonitorRowFormatter
-from kiwi_scan.scan.detector_reader import create_detector_reader
+from kiwi_scan.scan.detector_reader import connect_detector_pvs, create_detector_reader
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +37,6 @@ def _resolve_timeouts(config, read_timeout, connection_timeout):
     return read_timeout, connection_timeout
 
 
-def _connect_detector_pvs(names, connection_timeout, cleanup):
-    pvs, indices = [], []
-    for index, name in enumerate(names):
-        try:
-            pv = EpicsPV(name, auto_monitor=False, connection_timeout=connection_timeout)
-            cleanup.callback(pv.close)
-        except Exception as exc:  # noqa: BLE001 - isolate initialization failures
-            logger.warning("Cannot initialize detector %s: %s", name, exc)
-            continue
-
-        pvs.append(pv)
-        indices.append(index)
-
-    return pvs, indices
-
 ## TODO: incluse monitor PVs, plugin processing
 def print_detector_values(
     config: ScanConfig,
@@ -65,7 +49,7 @@ def print_detector_values(
 ) -> int:
     """
     One-shot detector readout based on detector reader and monitor formatter.
-    Print one direct reading per detector
+    Print one direct reading per detector, returning 1 for unavailable PVs.
     - read_timeout applies to every PV.
     - connection timeout is handles seperately
     - EPICS PV resouces are freed at cleanup
@@ -87,7 +71,12 @@ def print_detector_values(
         cleanup.callback(formatter.close)
         pvs, indices = [], []
         readings = [None] * len(config.detector_pvs) # initialize PVs for handling failed connections
-        pvs, indices = _connect_detector_pvs(config.detector_pvs, connection_timeout, cleanup)
+        for index, pv in connect_detector_pvs(
+            config.detector_pvs, connection_timeout, cleanup,
+            auto_monitor=False, abort_on_error=False,
+        ):
+            pvs.append(pv)
+            indices.append(index)
         reader = create_detector_reader("direct", pvs, use_monitor=False, read_timeout=read_timeout)
         cleanup.callback(reader.stop)
         reader.start()

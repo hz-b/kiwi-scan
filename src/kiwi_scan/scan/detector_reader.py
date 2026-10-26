@@ -6,6 +6,7 @@ Pluggable detector acquisition strategies for scan engines.
 yaml:
     - detector_reader_strategy: direct
       detector_pvs_monitor: false
+      detector_read_timeout: 1.0
     - detector_reader_strategy: direct
       detector_pvs_monitor: true
     - detector_reader_strategy: snapshot
@@ -19,7 +20,48 @@ import threading
 from abc import ABC, abstractmethod
 from typing import Any, Callable, List, Optional, Protocol, Sequence, Tuple
 
+from kiwi_scan.epics_wrapper import EpicsPV
+
 logger = logging.getLogger(__name__)
+
+
+def connect_detector_pvs(
+    names,
+    connection_timeout,
+    cleanup=None,
+    *,
+    auto_monitor,
+    abort_on_error,
+    timeout=1.0,
+    queueing_delay=0.01,
+):
+    """
+    Generate index, PV pair detector connections 
+    Usage:
+        for index, pv in connect_detector_pvs(...):
+            pvs.append(pv)
+            indices.append(index)
+    """
+
+    for index, name in enumerate(names):
+        logger.debug("Creating detector PV %d/%d: %s", index + 1, len(names), name)
+        try:
+            pv = EpicsPV(
+                name,
+                timeout=timeout,
+                connection_timeout=connection_timeout,
+                queueing_delay=queueing_delay,
+                auto_monitor=auto_monitor,
+            )
+            if cleanup is not None:
+                cleanup.callback(pv.close)
+        except Exception as exc:
+            if abort_on_error:
+                raise
+            logger.warning("Cannot initialize detector %s: %s", name, exc)
+            continue
+        logger.debug("Created detector PV: %s", name)
+        yield index, pv
 
 
 class DetectorPV(Protocol):
@@ -338,5 +380,6 @@ __all__ = [
     "DetectorReader",
     "DirectDetectorReadStrategy",
     "MonitorSnapshotDetectorReadStrategy",
+    "connect_detector_pvs",
     "create_detector_reader",
 ]

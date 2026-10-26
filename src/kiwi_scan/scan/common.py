@@ -29,7 +29,11 @@ from kiwi_scan.scan.scan_abs import ScanABC
 
 from ._point_frame import _DetectorLayout, _PointFrame
 from .column_provider import DataColumnProvider
-from .detector_reader import DetectorReader, create_detector_reader
+from .detector_reader import (
+    DetectorReader,
+    connect_detector_pvs,
+    create_detector_reader,
+)
 from .event_handler import ScanEventHandler
 from .metadata_monitor import MetadataCAMonitor
 from .output_manager import OutputManager
@@ -322,16 +326,14 @@ class BaseScan(ScanABC):
 
         self.detector_pvs = []
         self.detector_pvs_monitor = self.cfg.detector_pvs_monitor
-        for i, pvname in enumerate(self.cfg.detector_pvs):
-            logger.debug("Creating detector PV %d/%d: %s", i+1, len(self.cfg.detector_pvs), pvname)
-            pv = EpicsPV(
-                pvname,
-                timeout=1.0,
-                connection_timeout=1.0,
-                queueing_delay=0.0,
-                auto_monitor=True,
-            )
-            logger.debug("Created detector PV: %s", pvname)
+        for _, pv in connect_detector_pvs(
+            self.cfg.detector_pvs,
+            timeout=1.0,
+            connection_timeout=1.0,
+            queueing_delay=0.0,
+            auto_monitor=True,
+            abort_on_error=True,
+        ):
             self.detector_pvs.append(pv)
         logger.info("PVs connected: %d", len(self.detector_pvs))
         self._detector_reader: DetectorReader = create_detector_reader(
