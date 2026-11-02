@@ -3,9 +3,10 @@
 
 import io
 import math
-import queue
 import unittest
 from unittest.mock import MagicMock, patch
+
+import numpy as np
 
 from kiwi_scan.monitor_concrete.queue_plotter import PlotSpec, QueuePlotterMonitor
 
@@ -141,6 +142,37 @@ class TestQueuePlotterConfiguration(unittest.TestCase):
         with self.assertRaisesRegex(TypeError, "plot 'y' must be a channel name"):
             QueuePlotterMonitor._normalize_y_names(123)
 
+    def test_performance_options_have_defaults(self):
+        monitor = QueuePlotterMonitor({"print": False})
+
+        self.assertEqual(monitor.max_points, QueuePlotterMonitor.DEFAULT_MAX_POINTS)
+        self.assertEqual(monitor.max_draw_points, QueuePlotterMonitor.DEFAULT_MAX_DRAW_POINTS)
+        self.assertEqual(monitor.refresh_interval, QueuePlotterMonitor.DEFAULT_REFRESH_INTERVAL)
+        self.assertIsNone(monitor.marker)
+        self.assertEqual(monitor.pending.maxlen, monitor.max_points)
+
+    def test_performance_options_are_read_from_parameters(self):
+        monitor = QueuePlotterMonitor(
+            {
+                "print": False,
+                "max_points": 50,
+                "max_draw_points": 10,
+                "refresh_interval": 0.25,
+                "marker": "o",
+            }
+        )
+
+        self.assertEqual(monitor.max_points, 50)
+        self.assertEqual(monitor.max_draw_points, 10)
+        self.assertEqual(monitor.refresh_interval, 0.25)
+        self.assertEqual(monitor.marker, "o")
+        self.assertEqual(monitor.pending.maxlen, 50)
+
+    def test_performance_options_reject_non_positive_values(self):
+        for key in ("max_points", "max_draw_points", "refresh_interval"):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, f"monitor.{key} must be > 0"):
+                QueuePlotterMonitor({"print": False, key: 0})
+
     def test_normalize_y_names_rejects_empty_names(self):
         with self.assertRaisesRegex(
             ValueError,
@@ -158,10 +190,7 @@ class TestQueuePlotterLifecycle(unittest.TestCase):
                 monitor.start(["detector1", "detector2"])
 
         self.assertEqual(monitor.signal_names, ["t", "detector1", "detector2"])
-        self.assertEqual(
-            monitor.data,
-            {"t": [], "detector1": [], "detector2": []},
-        )
+        self.assertEqual(monitor._ordered_data().shape, (3, 0))
         self.assertEqual(
             monitor.plot_specs,
             [PlotSpec(x="t", y=["detector1"], title="detector1")],
@@ -224,11 +253,16 @@ class TestQueuePlotterLifecycle(unittest.TestCase):
             return_value=(tk, ttk),
         ), patch.object(
             monitor,
+            "_import_pyplot",
+        ) as import_pyplot, patch.object(
+            monitor,
             "_start_gui",
         ) as start_gui:
             monitor.start(["detector"])
 
         self.assertIs(monitor.root, root)
+        import_pyplot.assert_called_once_with()
+        self.assertIs(monitor._plt, import_pyplot.return_value)
         self.assertTrue(monitor.running)
         start_gui.assert_called_once_with()
 
@@ -265,7 +299,7 @@ class TestQueuePlotterLifecycle(unittest.TestCase):
         with self.assertLogs(monitor.logger, level="ERROR") as captured:
             monitor.update([1.0])
 
-        self.assertTrue(monitor.queue.empty())
+        self.assertEqual(len(monitor.pending), 0)
         self.assertTrue(
             any("called before start" in message for message in captured.output)
         )
@@ -280,14 +314,13 @@ class TestQueuePlotterLifecycle(unittest.TestCase):
             monitor.update([{"value": 1.25, "timestamp": 100.0}])
 
         self.assertEqual(output.getvalue(), "detector\n1.250000000000e+00\n")
-        self.assertTrue(monitor.queue.empty())
+        self.assertEqual(len(monitor.pending), 0)
 
-    def test_update_gui_queues_elapsed_time_and_values(self):
-        monitor = QueuePlotterMonitor({"print": False})
+    def _started_gui_monitor(self, parameters=None, signals=("detector", "missing")):
+        monitor = QueuePlotterMonitor(parameters or {"print": False})
         tk = MagicMock()
         ttk = MagicMock()
         tk.Tk.return_value = MagicMock()
-
         with patch.object(
             monitor,
             "_display_is_available",
@@ -298,48 +331,108 @@ class TestQueuePlotterLifecycle(unittest.TestCase):
             return_value=(tk, ttk),
         ), patch.object(
             monitor,
+            "_import_pyplot",
+        ), patch.object(
+            monitor,
             "_start_gui",
         ), patch(
             "kiwi_scan.monitor_concrete.queue_plotter.time.time",
-            side_effect=[100.0, 102.5],
+            return_value=100.0,
         ):
-            monitor.start(["detector", "missing"])
-            monitor.update([{"value": 4.5}, None])
+            monitor.start(list(signals))
+        return monitor
 
-        point = monitor.queue.get_nowait()
-        self.assertEqual(point["t"], 2.5)
-        self.assertEqual(point["detector"], 4.5)
-        self.assertTrue(math.isnan(point["missing"]))
-
-    def test_update_uses_nan_for_value_missing_from_short_row(self):
-        monitor = QueuePlotterMonitor({"print": False})
-        monitor._start_time = 10.0
-        monitor.signal_names = ["t", "first", "second"]
+    def test_update_gui_only_appends_raw_row(self):
+        monitor = self._started_gui_monitor()
+        row = [{"value": 4.5}, None]
 
         with patch(
             "kiwi_scan.monitor_concrete.queue_plotter.time.time",
-            return_value=11.0,
+            return_value=102.5,
         ):
-            monitor.update([1.0])
+            monitor.update(row)
 
-        point = monitor.queue.get_nowait()
-        self.assertEqual(point["t"], 1.0)
-        self.assertEqual(point["first"], 1.0)
-        self.assertTrue(math.isnan(point["second"]))
+        self.assertEqual(len(monitor.pending), 1)
+        timestamp, vals = monitor.pending[0]
+        self.assertEqual(timestamp, 102.5)
+        self.assertIs(vals, row)
 
-    def test_drain_queue_appends_all_points(self):
-        monitor = QueuePlotterMonitor({"print": False})
-        monitor.signal_names = ["t", "detector"]
-        monitor.data = {"t": [], "detector": []}
-        monitor.queue.put({"t": 0.1, "detector": 1.0})
-        monitor.queue.put({"t": 0.2, "detector": 2.0})
+    def test_drain_converts_elapsed_time_and_values(self):
+        monitor = self._started_gui_monitor()
+        with patch(
+            "kiwi_scan.monitor_concrete.queue_plotter.time.time",
+            return_value=102.5,
+        ):
+            monitor.update([{"value": 4.5}, None])
+
+        self.assertTrue(monitor._drain_queue())
+
+        data = monitor._ordered_data()
+        self.assertEqual(data.shape, (3, 1))
+        self.assertEqual(data[0, 0], 2.5)
+        self.assertEqual(data[1, 0], 4.5)
+        self.assertTrue(math.isnan(data[2, 0]))
+        self.assertEqual(len(monitor.pending), 0)
+
+    def test_drain_uses_nan_for_short_rows_and_non_numeric_values(self):
+        monitor = self._started_gui_monitor(signals=("first", "second", "third"))
+        with patch(
+            "kiwi_scan.monitor_concrete.queue_plotter.time.time",
+            return_value=101.0,
+        ):
+            monitor.update([1.0, "not-a-number"])
 
         monitor._drain_queue()
 
-        self.assertEqual(monitor.data["t"], [0.1, 0.2])
-        self.assertEqual(monitor.data["detector"], [1.0, 2.0])
-        with self.assertRaises(queue.Empty):
-            monitor.queue.get_nowait()
+        data = monitor._ordered_data()
+        self.assertEqual(data[0, 0], 1.0)
+        self.assertEqual(data[1, 0], 1.0)
+        self.assertTrue(math.isnan(data[2, 0]))
+        self.assertTrue(math.isnan(data[3, 0]))
+
+    def test_drain_returns_false_without_new_points(self):
+        monitor = self._started_gui_monitor()
+
+        self.assertFalse(monitor._drain_queue())
+
+    def test_update_is_ignored_after_window_closed(self):
+        monitor = self._started_gui_monitor()
+        monitor.running = False  # what the WM_DELETE_WINDOW handler does
+
+        monitor.update([1.0, 2.0])
+
+        self.assertEqual(len(monitor.pending), 0)
+
+    def test_pending_is_bounded_and_counts_dropped_points(self):
+        monitor = self._started_gui_monitor({"print": False, "max_points": 3})
+
+        for idx in range(5):
+            monitor.update([float(idx), float(idx)])
+        monitor._drain_queue()
+
+        self.assertEqual(monitor._points_received, 5)
+        self.assertEqual(monitor._points_drained, 3)
+        np.testing.assert_array_equal(monitor._ordered_data()[1], [2.0, 3.0, 4.0])
+
+    def test_ring_buffer_keeps_newest_points_in_order(self):
+        monitor = self._started_gui_monitor({"print": False, "max_points": 4})
+
+        for idx in range(6):
+            monitor.update([float(idx), 0.0])
+            monitor._drain_queue()
+
+        np.testing.assert_array_equal(monitor._ordered_data()[1], [2.0, 3.0, 4.0, 5.0])
+
+    def test_ordered_data_is_decimated_to_max_draw_points(self):
+        monitor = self._started_gui_monitor({"print": False, "max_points": 100, "max_draw_points": 10})
+
+        for idx in range(100):
+            monitor.update([float(idx), 0.0])
+        monitor._drain_queue()
+
+        data = monitor._ordered_data()
+        self.assertLessEqual(data.shape[1], 10)
+        self.assertEqual(data[1, 0], 0.0)
 
     def test_set_signals_replaces_plot_and_updates_compatibility_variables(self):
         monitor = QueuePlotterMonitor({"print": False})
@@ -405,69 +498,109 @@ class TestQueuePlotterLifecycle(unittest.TestCase):
 
 
 class TestQueuePlotterDrawing(unittest.TestCase):
-    def test_draw_plots_draws_each_y_channel_with_shortest_length(self):
+    @staticmethod
+    def _monitor_with_lines(spec):
         monitor = QueuePlotterMonitor({"print": False})
-        monitor.plot_specs = [
-            PlotSpec(
-                x="t",
-                y=["detector1", "detector2"],
-                title="Detectors",
-                xlabel="Time",
-                ylabel="Signal",
-            )
-        ]
-        monitor.data = {
-            "t": [0.0, 1.0, 2.0],
-            "detector1": [10.0, 11.0],
-            "detector2": [20.0, 21.0, 22.0],
-        }
+        monitor.signal_names = ["t", "detector1", "detector2"]
+        monitor.plot_specs = [spec]
         ax = MagicMock()
+        ax.plot.side_effect = lambda *args, **kwargs: [MagicMock(name=kwargs["label"])]
         fig = MagicMock()
+        monitor._setup_plots([ax], fig)
+        return monitor, ax, fig
 
-        monitor._draw_plots([ax], fig)
+    def test_setup_plots_creates_lines_labels_and_layout_once(self):
+        spec = PlotSpec(
+            x="t",
+            y=["detector1", "detector2"],
+            title="Detectors",
+            xlabel="Time",
+            ylabel="Signal",
+        )
+        monitor, ax, fig = self._monitor_with_lines(spec)
 
-        ax.clear.assert_called_once_with()
         self.assertEqual(ax.plot.call_count, 2)
-        ax.plot.assert_any_call(
-            [0.0, 1.0],
-            [10.0, 11.0],
-            marker="o",
-            linestyle="-",
-            label="detector1",
-        )
-        ax.plot.assert_any_call(
-            [0.0, 1.0, 2.0],
-            [20.0, 21.0, 22.0],
-            marker="o",
-            linestyle="-",
-            label="detector2",
-        )
+        ax.plot.assert_any_call([], [], marker=None, linestyle="-", label="detector1")
+        ax.plot.assert_any_call([], [], marker=None, linestyle="-", label="detector2")
         ax.set_xlabel.assert_called_once_with("Time")
         ax.set_ylabel.assert_called_once_with("Signal")
         ax.set_title.assert_called_once_with("Detectors")
-        ax.legend.assert_called_once_with(loc="best")
+        ax.legend.assert_called_once_with(loc="upper left")
         ax.grid.assert_called_once_with(True)
         fig.tight_layout.assert_called_once_with()
         fig.canvas.draw_idle.assert_called_once_with()
+        self.assertEqual([(x, y) for _line, x, y in monitor._lines[0][1]], [(0, 1), (0, 2)])
 
-    def test_draw_plots_with_no_x_data_sets_title_only(self):
-        monitor = QueuePlotterMonitor({"print": False})
-        monitor.plot_specs = [
-            PlotSpec(x="t", y=["detector"], title="Detector")
-        ]
-        monitor.data = {"t": [], "detector": []}
-        ax = MagicMock()
-        fig = MagicMock()
+    def test_setup_plots_single_y_has_no_legend(self):
+        _monitor, ax, _fig = self._monitor_with_lines(PlotSpec(x="t", y=["detector1"], title="Detector"))
+
+        ax.legend.assert_not_called()
+
+    def test_draw_plots_updates_line_data_without_clearing(self):
+        spec = PlotSpec(x="t", y=["detector1", "detector2"], title="Detectors")
+        monitor, ax, fig = self._monitor_with_lines(spec)
+        monitor._start_time = 0.0
+        monitor.running = True
+        with patch(
+            "kiwi_scan.monitor_concrete.queue_plotter.time.time",
+            side_effect=[1.0, 2.0],
+        ):
+            monitor.update([10.0, 20.0])
+            monitor.update([11.0])
+        monitor._drain_queue()
+        fig.reset_mock()
+        ax.reset_mock()
 
         monitor._draw_plots([ax], fig)
 
-        ax.clear.assert_called_once_with()
-        ax.set_title.assert_called_once_with("Detector")
+        ax.clear.assert_not_called()
         ax.plot.assert_not_called()
-        ax.set_xlabel.assert_not_called()
-        fig.tight_layout.assert_called_once_with()
+        fig.tight_layout.assert_not_called()
+        line1, _x, _y = monitor._lines[0][1][0]
+        line2, _x, _y = monitor._lines[0][1][1]
+        x_values, y_values = line1.set_data.call_args.args
+        np.testing.assert_array_equal(x_values, [1.0, 2.0])
+        np.testing.assert_array_equal(y_values, [10.0, 11.0])
+        _x_values, y2_values = line2.set_data.call_args.args
+        self.assertEqual(y2_values[0], 20.0)
+        self.assertTrue(math.isnan(y2_values[1]))
+        ax.relim.assert_called_once_with()
+        ax.autoscale_view.assert_called_once_with()
         fig.canvas.draw_idle.assert_called_once_with()
 
+    def test_run_plot_loop_redraws_only_when_new_points_arrive(self):
+        monitor = QueuePlotterMonitor({"print": False, "refresh_interval": 0.2})
+        monitor.signal_names = ["t", "detector1"]
+        monitor.plot_specs = [PlotSpec(x="t", y=["detector1"], title="Detector")]
+        monitor._start_time = 0.0
+        monitor.running = True
+        plt = MagicMock()
+
+        def stop_after_three(_interval):
+            if plt.pause.call_count >= 3:
+                monitor.running = False
+
+        plt.pause.side_effect = stop_after_three
+        with patch.object(monitor, "_setup_plots") as setup, patch.object(
+            monitor, "_drain_queue", side_effect=[False, True, False]
+        ), patch.object(monitor, "_update_tk"), patch.object(monitor, "_draw_plots") as draw:
+            monitor._run_plot_loop(plt, MagicMock(), [MagicMock()])
+
+        setup.assert_called_once()
+        draw.assert_called_once()
+        plt.pause.assert_called_with(0.2)
+        self.assertEqual(plt.pause.call_count, 3)
+
+    def test_run_plot_loop_warns_about_dropped_points(self):
+        monitor = QueuePlotterMonitor({"print": False})
+        monitor.running = False
+        monitor._points_received = 5
+        monitor._points_drained = 3
+
+        with self.assertLogs(monitor.logger, level="WARNING") as captured:
+            monitor._run_plot_loop(MagicMock(), MagicMock(), [MagicMock()])
+
+        self.assertTrue(any("dropped 2 of 5 points" in message for message in captured.output))
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

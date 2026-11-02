@@ -11,7 +11,10 @@ class BaseMonitor(ABC):
     
     @abstractmethod
     def update(self, vals):
-        """Handle a new data point."""
+        """ Handle a new data point.
+        Called from the scan thread for every point, so it must return quickly witin us.
+        The caller must not mutate ``vals`` after the call; monitors may keep a reference.
+        """
 
     @abstractmethod
     def loop(self):

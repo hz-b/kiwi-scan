@@ -3,14 +3,17 @@
 
 from __future__ import annotations
 
+import collections
 import logging
+import math
 import os
-import queue
 import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+
+import numpy as np
 
 from kiwi_scan.monitor.base import BaseMonitor
 from kiwi_scan.monitor.row_format import MonitorRowFormatter
@@ -35,14 +38,21 @@ class PlotSpec:
 class QueuePlotterMonitor(BaseMonitor):
     """Queue-based live plotting monitor with optional PrintMonitor-compatible output.
 
+    Hot-path design: ``update()`` runs in the scan thread and only appends the raw row. 
+    Buffering and drawing happen in the GUI thread. 
+    The plot uses points of a fixed-size NumPy ring buffer.  
+    Plot lines are created once and are reused.
     YAML example::
 
-        monitor_type: queueplotter
+        monitor_type: plot
         monitor:
           print:
             enabled: true
             format: tsv
             include_header: true
+          max_points: 10000
+          max_draw_points: 2000
+          refresh_interval: 0.1
           plots:
             - x: t
               y: [detector1, detector2]
@@ -52,17 +62,37 @@ class QueuePlotterMonitor(BaseMonitor):
               title: Correlation
     """
 
+    DEFAULT_MAX_POINTS = 10000
+    DEFAULT_MAX_DRAW_POINTS = 2000
+    DEFAULT_REFRESH_INTERVAL = 0.1
+
     def __init__(self, parameters: Optional[Dict[str, Any]] = None):
         self.parameters = parameters or {}
         self.logger = logging.getLogger(f"{__name__}.{self.__class__.__name__}")
-        self.queue: queue.Queue[Dict[str, Any]] = queue.Queue()
+        self.max_points = self._positive_int("max_points", self.DEFAULT_MAX_POINTS)
+        self.max_draw_points = self._positive_int("max_draw_points", self.DEFAULT_MAX_DRAW_POINTS)
+        self.refresh_interval = self._positive_float("refresh_interval", self.DEFAULT_REFRESH_INTERVAL)
+        self.marker: Optional[str] = self.parameters.get("marker") or None
+        # Scan thread -> GUI thread hand-off: collections.deque.append/popleft are fast and atomic with GIL (lock) 
+        # update() never blocks. When the GUI falls behind by more than max_points rows, the oldest are lost.
+        self.pending: Deque[Tuple[float, List[Any]]] = collections.deque(maxlen=self.max_points)
+        self._points_received = 0  # written by the scan thread only
+        self._points_drained = 0   # written by the GUI thread only
         self.root: Optional[Any] = None  # Will be set in start() when GUI is available.
+        self._plt: Optional[Any] = None
         self.running = False
         self._headless = False
         self._closed_by_user = False
         self._start_time: Optional[float] = None
         self.signal_names: List[str] = []
-        self.data: Dict[str, List[Any]] = {}
+        # Plot history (ring buffer), 2-D NumPy array of shape (number of signals, max_points)
+        # slot:    0    1    2    3    4
+        # t     [ 5.0  6.0  2.0  3.0  4.0 ]   <- points 5,6 overwrote 0,1
+        # det1  [ ...                      ]
+        # det2  [ ...                      ]
+        self._buffer: Optional[np.ndarray] = None
+        self._buffer_count = 0  # total points written into the ring buffer
+        self._lines: List[Tuple[Any, List[Tuple[Any, int, int]]]] = []
         self.plot_specs: List[PlotSpec] = []
         self.x_signal = None  # backward-compatible single-plot setter support
         self.y_signal = None
@@ -72,6 +102,18 @@ class QueuePlotterMonitor(BaseMonitor):
         self._print_parameters = dict(print_cfg)
         self._row_formatter = MonitorRowFormatter(self._print_parameters, logger=self.logger)
         self._value_formatter = self._row_formatter.value_formatter
+
+    def _positive_int(self, key: str, default: int) -> int:
+        value = int(self.parameters.get(key, default))
+        if value <= 0:
+            raise ValueError(f"queue_plotter: monitor.{key} must be > 0")
+        return value
+
+    def _positive_float(self, key: str, default: float) -> float:
+        value = float(self.parameters.get(key, default))
+        if value <= 0.0:
+            raise ValueError(f"queue_plotter: monitor.{key} must be > 0")
+        return value
 
     @staticmethod
     def _print_config(parameters: Dict[str, Any]) -> Dict[str, Any]:
@@ -113,7 +155,11 @@ class QueuePlotterMonitor(BaseMonitor):
         self._start_time = time.time()
         raw_signal_names = list(headers) if headers is not None else list(signal_names)
         self.signal_names = ["t"] + raw_signal_names
-        self.data = {name: [] for name in self.signal_names}
+        self._buffer = None  # allocated by the GUI thread on first drain
+        self._buffer_count = 0
+        self.pending.clear()
+        self._points_received = 0
+        self._points_drained = 0
         self.plot_specs = self._parse_plot_specs(self.parameters, self.signal_names)
 
         self._headless = not self._display_is_available()
@@ -167,6 +213,8 @@ class QueuePlotterMonitor(BaseMonitor):
                 "live plotting is disabled and print output is used instead", exc)
             return
 
+        # Importing the matplotlib must happen before the scan thread runs, no locking.
+        self._plt = self._import_pyplot()
         self.running = True
         self._start_gui()
         self.logger.debug("QueuePlotterMonitor signals=%r plots=%r", self.signal_names, self.plot_specs)
@@ -179,14 +227,17 @@ class QueuePlotterMonitor(BaseMonitor):
             self.logger.error("QueuePlotterMonitor.update() called before start()")
             return
 
-        if self._headless:
+        if self._headless or not self.running:
+            # GUI not started, closed by the user, or close() called.
             return
 
-        values_only = [self._plot_value(item) for item in vals]
-        now = time.time() - self._start_time
-        values_dict = dict(zip(self.signal_names, [now] + values_only))
-        point = {k: values_dict.get(k, float("nan")) for k in self.signal_names}
-        self.queue.put(point)
+        # Contract:
+        # - optimized "hot path" processing.
+        # - the caller must pass a new list per point and not mutate it afterwards. 
+        # - the GUI thread reads it later from `pending`. 
+        # - Scan engines must do _commit_point_async and return a fresh list. 
+        self.pending.append((time.time(), vals))
+        self._points_received += 1
 
     def set_signals(self, x: str, y: str) -> None:
         """Backward-compatible single-panel override might be used for interactive features later."""
@@ -196,11 +247,14 @@ class QueuePlotterMonitor(BaseMonitor):
         if self.y_signal is not None:
             self.y_signal.set(y)
 
-    def _plot_value(self, item: Any) -> Any:
+    def _plot_value(self, item: Any) -> float:
         value = self._value_formatter.extract_value(item)
         if value is None:
-            return float("nan")
-        return value
+            return math.nan
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return math.nan
 
     @classmethod
     def _parse_plot_specs(
@@ -312,7 +366,7 @@ class QueuePlotterMonitor(BaseMonitor):
             return
 
         self.logger.info("[%s] In monitor.loop(), driving Tkinter from this thread", threading.current_thread().name)
-        plt = self._import_pyplot()
+        plt = self._plt or self._import_pyplot()
         self._ensure_tk()
         plt.ion()
 
@@ -346,18 +400,30 @@ class QueuePlotterMonitor(BaseMonitor):
         return fig, [ax]
 
     def _run_plot_loop(self, plt: Any, fig: Any, axes: Sequence[Any]) -> None:
-        """Process queued points and refresh the live plots until stopped."""
-        while self.running or not self.queue.empty():
-            self._drain_queue()
+        """Process pending points and refresh the live plots until stopped."""
+        if self.plot_specs:
+            self._setup_plots(axes, fig)
+        else:
+            axes[0].set_title("No live plots configured")
+            fig.canvas.draw_idle()
+
+        while self.running or self.pending:
+            has_new_points = self._drain_queue()
             self._update_tk()
 
-            if self.plot_specs:
+            if has_new_points and self.plot_specs:
                 self._draw_plots(axes, fig)
-            else:
-                axes[0].set_title("No live plots configured")
-                fig.canvas.draw_idle()
 
-            plt.pause(0.05)
+            plt.pause(self.refresh_interval)
+
+        dropped = self._points_received - self._points_drained
+        if dropped > 0:
+            self.logger.warning(
+                "QueuePlotterMonitor dropped %d of %d points because the GUI fell behind (max_points=%d)",
+                dropped,
+                self._points_received,
+                self.max_points,
+            )
 
     def _cleanup_gui(self, plt: Any, fig: Any) -> None:
         """Release Matplotlib and Tk resources without aborting the scan."""
@@ -377,15 +443,46 @@ class QueuePlotterMonitor(BaseMonitor):
             finally:
                 self.root = None
 
-    def _drain_queue(self) -> None:
-        try:
-            while True:
-                point = self.queue.get_nowait()
-                self.logger.debug("point: %r", point)
-                for name in self.signal_names:
-                    self.data[name].append(point[name])
-        except queue.Empty:
-            pass
+    def _drain_queue(self) -> bool:
+        """Move pending rows into the ring buffer. Return True if any arrived."""
+        pending = self.pending
+        count = len(pending)
+        if count == 0:
+            return False
+        if self._buffer is None:
+            self._buffer = np.full((len(self.signal_names), self.max_points), np.nan)
+
+        buffer = self._buffer
+        capacity = self.max_points
+        start_time = self._start_time or 0.0
+        n_values = len(self.signal_names) - 1
+        plot_value = self._plot_value
+        for _ in range(count):
+            timestamp, vals = pending.popleft()
+            column = self._buffer_count % capacity
+            buffer[0, column] = timestamp - start_time
+            n_present = min(len(vals), n_values)
+            for idx in range(n_present):
+                buffer[idx + 1, column] = plot_value(vals[idx])
+            # Short rows: remaining channels are NaN.
+            buffer[n_present + 1:, column] = np.nan
+            self._buffer_count += 1
+        self._points_drained += count
+        return True
+
+    def _ordered_data(self) -> np.ndarray:
+        """Return buffered points oldest first, decimated to max_draw_points."""
+        if self._buffer is None:
+            return np.empty((len(self.signal_names), 0))
+        capacity = self.max_points
+        count = self._buffer_count
+        if count <= capacity:
+            data = self._buffer[:, :count]
+        else:
+            split = count % capacity
+            data = np.concatenate((self._buffer[:, split:], self._buffer[:, :split]), axis=1)
+        step = max(1, -(-data.shape[1] // self.max_draw_points))
+        return data[:, ::step]
 
     def _update_tk(self) -> None:
         if self.root is None:
@@ -397,29 +494,36 @@ class QueuePlotterMonitor(BaseMonitor):
             self.running = False
             self.root = None
 
-    def _draw_plots(self, axes: Sequence[Any], fig: Any) -> None:
+    def _setup_plots(self, axes: Sequence[Any], fig: Any) -> None:
+        """Create lines, labels, legends and layout once; frames only update data."""
+        index = {name: idx for idx, name in enumerate(self.signal_names)}
+        self._lines = []
         for ax, spec in zip(axes, self.plot_specs):
-            ax.clear()
-            x_values = self.data.get(spec.x, [])
-            if not x_values:
-                ax.set_title(spec.title)
-                continue
-
+            lines = []
             for y_name in spec.y:
-                y_values = self.data.get(y_name, [])
-                n = min(len(x_values), len(y_values))
-                if n <= 0:
-                    continue
-                ax.plot(x_values[:n], y_values[:n], marker='o', linestyle='-', label=y_name)
-
+                (line,) = ax.plot([], [], marker=self.marker, linestyle="-", label=y_name)
+                lines.append((line, index[spec.x], index[y_name]))
             ax.set_xlabel(spec.xlabel or spec.x)
             ax.set_ylabel(spec.ylabel or ", ".join(spec.y))
             ax.set_title(spec.title)
             if len(spec.y) > 1:
-                ax.legend(loc="best")
+                # Optimized fixed location: loc="best" would scans all points on every draw.
+                ax.legend(loc="upper left")
             ax.grid(True)
+            self._lines.append((ax, lines))
 
         fig.tight_layout()
+        fig.canvas.draw_idle()
+
+    def _draw_plots(self, axes: Sequence[Any], fig: Any) -> None:
+        del axes  # lines were bound to their axes in _setup_plots()
+        data = self._ordered_data()
+        for ax, lines in self._lines:
+            for line, x_idx, y_idx in lines:
+                line.set_data(data[x_idx], data[y_idx])
+            ax.relim()
+            ax.autoscale_view()
+
         fig.canvas.draw_idle()
 
     def close(self) -> None:
