@@ -6,16 +6,34 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Added the `kiwi-get` cli: one-shot read of the detector PVs from a YAML config
+- Added `detector_read_timeout` scan config field for direct detector reads.
+- Added `manifestfiles --new-manifest [FILE]` CLI argument
+- Added the undulator actuator subtype `axes` (`UndulatorViaAxes`), which writes gap/shift speed multipliers through individual axis jog velocity PVs.
+- Added `set_queueing_delay()` to actuators;
+- Added `scan.close()` and context-manager use (`with scan: ...`) to release scan resources.
+- Queue plotter: `max_points`, `max_draw_points`, `refresh_interval`, `marker` and `keep_open` options.
+
 ### Changed
 
-- Queue plotter: fixed-size NumPy ring buffer, `update()` only appends the raw row to a bounded buffer;
-- Queue plotter: `max_points`, `max_draw_points`, `refresh_interval`, `marker` and `keep_open` options.
+- Queue plotter: fixed-size NumPy ring buffer; optimized for higher data rates.
+- Actuator `jog()` now returns `Optional[bool]`; `False` reports a rejected command.
+- Subscription events for a role without a registered handler now log a warning.
+- `scan_runner --new-manifest` only creates an automatically named manifest; use `manifestfiles --new-manifest FILE` for an explicit filename.
+- Shared detector connection helper used by scans and `kiwi-get`.
 
 ### Fixed
 
-- Queue plotter: closing plot windows during scans now prevents unbounded queues and command hangs.
+- Releasing EPICS PV resources when a scan closes or construction fails.
+- `cm` scans now start all axes before waiting for startup.
+- `para` scans now handle `sync` subscriptions and no longer stop when no maximum index is set.
+- `scan_runner` manifest file argument handling.
+- `manifestfiles` stops cleanly on Ctrl+C.
+- Queue plotter: closing plot windows during scans no longer causes unbounded queues and command hangs.
 
-## [0.6.0]
+## [0.6.0] - 2026-10-15
 
 ### Added
 

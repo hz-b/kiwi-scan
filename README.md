@@ -53,7 +53,7 @@ pip install "kiwi-scan[ioc]"
 Install a specific version
 
 ```bash
-pip install "kiwi-scan[ioc]==0.6.0"
+pip install "kiwi-scan[ioc]==0.6.1"
 ```
 
 For development, clone the repository and install it in editable mode:

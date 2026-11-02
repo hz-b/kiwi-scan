@@ -26,6 +26,7 @@ actuators: {}
 detector_pvs: []
 detector_pvs_monitor: True
 detector_reader_strategy: direct
+detector_read_timeout: null
 scan_dimensions: []
 parallel_scans: []
 nested_scans: []
@@ -78,6 +79,8 @@ For `tsv` and `csv`, one header row is written followed by one row per scan poin
 | `snapshot` | Maintain detector values with monitor callbacks and copy the complete local cache under one lock for each point. |
 
 The snapshot is a fast atomic read of the detector cache and should be preferred for high data rates.
+
+`detector_read_timeout` optionally sets one read timeout in seconds for all detector PVs with the `direct` strategy. See also [kiwi_get.md](kiwi_get.md).
 
 ### Timestamp output
 

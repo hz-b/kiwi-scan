@@ -22,10 +22,12 @@ Simply remove the files from ~/.vim:
 
 ```bash
 rm ~/.vim/ftdetect/kiwi_scan_yaml.vim
+rm ~/.vim/ftplugin/kiwi_scan_yaml.vim
+rm ~/.vim/indent/kiwi_scan_yaml.vim
 rm ~/.vim/syntax/kiwi_scan_yaml.vim
 ```
 
 ## Usage
 
 Automatic activation happens for `*.yaml` buffers whose first real key looks like a kiwi-scan config, for example `actuators:`, `subscriptions:` or `triggers:`.
-Highlights only top level keywords for now.
+Highlights top-level keywords and macros. 

@@ -179,12 +179,14 @@ The manifest writer tracks a sequence of scans across independent command-line o
 Create or select a new manifest file:
 
 ```bash
-scan_runner --newmanifest [optional_filename.yaml]
+manifestfiles --new-manifest [optional_filename.yaml]
 ```
+
+`scan_runner --new-manifest` also creates and activates a timestamped manifest, optionally followed by a scan in the same call. It does not take a filename.
 
 Each scan appends references to its main data file and metadata sidecar. Depending on `manifest_mode`, the entry may also contain the complete scan configuration.
 
-If no filename is given, a timestamped manifest is created, normally in `KIWI_SCAN_DATA_DIR`.
+If no filename is given, a timestamped manifest is created, normally in `KIWI_SCAN_DATA_DIR`. Use `manifestfiles --data-dir DIR` to choose another directory.
 
 External scan types can append entries through:
 
