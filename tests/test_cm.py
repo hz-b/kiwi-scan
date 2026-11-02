@@ -22,6 +22,9 @@ class SequenceActuator:
         self.rbv_reads = 0
         self.backlash = backlash
         self.run_move = Mock()
+        self.move = Mock()
+        self.wait_until_done = Mock()
+        self.wait_for_startup = Mock(return_value=True)
         self.get_velocity = Mock(return_value=1.0)
         self.set_velocity = Mock()
         self.stop = Mock()
@@ -349,20 +352,14 @@ class TestCMScanExecution(CMScanTestCase):
 
         scan.scan({}, monitor)
 
-        self.assertEqual(
-            forward.run_move.call_args_list,
-            [
-                call(-2.0, sync=True),
-                call(10.0, sync=False, wait_startup=True),
-            ],
-        )
-        self.assertEqual(
-            reverse.run_move.call_args_list,
-            [
-                call(13.0, sync=True),
-                call(0.0, sync=False, wait_startup=True),
-            ],
-        )
+        forward.move.assert_called_once_with(-2.0)
+        reverse.move.assert_called_once_with(13.0)
+        forward.wait_until_done.assert_called_once_with(-2.0, scan._stop_requested)
+        reverse.wait_until_done.assert_called_once_with(13.0, scan._stop_requested)
+        forward.run_move.assert_called_once_with(10.0, sync=False)
+        reverse.run_move.assert_called_once_with(0.0, sync=False)
+        forward.wait_for_startup.assert_called_once_with(stop_event=scan._stop_requested)
+        reverse.wait_for_startup.assert_called_once_with(stop_event=scan._stop_requested)
         self.assertEqual(
             forward.set_velocity.call_args_list,
             [call(1.5), call(4.0)],
@@ -390,6 +387,7 @@ class TestCMScanExecution(CMScanTestCase):
         scan, _unused_actuator = self.make_scan()
         actuator = Mock()
         actuator.backlash = 1.0
+        actuator.move.side_effect = RuntimeError("move failed")
         actuator.run_move.side_effect = RuntimeError("move failed")
         actuator.get_velocity.side_effect = RuntimeError("read failed")
         actuator.set_velocity.side_effect = RuntimeError("write failed")
@@ -449,6 +447,99 @@ class TestCMScanExecution(CMScanTestCase):
         scan._execute_standard.assert_called_once_with(None)
 
 
+class TestCMScanParallelAxes(CMScanTestCase):
+    """A multi-axis CM scan must move all axes concurrently."""
+
+    def make_axes(self, trace, names=("x", "y")):
+        scan, _unused = self.make_scan()
+        scan.scan_dimensions = [
+            ScanDimension(name, 0.0, 10.0, 3, velocity=1.0) for name in names
+        ]
+        axes = {}
+        for name in names:
+            axis = Mock()
+            axis.backlash = 1.0
+            axis.move.side_effect = lambda target, n=name: trace.append((n, "move", target))
+            axis.run_move.side_effect = lambda target, sync, n=name: trace.append((n, "run_move", target))
+            axis.wait_for_startup.side_effect = lambda stop_event, n=name: trace.append((n, "startup")) or True
+            axes[name] = axis
+        scan.actuators = axes
+        return scan, axes
+
+    def test_start_positions_issue_all_moves_before_waiting(self):
+        trace = []
+        scan, axes = self.make_axes(trace)
+        for name, axis in axes.items():
+            axis.wait_until_done.side_effect = (
+                lambda target, stop, n=name: trace.append((n, "wait", target))
+            )
+
+        scan._move_to_start_positions()
+
+        self.assertEqual(trace[:2], [("x", "move", -1.0), ("y", "move", -1.0)])
+        self.assertCountEqual(trace[2:], [("x", "wait", -1.0), ("y", "wait", -1.0)])
+
+    def test_start_position_waits_overlap(self):
+        # Waiting axis by axis would break the barrier.
+        trace = []
+        scan, axes = self.make_axes(trace)
+        barrier = threading.Barrier(2, timeout=2.0)
+        passed = []
+        for axis in axes.values():
+            axis.wait_until_done.side_effect = (
+                lambda target, stop: passed.append(barrier.wait() is not None)
+            )
+
+        scan._move_to_start_positions()
+
+        self.assertEqual(passed, [True, True])
+
+    def test_failed_start_move_is_not_waited_for(self):
+        trace = []
+        scan, axes = self.make_axes(trace)
+        axes["x"].move.side_effect = RuntimeError("write failed")
+
+        with self.assertLogs("kiwi_scan.scan_concrete.cm", level="WARNING"):
+            scan._move_to_start_positions()
+
+        axes["x"].wait_until_done.assert_not_called()
+        axes["y"].wait_until_done.assert_called_once_with(-1.0, scan._stop_requested)
+
+    def test_continuous_motion_commands_all_axes_before_startup_checks(self):
+        trace = []
+        scan, axes = self.make_axes(trace)
+
+        scan._start_continuous_motion()
+
+        self.assertEqual(trace, [
+            ("x", "run_move", 10.0), ("y", "run_move", 10.0),
+            ("x", "startup"), ("y", "startup"),
+        ])
+        for axis in axes.values():
+            axis.run_move.assert_called_once_with(10.0, sync=False)
+
+    def test_continuous_motion_never_blocks_on_motion_completion(self):
+        trace = []
+        scan, axes = self.make_axes(trace)
+
+        scan._start_continuous_motion()
+
+        for axis in axes.values():
+            axis.move.assert_not_called()
+            axis.wait_until_done.assert_not_called()
+
+    def test_failed_axis_does_not_get_a_startup_check(self):
+        trace = []
+        scan, axes = self.make_axes(trace)
+        axes["x"].set_velocity.side_effect = RuntimeError("write failed")
+
+        with self.assertLogs("kiwi_scan.scan_concrete.cm", level="ERROR"):
+            scan._start_continuous_motion()
+
+        axes["x"].wait_for_startup.assert_not_called()
+        self.assertEqual(trace, [("y", "run_move", 10.0), ("y", "startup")])
+
+
 class TestCMScanLifecycleHooks(CMScanTestCase):
     def test_scan_calls_extension_hooks_in_lifecycle_order(self):
         scan, actuator = self.make_scan()
@@ -477,6 +568,7 @@ class TestCMScanLifecycleHooks(CMScanTestCase):
             call._fire_triggers("after"),
         ])
         actuator.run_move.assert_not_called()
+        actuator.move.assert_not_called()
         actuator.get_velocity.assert_not_called()
         actuator.set_velocity.assert_not_called()
 

@@ -125,8 +125,13 @@ class CMScan(BaseScan):
                 break
 
     def _move_to_start_positions(self) -> None:
-        """Move each scan actuator to its backlash-adjusted start position."""
+        """Move all scan actuators to their backlash-adjusted start positions.
+
+        Every axis is started first (non-blocking), then all are waited for in
+        parallel, so axes travel concurrently.
+        """
         with self.performance.time_block("move:to_start"):
+            targets = {}
             for dim in self.scan_dimensions:
                 name = dim.actuator
                 actuator = self.actuators[name]
@@ -138,10 +143,15 @@ class CMScan(BaseScan):
                 overshoot = dim.start + backlash
                 logger.info("overshoot=%s, bdist=%s, backlash=%s", overshoot, backlash, actuator.backlash)
                 try:
-                    actuator.run_move(overshoot, sync=True)
-                    logger.info("Started actuator '%s' moving to %s", name, dim.start)
+                    actuator.move(overshoot)
+                    targets[name] = overshoot
+                    logger.info("Started actuator '%s' moving to %s", name, overshoot)
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Failed to move actuator '%s': %s", name, exc)
+            if targets:
+                self._parallel_wait(
+                    {name: self.actuators[name] for name in targets}, targets
+                )
 
     def _store_original_velocities(self) -> None:
         """Read actuator velocities for best-effort restoration after the scan."""
@@ -158,18 +168,30 @@ class CMScan(BaseScan):
                     logger.warning("Could not read velocity for actuator '%s': %s", name, exc)
 
     def _start_continuous_motion(self) -> None:
-        """Apply configured velocities and start all continuous moves."""
+        """Apply configured velocities and start all continuous moves.
+
+        All axes are commanded first (plain, non-blocking puts), then motion
+        startup is checked, so a slow startup on one axis does not delay the
+        others.
+        """
         with self.performance.time_block("move:start"):
+            started = []
             for dim in self.scan_dimensions:
                 name = dim.actuator
                 actuator = self.actuators[name]
                 try:
                     actuator.set_velocity(dim.velocity)
                     logger.info("Set velocity of actuator '%s' to %s", name, dim.velocity)
-                    actuator.run_move(dim.stop, sync=False, wait_startup=True)
+                    actuator.run_move(dim.stop, sync=False)
+                    started.append(name)
                     logger.info("Started actuator '%s' moving to %s", name, dim.stop)
                 except Exception as exc:  # noqa: BLE001
                     logger.error("Failed to configure/startup actuator '%s': %s", name, exc)
+            for name in started:
+                try:
+                    self.actuators[name].wait_for_startup(stop_event=self._stop_requested)
+                except Exception as exc:  # noqa: BLE001
+                    logger.error("Failed to observe startup of actuator '%s': %s", name, exc)
 
     def _cleanup_scan(
         self,
