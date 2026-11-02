@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from typing import List, Optional
 
 from kiwi_scan.data.manifestwriter import (
@@ -133,6 +134,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.log_level is not None:
         set_valid_logging_level(args.log_level)
 
+    deleting = False
     try:
         if args.new_manifest is not None:
             filename = None if args.new_manifest is True else args.new_manifest
@@ -196,6 +198,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if answer not in {"y", "yes"}:
                     parser.exit(1, "Aborted. No files were deleted.\n")
 
+            deleting = True
             result = ManifestArchiveDeleter.archive_and_delete(plan)
             print(f"Created bundle: {result.bundle_file}")
             print(f"Deleted files: {len(result.deleted_files)}")
@@ -232,8 +235,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         if count == 0:
             parser.exit(1, "No matching file references found. Use --include-meta or --missing if needed.\n")
         return 0
-    except (OSError, ValueError, IndexError) as exc:
+    except (FileNotFoundError, OSError, ValueError, IndexError) as exc:
         parser.exit(2, f"manifestfiles: error: {exc}\n")
+    except KeyboardInterrupt:
+        message = "\nmanifestfiles: interrupted by ctrl + c\n"
+        if deleting:
+            message += f"Originals are deleted only after the bundle is verified, so any deleted file is in {plan.bundle_file}\n"
+        sys.stderr.write(message)
+        return 130
 
 if __name__ == "__main__":
     raise SystemExit(main())

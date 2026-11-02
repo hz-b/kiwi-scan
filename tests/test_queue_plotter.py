@@ -574,22 +574,24 @@ class TestQueuePlotterDrawing(unittest.TestCase):
         monitor.plot_specs = [PlotSpec(x="t", y=["detector1"], title="Detector")]
         monitor._start_time = 0.0
         monitor.running = True
-        plt = MagicMock()
+        calls = []
 
-        def stop_after_three(_interval):
-            if plt.pause.call_count >= 3:
+        def stop_after_three(_plt, _fig, seconds):
+            calls.append(seconds)
+            if len(calls) >= 3:
                 monitor.running = False
+            return True  # True = figure still open
 
-        plt.pause.side_effect = stop_after_three
         with patch.object(monitor, "_setup_plots") as setup, patch.object(
             monitor, "_drain_queue", side_effect=[False, True, False]
-        ), patch.object(monitor, "_update_tk"), patch.object(monitor, "_draw_plots") as draw:
-            monitor._run_plot_loop(plt, MagicMock(), [MagicMock()])
+        ), patch.object(monitor, "_pump_events", side_effect=stop_after_three), patch.object(
+            monitor, "_draw_plots"
+        ) as draw:
+            monitor._run_plot_loop(MagicMock(), MagicMock(), [MagicMock()])
 
         setup.assert_called_once()
         draw.assert_called_once()
-        plt.pause.assert_called_with(0.2)
-        self.assertEqual(plt.pause.call_count, 3)
+        self.assertEqual(calls, [0.2, 0.2, 0.2])
 
     def test_run_plot_loop_warns_about_dropped_points(self):
         monitor = QueuePlotterMonitor({"print": False})

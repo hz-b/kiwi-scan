@@ -65,6 +65,7 @@ class QueuePlotterMonitor(BaseMonitor):
     DEFAULT_MAX_POINTS = 10000
     DEFAULT_MAX_DRAW_POINTS = 2000
     DEFAULT_REFRESH_INTERVAL = 0.1
+    EVENT_POLL_INTERVAL = 0.02  # keeps the window responsive between redraws
 
     def __init__(self, parameters: Optional[Dict[str, Any]] = None):
         self.parameters = parameters or {}
@@ -73,6 +74,7 @@ class QueuePlotterMonitor(BaseMonitor):
         self.max_draw_points = self._positive_int("max_draw_points", self.DEFAULT_MAX_DRAW_POINTS)
         self.refresh_interval = self._positive_float("refresh_interval", self.DEFAULT_REFRESH_INTERVAL)
         self.marker: Optional[str] = self.parameters.get("marker") or None
+        self.keep_open = bool(self.parameters.get("keep_open", False))
         # Scan thread -> GUI thread hand-off: collections.deque.append/popleft are fast and atomic with GIL (lock) 
         # update() never blocks. When the GUI falls behind by more than max_points rows, the oldest are lost.
         self.pending: Deque[Tuple[float, List[Any]]] = collections.deque(maxlen=self.max_points)
@@ -374,6 +376,8 @@ class QueuePlotterMonitor(BaseMonitor):
         try:
             fig, axes = self._create_plot_canvas(plt)
             self._run_plot_loop(plt, fig, axes)
+            if self.keep_open:
+                self._wait_for_window_close(plt, fig)
         finally:
             self._cleanup_gui(plt, fig)
 
@@ -409,21 +413,57 @@ class QueuePlotterMonitor(BaseMonitor):
 
         while self.running or self.pending:
             has_new_points = self._drain_queue()
-            self._update_tk()
 
             if has_new_points and self.plot_specs:
                 self._draw_plots(axes, fig)
 
-            plt.pause(self.refresh_interval)
+            if not self._pump_events(plt, fig, self.refresh_interval):
+                self.logger.info("Plot window closed; live plotting stopped for the rest of the scan")
+                self._closed_by_user = True
+                self.running = False
+                break
 
         dropped = self._points_received - self._points_drained
-        if dropped > 0:
+        if dropped > 0 and not self._closed_by_user:
             self.logger.warning(
                 "QueuePlotterMonitor dropped %d of %d points because the GUI fell behind (max_points=%d)",
                 dropped,
                 self._points_received,
                 self.max_points,
             )
+
+    def _wait_for_window_close(self, plt: Any, fig: Any) -> None:
+        """Keep the final plot on screen until the user closes a window.
+
+        loop() blocks here, so the scan call returns only after the window is closed.
+        """
+        if self._closed_by_user:
+            return
+        self.logger.info("Scan finished; plot window stays open until it is closed (monitor.keep_open)")
+        try:
+            fig.canvas.manager.set_window_title("Live Queue Plotter (scan finished)")
+        except AttributeError:
+            pass
+        while not self._closed_by_user and self.root is not None:
+            if not self._pump_events(plt, fig, self.refresh_interval):
+                break
+
+    def _pump_events(self, plt: Any, fig: Any, seconds: float) -> bool:
+        """Process Tk/matplotlib events for ``seconds``. Return False once the figure is closed.
+
+        Replaces plt.pause(): if the figure window is closed while pause() runs its
+        Tk event loop, that loop never stops and loop() hangs.
+        """
+        deadline = time.monotonic() + seconds
+        while True:
+            self._update_tk()
+            if not plt.fignum_exists(fig.number):
+                return False
+            fig.canvas.flush_events()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return True
+            time.sleep(min(self.EVENT_POLL_INTERVAL, remaining))
 
     def _cleanup_gui(self, plt: Any, fig: Any) -> None:
         """Release Matplotlib and Tk resources without aborting the scan."""

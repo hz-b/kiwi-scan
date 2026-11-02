@@ -105,10 +105,8 @@ monitor rows receive the raw POSIX timestamp values before that conversion.
 
 ## Queue plotter monitor
 
-The queue plotter monitor combines live plotting with optional PrintMonitor-compatible stdout output. It stores incoming rows in an internal queue, drains them in the GUI loop, and redraws the configured matplotlib panels.
-
-Use it for interactive scans where a live plot helps during setup or diagnostics.
-
+The queue plotter monitor combines live plotting with optional PrintMonitor-compatible stdout output. The scan thread passes the data to a buffer (non blocking). The GUI loop converts and updates the values using a fixed-size ring buffer.
+Updating the plot can be costly. Use it only for interactive scans where a live plot helps during setup or diagnostics or when timing is not critical.
 Example:
 
 ```yaml
@@ -140,6 +138,50 @@ Plots are configured as a list below `monitor.plots`.
 | `ylabel` | string | no | Override for the Y axis label. |
 
 The queue plotter automatically adds the synthetic channel `t`, which is the elapsed time in seconds since monitor start. All other plot channel names must match the scan output headers.
+
+### Performance options
+
+These keys sit directly below `monitor:` and control how much the live plot costs the scan.
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `max_points` | int | `10000` | Points kept per channel. Older points scroll out of the plot. Also the size of the hand-off buffer between the scan and GUI threads. |
+| `max_draw_points` | int | `2000` | Points drawn per line. Longer histories are decimated before drawing. |
+| `refresh_interval` | float | `0.1` | Seconds between GUI refreshes. A frame is only redrawn when new points arrived. |
+| `marker` | string | none | Matplotlib marker such as `o`. Markers make each frame more expensive to draw. |
+| `keep_open` | bool | `false` | Keep the final plot on screen after the scan ends. The scan command returns only after the plot window is closed. |
+
+```yaml
+monitor_type: "plot"
+monitor:
+  print:
+    enabled: false
+  max_points: 20000
+  max_draw_points: 2000
+  refresh_interval: 0.2
+  plots:
+    - x: t
+      y: [ "IOC_NAME:GetGA1" ]
+```
+
+The GUI runs in the same Python process as the scan. While matplotlib renders a frame it holds the GIL, so the scan thread can be delayed by a few milliseconds per frame. These delays appear in whichever scan timing block was running at the time (for example `read_detectors`), not in `monitor:update`. For high-rate scans, adjust `refresh_interval`, `max_draw_points`, and use `print.enabled: false` if possible.
+
+If the GUI falls more than `max_points` rows behind, the oldest pending rows are dropped. 
+
+Closing the plot window stops plotting for the rest of the scan.
+
+### Keeping the plot after the scan
+
+By default the plot window closes as soon as the scan finishes. Set `keep_open: true` to keep it: the window title changes to "Live Queue Plotter (scan finished)", zoom and pan keep working, and the scan command waits until you close the window. 
+
+```yaml
+monitor_type: "plot"
+monitor:
+  keep_open: true
+  plots:
+    - x: t
+      y: [ "IOC_NAME:GetGA1" ]
+```
 
 ### Multi-panel plotting
 

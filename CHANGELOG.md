@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed
+
+- Queue plotter: fixed-size NumPy ring buffer, `update()` only appends the raw row to a bounded buffer;
+- Queue plotter: `max_points`, `max_draw_points`, `refresh_interval`, `marker` and `keep_open` options.
+
+### Fixed
+
+- Queue plotter: closing plot windows during scans now prevents unbounded queues and command hangs.
+
 ## [0.6.0]
 
 ### Added
