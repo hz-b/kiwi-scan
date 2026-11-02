@@ -70,6 +70,8 @@ Derived scan classes implement the following methods and properties:
 - `scan.busy`
 - `scan.position`
 - `scan.stop()` 
+- `scan.close()`
+  - release resources, available as `with scan: ...`
 
 ### 4. Generic IOC controller API
 

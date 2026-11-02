@@ -152,7 +152,7 @@ class TestSharedDetectorConnections(unittest.TestCase):
             actuators={}, detector_pvs=["DET:A", "DET:B"], detector_pvs_monitor=False,
             detector_read_timeout=0.4,
         )
-        scan = SimpleNamespace(cfg=config)
+        scan = SimpleNamespace(cfg=config, _resources=ExitStack())
         with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory()):
             BaseScan._connect_detectors(scan)
         self.assertEqual(scan.detector_pvs, self.instances)
@@ -168,7 +168,7 @@ class TestSharedDetectorConnections(unittest.TestCase):
 
     def test_base_scan_failed_startup_keeps_partial_detector_list(self):
         config = ScanConfig(actuators={}, detector_pvs=["DET:A", "DET:B", "DET:C"])
-        scan = SimpleNamespace(cfg=config)
+        scan = SimpleNamespace(cfg=config, _resources=ExitStack())
         failure = ConnectionError("second detector unavailable")
         with patch("kiwi_scan.scan.detector_reader.EpicsPV", self.factory({"DET:B": failure})), \
                 patch("kiwi_scan.scan.common.create_detector_reader") as create_reader, \
@@ -180,6 +180,9 @@ class TestSharedDetectorConnections(unittest.TestCase):
         self.assertEqual(self.instances[0].close_calls, 0)
         self.assertEqual([name for name, _kwargs in self.attempts], ["DET:A", "DET:B"])
         create_reader.assert_not_called()
+        # BaseScan.__init__ closes _resources on failure, which releases the partial list.
+        scan._resources.close()
+        self.assertEqual(self.instances[0].close_calls, 1)
 
     def test_one_shot_tool_preserves_columns_and_closes_successful_connections(self):
         names = ["DET:A", "DET:B", "DET:C"]

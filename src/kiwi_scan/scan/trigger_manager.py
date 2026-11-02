@@ -131,6 +131,16 @@ class TriggerManager:
             if action.delay > 0:
                 time.sleep(action.delay)
 
+    def close(self) -> None:
+        """Close all trigger PVs and drop the prepared actions. Idempotent."""
+        for actions in self._actions_by_phase.values():
+            for action in actions:
+                try:
+                    action.pv.close()
+                except Exception:
+                    logger.debug("Failed to close trigger PV %s", action.pv.pvname, exc_info=True)
+            actions.clear()
+
     def has_actions(self, phase: Optional[str] = None) -> bool:
         if phase is None:
             return any(self._actions_by_phase[p] for p in self._phases)

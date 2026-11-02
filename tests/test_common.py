@@ -5,6 +5,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -976,6 +977,90 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan._stop_requested.set()
         self.assertFalse(scan._wait_for_tick_or_timeout(1.0))
 
+
+
+class TestBaseScanClose(unittest.TestCase):
+    def make_scan(self):
+        scan = DummyScan()
+        scan.busyflag = False
+        scan._resources = ExitStack()
+        return scan
+
+    def test_close_stops_and_joins_event_workers(self):
+        scan = self.make_scan()
+        scan._start_event_workers()
+        workers = (scan._trigger_worker, scan._plugin_worker)
+        self.assertTrue(all(worker.is_alive() for worker in workers))
+
+        scan.close()
+
+        self.assertFalse(any(worker.is_alive() for worker in workers))
+
+    def test_close_releases_owned_resources_in_reverse_order_once(self):
+        scan = self.make_scan()
+        calls = []
+        first = SimpleNamespace(close=lambda: calls.append("first"))
+        second = SimpleNamespace(close=lambda: calls.append("second"))
+        scan._own(first)
+        scan._own(second)
+        scan._own(object())  # resources without close() are ignored
+
+        scan.close()
+        scan.close()
+
+        self.assertEqual(calls, ["second", "first"])
+
+    def test_close_continues_after_failing_cleanup_step(self):
+        scan = self.make_scan()
+        released = MagicMock()
+        scan._own(SimpleNamespace(close=released))
+        scan._own(SimpleNamespace(close=MagicMock(side_effect=RuntimeError("boom"))))
+
+        with self.assertLogs("kiwi_scan.scan.common", level="ERROR") as logs:
+            scan.close()
+
+        released.assert_called_once_with()
+        self.assertIn("Error while closing DummyScan", "\n".join(logs.output))
+
+    def test_close_rejects_running_scan(self):
+        scan = self.make_scan()
+        resource = MagicMock()
+        scan._own(resource)
+        scan.busyflag = True
+
+        with self.assertRaises(RuntimeError):
+            scan.close()
+
+        resource.close.assert_not_called()
+
+    def test_context_manager_closes_scan(self):
+        scan = self.make_scan()
+        resource = MagicMock()
+        scan._own(resource)
+
+        with scan as entered:
+            self.assertIs(entered, scan)
+
+        resource.close.assert_called_once_with()
+
+    def test_failed_constructor_releases_resources_created_so_far(self):
+        resource = MagicMock()
+
+        def connect_actuators(scan):
+            scan._own(resource)
+            raise ConnectionError("actuator PV did not connect")
+
+        with patch("kiwi_scan.scan.common.ensure_ca_context"), patch.multiple(
+            BaseScan,
+            _initialize_config=lambda scan, config: setattr(scan, "busyflag", False),
+            _initialize_data_output=lambda scan, data_dir: None,
+            _initialize_scan_timing=lambda scan: None,
+            _connect_detectors=lambda scan: None,
+            _connect_actuators=connect_actuators,
+        ), self.assertRaises(ConnectionError):
+            BaseScan.__init__(DummyScan.__new__(DummyScan), MagicMock())
+
+        resource.close.assert_called_once_with()
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

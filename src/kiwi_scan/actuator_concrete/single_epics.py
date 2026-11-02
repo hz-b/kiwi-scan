@@ -24,7 +24,9 @@ class EpicsActuator(AbstractActuator):
     def __init__(self, config: ActuatorConfig):
         super().__init__(config)
 
-        created_pvs = []
+        # PVs owned by this actuator; close() releases them in reverse order
+        created_pvs: List[EpicsPV] = []
+        self._owned_pvs = created_pvs
 
         def create_pv(pvname: str, **kwargs):
             pv = EpicsPV(pvname, **kwargs)
@@ -71,6 +73,12 @@ class EpicsActuator(AbstractActuator):
         except BaseException:
             _close_created_pvs(created_pvs)
             raise
+
+    def close(self) -> None:
+        """Remove all monitors and close every PV owned by the actuator. Idempotent."""
+        self.clear_monitors()
+        owned, self._owned_pvs = self._owned_pvs, []
+        _close_created_pvs(owned)
 
     def set_queueing_delay(self, delay: float) -> None:
         """Update actuator pacing and every owned command-PV put delay."""
@@ -155,9 +163,9 @@ class EpicsActuator(AbstractActuator):
                 except Exception:
                     logger.exception("[EPICS] remove_callback failed for %s idx=%r", pvname, idx)
             try:
-                mon.disconnect()
+                mon.close()
             except Exception:
-                logger.debug("[EPICS] disconnect failed for %s", pvname, exc_info=True)
+                logger.debug("[EPICS] close failed for %s", pvname, exc_info=True)
 
         with self._monitor_lock:
             self._epics_cb_indices.pop(pvname, None)

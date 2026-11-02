@@ -115,6 +115,10 @@ class AbstractActuator(ABC):
         for pv in pvs:
             self.remove_monitor(pv)
 
+    def close(self) -> None:
+        """Release backend resources. Backends owning PVs override; default removes all monitors."""
+        self.clear_monitors()
+
     def on_pv_event(self, pvname: str, cb: MonitorCallback) -> None:
         """Register an additional listener for pvname (even if monitor already exists)."""
         with self._monitor_lock:

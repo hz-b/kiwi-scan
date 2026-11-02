@@ -65,6 +65,12 @@ class ScanABC(ABC):
         Execute scan
         """
 
+    def close(self) -> None:
+        """
+        Release resources owned by the scan (PVs, worker threads).
+        Default does nothing, so existing scan implementations stay compatible.
+        """
+
     @abstractmethod
     def get_value(
         self,

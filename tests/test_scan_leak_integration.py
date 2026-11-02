@@ -2,9 +2,9 @@
 Leak test for scan objects that are created and destroyed inside one process.
 
 A long-running host (e.g. the generic scan IOC) creates many scan objects
-without exiting. Every scan must release what it owns once it is dropped:
-worker threads, EpicsPV/pyepics PV objects, pyepics CA cache callbacks and
-file descriptors. pyepics keeps channels in ``epics.ca._cache`` by name even
+without exiting. Every scan must release what it owns once it is closed and
+dropped: worker threads, EpicsPV/pyepics PV objects, pyepics CA cache
+callbacks and file descriptors. pyepics keeps channels in ``epics.ca._cache`` by name even
 after a PV is disconnected, so the test compares growth across cycles after a
 warm-up cycle instead of expecting absolute zero.
 
@@ -33,7 +33,6 @@ from typing import Any, Dict, List, Optional
 from unittest import mock
 
 import epics
-import pytest
 import yaml
 
 from kiwi_scan.data.manifestwriter import ManifestWriter
@@ -208,14 +207,15 @@ class TestScanLeakIntegration(unittest.TestCase):
         ManifestWriter.newmanifest(filename=os.environ[ManifestWriter.ENV_MANIFEST_FILE])
 
     def _cycle(self, run_scan: bool) -> "weakref.ref[Any]":
-        """Create one scan, optionally run it, drop it. Returns a weakref to the dropped scan."""
+        """Create one scan, optionally run it, close and drop it. Returns a weakref to the dropped scan."""
         data_dir = tempfile.mkdtemp(dir=self._tmp.name)
         scan = create_scan_with_config("linear", _make_config(self.POSITIONS, data_dir), data_dir)
         if scan is None:
             # Not an AssertionError on purpose: setup problems must not count as the expected failure.
             raise RuntimeError("create_scan_with_config() returned None; see log for the cause")
-        if run_scan:
-            scan.execute()
+        with scan:
+            if run_scan:
+                scan.execute()
         ref = weakref.ref(scan)
         del scan
         return ref
@@ -241,14 +241,10 @@ class TestScanLeakIntegration(unittest.TestCase):
         if problems:
             self.fail("Scan create/destroy leaks resources:\n  " + "\n  ".join(problems))
 
-    # TODO: Remove xfail once BaseScan stops its worker threads and closes its EpicsPVs on cleanup
-    #       (see TODO in EpicsPV.close()).
-    @pytest.mark.xfail(raises=AssertionError, strict=True, reason="scan objects leak threads and PVs")
     def test_create_destroy_does_not_leak(self):
         """Create scans and drop them without running. No writes to the IOC."""
         self._assert_no_leak(run_scan=False)
 
-    @pytest.mark.xfail(raises=AssertionError, strict=True, reason="scan objects leak threads and PVs")
     def test_create_run_destroy_does_not_leak(self):
         """
         Create scans, run a 2-point scan at the current positions and drop them.

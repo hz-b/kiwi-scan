@@ -294,5 +294,25 @@ class TestEpicsActuatorMonitorLifecycle(unittest.TestCase):
         self.assertIsNone(actuator.get_last_event("MON:PV"))
 
 
+
+class TestTriggerManagerClose(unittest.TestCase):
+    @patch("kiwi_scan.scan.trigger_manager.EpicsPV", FakeTriggerPV)
+    def test_close_closes_trigger_pvs_and_drops_actions(self):
+        triggers = ScanTriggers.from_dict(
+            {
+                "before": [{"pv": "PV:BEFORE", "value": 1}],
+                "after": [{"pv": "PV:AFTER", "value": 0}],
+            }
+        )
+        manager = TriggerManager.from_config(triggers)
+        pvs = [action.pv for actions in manager._actions_by_phase.values() for action in actions]
+
+        manager.close()
+        manager.close()
+
+        self.assertEqual(len(pvs), 2)
+        self.assertTrue(all(pv.closed for pv in pvs))
+        self.assertFalse(manager.has_actions())
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

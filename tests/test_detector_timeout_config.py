@@ -5,8 +5,9 @@
 
 import sys
 import unittest
+from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import call, patch
+from unittest.mock import MagicMock, call, patch
 
 from kiwi_scan import test_support
 from kiwi_scan.datamodels import ScanConfig
@@ -85,8 +86,9 @@ class TestDetectorReadTimeoutScanWiring(unittest.TestCase):
                     detector_reader_strategy=strategy,
                     detector_read_timeout=timeout,
                 )
-                scan = SimpleNamespace(cfg=config)
-                reader = object()
+                # BaseScan registers the detector PVs and reader for close() in _resources.
+                scan = SimpleNamespace(cfg=config, _resources=ExitStack())
+                reader = MagicMock()
                 with patch(
                     "kiwi_scan.scan.detector_reader.EpicsPV", side_effect=test_support.FakePV,
                 ) as create_pv, patch(

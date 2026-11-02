@@ -251,7 +251,6 @@ class EpicsPV:
         pv = self._require_pv()
         self._ca(pv.disconnect)
 
-    # TODO: FIXME: Call close() from scan cleanups including subscriptions after stopping workers.
     def close(self) -> None:
         """ Release PV resources. Can be called repeatedly from users after workes have stopped.  """
         with _CA_LOCK:

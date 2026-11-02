@@ -386,6 +386,10 @@ class ScanIOCController:
             logger.info("Starting IOC scan preparation")
             self.status = ScanIOCStatus.INITIALIZING
             self.message = "initializing"
+            # A prepared scan that never ran still owns PVs and worker threads.
+            previous, self.scan = self.scan, None # store old prepared scan and cleanup
+            if previous is not None:
+                self._close_scan(previous)
             try:
                 self.scan = self.create_scan(dimensions)
             except Exception as exc:
@@ -423,6 +427,19 @@ class ScanIOCController:
                 self.message = "idle"
                 self.scan = None
             logger.info("IOC scan execution completed")
+        finally:
+            self._close_scan(scan)
+
+    @staticmethod
+    def _close_scan(scan: Any) -> None:
+        """Release PVs and worker threads of a scan object the controller drops."""
+        close = getattr(scan, "close", None)
+        if not callable(close):
+            return
+        try:
+            close()
+        except Exception:
+            logger.exception("Failed to close scan object %s", type(scan).__name__)
 
     def run_scan(self, dimensions: Sequence[ScanDimension]) -> None:
         """ Execute scan. This should be executed in its own task (loop.create_task). Obsolete helper function """

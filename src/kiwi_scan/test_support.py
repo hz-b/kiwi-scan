@@ -53,6 +53,7 @@ class FakePV:
         self.kwargs = dict(kwargs)
         self.clear_callbacks_called = False
         self.disconnected = False
+        self.closed = False
         self.connected = True
         self.timestamp = 0.0
         self.severity = 0
@@ -152,6 +153,11 @@ class FakePV:
         if self.__class__.use_raw_pv:
             self._pv.disconnect()
         self._disconnect()
+
+    def close(self) -> None:
+        """Mirror EpicsPV.close(): release the channel; repeated calls are allowed."""
+        self.closed = True
+        self.disconnect()
 
     def _disconnect(self) -> None:
         self.disconnected = True

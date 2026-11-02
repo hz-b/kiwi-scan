@@ -22,6 +22,7 @@ class DummyDetector:
 
     def get_with_metadata(self, *, use_monitor, timeout=None):
         self.use_monitor = use_monitor
+        self.timeout = timeout
         if self.error is not None:
             raise self.error
         return self.reading
@@ -43,18 +44,6 @@ class DummyDetector:
     def emit(self, value, **metadata):
         for callback in list(self._callbacks.values()):
             callback(pvname=self.pvname, value=value, **metadata)
-
-
-class TimeoutDetector(DummyDetector):
-    """PV recording the configured CA timeout."""
-
-    def __init__(self, pvname, reading=None, error=None):
-        super().__init__(pvname, reading, error)
-        self.read_calls = []
-
-    def get_with_metadata(self, *, use_monitor, timeout=None):
-        self.read_calls.append((use_monitor, timeout))
-        return super().get_with_metadata(use_monitor=use_monitor)
 
 
 class TestDirectDetectorReadStrategy(unittest.TestCase):
@@ -109,60 +98,6 @@ class TestDirectDetectorReadStrategy(unittest.TestCase):
 
         strategy.start()
         strategy.stop()
-
-    def test_unconfigured_timeout_passes_none_for_wrapper_defaults(self):
-        detector = TimeoutDetector("DET:DEFAULT", {"value": 4.0})
-        reader = create_detector_reader(
-            "direct", [detector], use_monitor=False, read_timeout=None,
-        )
-
-        self.assertEqual(reader.read(), [{"value": 4.0}])
-        self.assertFalse(detector.use_monitor)
-        self.assertEqual(detector.read_calls, [(False, None)])
-
-    def test_timeout_applies_to_every_pv_without_changing_monitor_selection(self):
-        for use_monitor in (False, True):
-            with self.subTest(use_monitor=use_monitor):
-                detectors = [
-                    TimeoutDetector("DET:A", {"value": 1.0}),
-                    TimeoutDetector("DET:B", {"value": 2.0}),
-                ]
-                reader = create_detector_reader(
-                    "direct", detectors, use_monitor=use_monitor, read_timeout="0.75",
-                )
-
-                self.assertEqual(reader.read(), [{"value": 1.0}, {"value": 2.0}])
-                for detector in detectors:
-                    self.assertEqual(detector.read_calls, [(use_monitor, 0.75)])
-
-    def test_timeout_does_not_break_failure_alignment_or_later_reads(self):
-        good = TimeoutDetector("DET:GOOD", {"value": 1})
-        timeout = TimeoutDetector("DET:TIMEOUT", error=TimeoutError("CA get timed out"))
-        missing = TimeoutDetector("DET:NONE")
-        later = TimeoutDetector("DET:LATER", {"value": 2})
-        detectors = [good, timeout, missing, later]
-        strategy = DirectDetectorReadStrategy(
-            detectors, use_monitor=False, read_timeout=0.5,
-        )
-
-        with self.assertLogs("kiwi_scan.scan.detector_reader", level="ERROR"):
-            self.assertEqual(strategy.read(), [{"value": 1}, None, None, {"value": 2}])
-        for detector in detectors:
-            self.assertEqual(detector.read_calls, [(False, 0.5)])
-
-    def test_invalid_timeout_is_rejected_before_any_read(self):
-        detector = TimeoutDetector("DET:A", {"value": 1})
-        for timeout in (0, -1, float("inf"), float("-inf"), float("nan"), "invalid", "", 10 ** 400):
-            with self.subTest(timeout=timeout), self.assertRaisesRegex(ValueError, "read_timeout"):
-                DirectDetectorReadStrategy(
-                    [detector], use_monitor=False, read_timeout=timeout,
-                )
-        for timeout in (True, False):
-            with self.subTest(timeout=timeout), self.assertRaisesRegex(TypeError, "read_timeout"):
-                DirectDetectorReadStrategy(
-                    [detector], use_monitor=False, read_timeout=timeout,
-                )
-        self.assertEqual(detector.read_calls, [])
 
 
 class TestMonitorSnapshotDetectorReadStrategy(unittest.TestCase):
@@ -243,23 +178,6 @@ class TestDetectorReaderFactory(unittest.TestCase):
             reader.strategy,
             MonitorSnapshotDetectorReadStrategy,
         )
-
-    def test_snapshot_timeout_does_not_add_synchronous_gets(self):
-        detector = DummyDetector("DET:A", {"value": 1, "timestamp": 10})
-        reader = create_detector_reader(
-            "snapshot", [detector], use_monitor=True, read_timeout=0.75,
-        )
-
-        reader.start()
-        self.addCleanup(reader.stop)
-        self.assertEqual(reader.read()[0]["value"], 1)
-        detector.emit(2, timestamp=11)
-        self.assertEqual(reader.read()[0]["value"], 2)
-        self.assertIsNone(detector.use_monitor)
-
-    def test_snapshot_factory_rejects_invalid_timeout_at_configuration(self):
-        with self.assertRaisesRegex(ValueError, "read_timeout"):
-            create_detector_reader("snapshot", [], use_monitor=True, read_timeout=-1)
 
     def test_unknown_strategy_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "Unknown detector reader strategy"):

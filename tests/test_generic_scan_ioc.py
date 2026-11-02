@@ -33,6 +33,7 @@ class FakeScan:
         self.position = 1.25
         self.executed = False
         self.stopped = False
+        self.closed = False
         self.data_writing_enabled = bool(data_writing_enabled)
         self.output_file = "/tmp/fake_scan.txt"
         self.values: Dict[str, Any] = {
@@ -56,6 +57,9 @@ class FakeScan:
     def stop(self) -> None:
         self.stopped = True
         self.busyflag = False
+
+    def close(self) -> None:
+        self.closed = True
 
     def get_value(self, name: str, *, default: Any = None, with_metadata: bool = False) -> Any:
         return self.values.get(name, default)
@@ -310,9 +314,34 @@ class TestScanIOCController(unittest.TestCase):
 
         controller.execute_current_scan()
         self.assertTrue(created_scan.executed)
+        self.assertTrue(created_scan.closed)
         self.assertIsNone(controller.scan)
         self.assertEqual(controller.status, ScanIOCStatus.IDLE)
         self.assertEqual(controller.message, "idle")
+
+    def test_failed_execute_closes_scan(self):
+        created: List[Any] = []
+        controller = self.make_controller(created=created)
+        scan = controller.start([ScanDimension("motor", 0.0, 1.0, 2, 0.0)])
+        scan.execute = lambda: (_ for _ in ()).throw(RuntimeError("scan failed"))
+
+        with self.assertRaises(RuntimeError):
+            controller.execute_current_scan()
+
+        self.assertTrue(scan.closed)
+        self.assertEqual(controller.status, ScanIOCStatus.ERROR)
+
+    def test_start_closes_previous_idle_scan(self):
+        controller = self.make_controller()
+        dim = ScanDimension("motor", 0.0, 1.0, 2, 0.0)
+        previous = controller.start([dim])
+        controller.status = ScanIOCStatus.IDLE
+
+        current = controller.start([dim])
+
+        self.assertTrue(previous.closed)
+        self.assertFalse(current.closed)
+        self.assertIs(controller.scan, current)
 
     def test_start_rejects_active_scan(self):
         controller = self.make_controller()

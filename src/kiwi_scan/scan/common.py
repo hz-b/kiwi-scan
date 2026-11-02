@@ -10,6 +10,7 @@ import threading
 
 # import pdb
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import ExitStack
 from typing import Any, Callable, Dict, List, Optional
 
 from kiwi_scan.actuator.factory import create_actuator
@@ -45,6 +46,9 @@ from .trigger_manager import TriggerManager
 
 logger = logging.getLogger(__name__)
 
+# Queue item that wakes an event worker blocked in get() and ends its loop.
+_WORKER_STOP = object()
+
 
 class BaseScan(ScanABC):
     """
@@ -67,20 +71,27 @@ class BaseScan(ScanABC):
         super().__init__(config, data_dir)
         logger.debug("Init BaseScan")
 
-        self._initialize_config(config)
-        self._initialize_data_output(data_dir)
-        self._initialize_scan_timing()
-        self._connect_detectors()
-        self._connect_actuators()
-        self._initialize_runtime_managers()
-        self._initialize_stop_pv()
-        self._initialize_metadata_monitor()
-        self._initialize_performance_tracker()
-        self._initialize_runtime_state()
-        self._initialize_event_state()
-        self._start_event_workers()
-        self._initialize_event_handler()
-        self._start_legacy_subscriptions_if_needed()
+        # Resources owned by the scan (PVs, actuators, workers); close() releases them in reverse order.
+        self._resources = ExitStack()
+        try:
+            self._initialize_config(config)
+            self._initialize_data_output(data_dir)
+            self._initialize_scan_timing()
+            self._connect_detectors()
+            self._connect_actuators()
+            self._initialize_runtime_managers()
+            self._initialize_stop_pv()
+            self._initialize_metadata_monitor()
+            self._initialize_performance_tracker()
+            self._initialize_runtime_state()
+            self._initialize_event_state()
+            self._start_event_workers()
+            self._initialize_event_handler()
+            self._start_legacy_subscriptions_if_needed()
+        except BaseException:
+            # Do not leave connected PVs and running workers behind a failed constructor.
+            self.close()
+            raise
 
     def _initialize_config(self, config: ScanConfig) -> None:
         """Validate and normalize scan configuration used during runtime."""
@@ -100,6 +111,7 @@ class BaseScan(ScanABC):
         self.parallel_scans = config.parallel_scans or []
         self.nested_scans = config.nested_scans or []
         self.trigger_manager = TriggerManager.from_config(self.cfg.triggers)
+        self._own(self.trigger_manager)
 
     def _initialize_data_output(self, data_dir) -> None:
         """Create the main scan-file lifecycle manager."""
@@ -136,12 +148,14 @@ class BaseScan(ScanABC):
             actuators=self.actuators,
         )
         self.sync_controller = SyncController(subscriptions)
+        self._resources.callback(self._stop_subscriptions)
         self._validate_config()
 
     def _initialize_stop_pv(self) -> None:
         """Connect the optional external stop process variable."""
         if self.cfg.stop_pv:
             self.stop_pv = EpicsPV(self.cfg.stop_pv)
+            self._own(self.stop_pv)
             self.prefix = self.cfg.stop_pv.split(":")[0]
         else:
             self.stop_pv = None
@@ -162,6 +176,7 @@ class BaseScan(ScanABC):
             queue_maxsize=20000,
         )
         self._meta_mon_started = False
+        self._resources.callback(self._stop_metadata_monitor)
 
     def _initialize_runtime_state(self) -> None:
         """Initialize mutable per-scan runtime state."""
@@ -215,17 +230,47 @@ class BaseScan(ScanABC):
         self._trigger_worker_stop = threading.Event()
         self._trigger_worker = threading.Thread(
             target=self._trigger_worker_loop,
+            name=f"{self.__class__.__name__}-trigger-worker",
             daemon=True,
         )
         self._trigger_worker.start()
+        self._resources.callback(
+            self._stop_event_worker, self._trigger_worker, self._trigger_worker_stop, self._trigger_q
+        )
 
         self._plugin_q = queue.SimpleQueue()
         self._plugin_worker_stop = threading.Event()
         self._plugin_worker = threading.Thread(
             target=self._plugin_worker_loop,
+            name=f"{self.__class__.__name__}-plugin-worker",
             daemon=True,
         )
         self._plugin_worker.start()
+        self._resources.callback(
+            self._stop_event_worker, self._plugin_worker, self._plugin_worker_stop, self._plugin_q
+        )
+
+    @staticmethod
+    def _stop_event_worker(
+        worker: threading.Thread,
+        stop_event: threading.Event,
+        work_queue: queue.SimpleQueue,
+        join_timeout: float = 2.0,
+    ) -> None:
+        """Wake one event worker blocked in get() and join it; a running worker keeps the scan alive."""
+        stop_event.set()
+        work_queue.put(_WORKER_STOP)
+        if worker is threading.current_thread():
+            return
+        worker.join(join_timeout)
+        if worker.is_alive():
+            logger.warning("Event worker %s did not stop within %.1fs", worker.name, join_timeout)
+
+    def _own(self, resource: Any) -> None:
+        """Register resource.close() (if any) to run when the scan is closed."""
+        close = getattr(resource, "close", None)
+        if callable(close):
+            self._resources.callback(close)
 
     def _initialize_event_handler(self) -> None:
         """Create default subscription handlers after event queues exist."""
@@ -314,12 +359,6 @@ class BaseScan(ScanABC):
                 raise ValueError(f"ScanDimension refers to unknown actuator: '{dim.actuator}'")
 
     def _connect_detectors(self):
-        """ 
-        TODO: 
-        - close all detector PVs already created on connection failure
-        - abort scan initialization. 
-        - preserve exception (failed PV name).
-        """
         logger.debug(f"Detector PVs: {self.cfg.detector_pvs}")
         logger.debug("Init Detectors")
         logger.debug(f"Monitor: {self.cfg.detector_pvs_monitor}")
@@ -327,12 +366,8 @@ class BaseScan(ScanABC):
         self.detector_pvs = []
         self.detector_pvs_monitor = self.cfg.detector_pvs_monitor
         for _, pv in connect_detector_pvs(
-            self.cfg.detector_pvs,
-            timeout=1.0,
-            connection_timeout=1.0,
-            queueing_delay=0.0,
-            auto_monitor=True,
-            abort_on_error=True,
+            self.cfg.detector_pvs, 1.0, self._resources,
+            auto_monitor=True, abort_on_error=True, timeout=1.0, queueing_delay=0.0,
         ):
             self.detector_pvs.append(pv)
         logger.info("PVs connected: %d", len(self.detector_pvs))
@@ -342,6 +377,7 @@ class BaseScan(ScanABC):
             use_monitor=self.detector_pvs_monitor,
             read_timeout=self.cfg.detector_read_timeout,
         )
+        self._resources.callback(self._detector_reader.stop)
 
     def _connect_actuators(self) -> None:
         """ Connect actuators from the already validated scan configuration. """
@@ -351,6 +387,7 @@ class BaseScan(ScanABC):
         for name, cfg in self.cfg.actuators.items():
             logger.info("Creating actuator '%s' → PV='%s', RB_PV='%s'", name, cfg.pv, cfg.rb_pv)
             actuators[name] = create_actuator(cfg)
+            self._own(actuators[name])
             logger.debug("Actuator created")
 
         self.actuators = actuators
@@ -1071,6 +1108,27 @@ class BaseScan(ScanABC):
         except Exception:
             logger.debug("Failed to wake scan wait condition", exc_info=True)
 
+    def close(self) -> None:
+        """
+        Release everything the scan owns: event workers, subscriptions, detector reader,
+        metadata monitor and the actuator, detector, trigger and stop PVs.
+
+        Call it once the scan is finished and no longer needed; the object cannot scan afterwards.
+        Repeated calls do nothing.
+        """
+        if getattr(self, "busyflag", False):
+            raise RuntimeError("Cannot close a running scan; call stop() and wait until busy is False")
+        try:
+            self._resources.close()
+        except Exception:
+            logger.exception("Error while closing %s", self.__class__.__name__)
+
+    def __enter__(self) -> BaseScan:  # noqa: PYI034
+        return self
+
+    def __exit__(self, *exc_info: object) -> None:
+        self.close()
+
     @property
     def busy(self) -> bool:
         """True while scan"""
@@ -1173,6 +1231,8 @@ class BaseScan(ScanABC):
     def _trigger_worker_loop(self) -> None:
         while not self._trigger_worker_stop.is_set():
             ev = self._trigger_q.get()
+            if ev is _WORKER_STOP:
+                break
             try:
                 self._fire_triggers("monitor")
             except Exception:
@@ -1181,6 +1241,8 @@ class BaseScan(ScanABC):
     def _plugin_worker_loop(self) -> None:
         while not self._plugin_worker_stop.is_set():
             ev = self._plugin_q.get()
+            if ev is _WORKER_STOP:
+                break
 
             for plugin in self.plugins:
                 try:
