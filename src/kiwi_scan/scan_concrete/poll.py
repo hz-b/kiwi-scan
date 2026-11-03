@@ -71,6 +71,9 @@ class PollScan(BaseScan):
         """Release polling-scan resources using its established semantics."""
         writer_error = self._drain_parallel_writer_for_cleanup()
         self._run_cleanup_step("detectors:stop", self._stop_detector_reader)
+        # Always close resources, even when a plugin's end hook fails.
+        self._run_cleanup_step("plugins:stop", self._end_plugins)
+        self._run_cleanup_step("plugins:close", self._close_plugins)
         self._stop_metadata_monitor()
         if monitor is not None:
             monitor.close()
@@ -135,15 +138,17 @@ class PollScan(BaseScan):
 
         del positions
 
-        self._start_metadata_monitor()
-        self._fire_triggers("before")
-        self._wait_for_motion_start(self.first_actuator)
-
-        self.busyflag = True
-        self._stop_requested.clear()
         scan_failed = False
         try:
+            # Include startup so failures and interrupts still close plugins.
+            self._start_metadata_monitor()
+            self._fire_triggers("before")
+            self._wait_for_motion_start(self.first_actuator)
+
+            self.busyflag = True
+            self._stop_requested.clear()
             self._start_detector_reader()
+            self._start_plugins()
             self._start_subscriptions()
             with self.performance.time_block("daq:run"):
                 self.run_daq(monitor)

@@ -249,6 +249,9 @@ class ParaScan(BaseScan):
         writer_error = self._drain_parallel_writer_for_cleanup()
         self._run_cleanup_step("detectors:stop", self._stop_detector_reader)
         self._daq_is_on = False
+        # Always close resources, even when a plugin's end hook fails.
+        self._run_cleanup_step("plugins:stop", self._end_plugins)
+        self._run_cleanup_step("plugins:close", self._close_plugins)
         self._stop_metadata_monitor()
         if monitor is not None:
             monitor.close()
@@ -330,19 +333,20 @@ class ParaScan(BaseScan):
 
         self.busyflag = True
         self._stop_requested.clear()
-        self.write_header_to_output_file()
-
-        range_exits = {
-            dim.actuator: RangeExitDetector(dim.start, dim.stop, eps=0.001, out_threshold=3)
-            for dim in self.scan_dimensions
-        }
-        tolerances = self._position_tolerances()
-        index = 0
-        have_recorded_inside_range = False
-
         scan_failed = False
         try:
+            # Include startup so failures and interrupts still close plugins.
+            self.write_header_to_output_file()
+            range_exits = {
+                dim.actuator: RangeExitDetector(dim.start, dim.stop, eps=0.001, out_threshold=3)
+                for dim in self.scan_dimensions
+            }
+            tolerances = self._position_tolerances()
+            index = 0
+            have_recorded_inside_range = False
+
             self._start_detector_reader()
+            self._start_plugins()
             self._start_subscriptions()
             self._start_metadata_monitor()
             self._fire_triggers("before")
