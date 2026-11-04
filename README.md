@@ -335,6 +335,7 @@ Public releases use clean semantic versions (X.Y.Z) on PyPI, each mapped to a ti
 
 ### Guidelines
 - Read the development setup section.
+- Read CONTRIBUTING.md, also see the notes on the use of AI.
 - Keep changes focused and small.
 - Run `make test` locally.
 - Tests should be added in `tests/`
