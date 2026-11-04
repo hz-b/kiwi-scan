@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `poll` scans report busy and activate subscriptions before waiting for external motion; API stops, stop subscriptions, and the stop PV now cancel startup without losing the stop request.
 - Releasing EPICS PV resources when a scan closes or construction fails.
 - `cm` scans now start all axes before waiting for startup.
 - `cm` and derived `monocm` scans acquire and process approach points before range entry, so controller plugins receive detector samples. Positive `steps` limits still start counting at range entry.

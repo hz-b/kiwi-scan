@@ -28,6 +28,7 @@ class SequenceActuator:
         self._ready_values = list(ready_values)
         self.rbv_reads = 0
         self.ready_reads = 0
+        self.stop = Mock()
 
     @staticmethod
     def _next(values):
@@ -72,6 +73,8 @@ class PollScanTestCase(unittest.TestCase):
         scan._position = None
         scan._position_sync_subscription_set = False
         scan._stop_requested = threading.Event()
+        scan._tick_cond = threading.Condition()
+        scan._tick_seq = 0
         scan.performance = Mock()
         scan.performance.time_block.side_effect = (
             lambda *_args, **_kwargs: nullcontext()
@@ -188,17 +191,124 @@ class TestPollScanSynchronization(PollScanTestCase):
 
 
 class TestPollScanLoop(PollScanTestCase):
-    @patch("kiwi_scan.scan_concrete.poll.time.sleep")
-    def test_scan_waits_until_actuator_starts_moving(self, sleep):
+    def test_scan_waits_until_actuator_starts_moving(self):
         actuator = SequenceActuator(moving_values=(False, True))
         scan, _actuator = self.make_scan(actuator=actuator)
-        scan.get_stop_pv.return_value = 1
+        scan.run_daq = Mock()
+
+        def wait_for_motion(_timeout):
+            self.assertTrue(scan.busy)
+            scan._start_subscriptions.assert_called_once_with()
+            scan._detector_reader.start.assert_not_called()
+            return False
+
+        with patch.object(
+            scan._stop_requested, "wait", side_effect=wait_for_motion,
+        ) as wait:
+            scan.scan(None)
+
+        wait.assert_called_once_with(0.05)
+        scan.run_daq.assert_called_once_with(None)
+        scan._start_subscriptions.assert_called_once_with()
+        scan._clear_subscriptions.assert_called_once_with()
+
+    def test_stop_cancels_startup_without_actuator_motion(self):
+        actuator = SequenceActuator(moving_values=(False,))
+        scan, _actuator = self.make_scan(actuator=actuator)
+        monitor = Mock()
+        startup_waiting = threading.Event()
+        original_wait = scan._stop_requested.wait
+        errors = []
+
+        def wait_for_stop(timeout):
+            startup_waiting.set()
+            return original_wait(timeout)
+
+        def run_scan():
+            try:
+                scan.scan(None, monitor)
+            except Exception as exc:  # noqa: BLE001 - surface worker failures in the test.
+                errors.append(exc)
+
+        with patch.object(scan._stop_requested, "wait", side_effect=wait_for_stop):
+            worker = threading.Thread(target=run_scan, daemon=True)
+            worker.start()
+            try:
+                self.assertTrue(startup_waiting.wait(1.0))
+                self.assertTrue(scan.busy)
+                scan._start_subscriptions.assert_called_once_with()
+                scan.stop()
+                worker.join(1.0)
+                self.assertFalse(worker.is_alive())
+            finally:
+                scan._stop_requested.set()
+                worker.join(1.0)
+
+        self.assertEqual(errors, [])
+        self.assertTrue(scan._stop_requested.is_set())
+        self.assertFalse(scan.busy)
+        actuator.stop.assert_called_once_with()
+        scan._detector_reader.start.assert_not_called()
+        scan.read_detectors.assert_not_called()
+        scan._clear_subscriptions.assert_called_once_with()
+        monitor.close.assert_called_once_with()
+        self.assertEqual(
+            scan._fire_triggers.call_args_list,
+            [call("before"), call("after")],
+        )
+
+    def test_stop_subscription_cancels_startup(self):
+        actuator = SequenceActuator(moving_values=(False,))
+        scan, _actuator = self.make_scan(actuator=actuator)
+        subscription = SimpleNamespace(name="external_stop")
+
+        def start_subscriptions():
+            self.assertTrue(scan.busy)
+            scan.event_handler.on_stop_event(
+                PvEvent("SCAN:STOP", 1), subscription,
+            )
+
+        scan._start_subscriptions.side_effect = start_subscriptions
 
         scan.scan(None)
 
-        sleep.assert_called_once_with(0.05)
-        scan._start_subscriptions.assert_called_once_with()
+        self.assertTrue(scan._stop_requested.is_set())
+        self.assertFalse(scan.busy)
+        actuator.stop.assert_called_once_with()
+        scan._detector_reader.start.assert_not_called()
+        scan.read_detectors.assert_not_called()
         scan._clear_subscriptions.assert_called_once_with()
+
+    def test_stop_pv_cancels_startup_while_actuator_is_stationary(self):
+        actuator = SequenceActuator(moving_values=(False,))
+        scan, _actuator = self.make_scan(actuator=actuator)
+        scan.get_stop_pv.side_effect = [0, 1]
+
+        with patch.object(scan._stop_requested, "wait", return_value=False) as wait:
+            scan.scan(None)
+
+        wait.assert_called_once_with(0.05)
+        self.assertTrue(scan._stop_requested.is_set())
+        self.assertFalse(scan.busy)
+        actuator.stop.assert_called_once_with()
+        scan._detector_reader.start.assert_not_called()
+        scan.read_detectors.assert_not_called()
+
+    def test_stop_received_with_motion_start_is_not_cleared(self):
+        scan, actuator = self.make_scan()
+
+        def moving_and_stopped():
+            scan._stop_requested.set()
+            return True
+
+        actuator.is_moving = Mock(side_effect=moving_and_stopped)
+
+        scan.scan(None)
+
+        self.assertTrue(scan._stop_requested.is_set())
+        self.assertFalse(scan.busy)
+        scan._detector_reader.start.assert_not_called()
+        scan.read_detectors.assert_not_called()
 
     @patch.object(BaseScan, "stop")
     def test_scan_polls_position_and_runs_full_point_pipeline(self, base_stop):

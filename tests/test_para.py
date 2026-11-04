@@ -8,10 +8,16 @@ from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
 
 from kiwi_scan.actuator.single import PvEvent
-from kiwi_scan.datamodels import ActuatorConfig, ScanConfig, ScanDimension
+from kiwi_scan.datamodels import (
+    ActuatorConfig,
+    ScanConfig,
+    ScanDimension,
+    SubscriptionConfig,
+)
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.output_manager import OutputManager
 from kiwi_scan.scan.range_exit_detector import RangeExitDetector
+from kiwi_scan.scan.stats_collector import StatsCollector
 from kiwi_scan.scan_concrete.para import ParaScan
 
 
@@ -68,10 +74,12 @@ class ParaScanTestCase(unittest.TestCase):
         scan._position = None
         scan._stop_requested = threading.Event()
         scan._daq_is_on = False
+        scan._stat_window_lock = threading.Lock()
         scan.performance = Mock()
         scan.performance.time_block.side_effect = (
             lambda *_args, **_kwargs: nullcontext()
         )
+        scan._integrate_point = Mock(return_value=False)
         scan.integration_time = 0.0
         scan.sampletime = 0.05
         scan.include_timestamps = False
@@ -187,16 +195,11 @@ class TestParaScanInitialization(ParaScanTestCase):
         subscription = SimpleNamespace(name="statistic")
 
         scan._on_stat_event(event, subscription)
+        scan.stats_collector.update.assert_not_called()
         scan._daq_is_on = True
         scan._on_stat_event(event, subscription)
 
-        self.assertEqual(
-            scan.stats_collector.update.call_args_list,
-            [
-                call(event, subscription, collect=False),
-                call(event, subscription, collect=True),
-            ],
-        )
+        scan.stats_collector.update.assert_called_once_with(event, subscription)
 
 
 class TestParaScanPositionState(ParaScanTestCase):
@@ -380,25 +383,25 @@ class TestParaScanAcquisition(ParaScanTestCase):
     def _no_timing(*_args, **_kwargs):
         return nullcontext()
 
-    @patch("kiwi_scan.scan_concrete.para.time.sleep")
-    def test_acquire_point_runs_full_pipeline(self, sleep):
+    def test_acquire_point_runs_full_pipeline(self):
         scan = self.make_scan()
         scan.integration_time = 0.25
         scan.performance.time_block = self._no_timing
-        scan._read_position_snapshot = Mock(return_value={"motor": 2.5})
+        scan._read_position_snapshot = Mock(return_value={"motor": 2.0})
         plugin = Mock()
         plugin.on_scan_point.return_value = [20.0]
         plugin.get_headers.return_value = ["PluginValue"]
         scan.plugins = [plugin]
         monitor = Mock()
-        completed_row = [2.5, 123.0, 10.0, 20.0]
+        completed_row = [2.0, 123.0, 10.0, 20.0]
         scan._commit_point_async.return_value = completed_row
 
         scan._acquire_point(3, {"motor": 2.0}, monitor)
 
-        sleep.assert_called_once_with(0.25)
-        self.assertEqual(scan._position, 2.5)
-        self.assertEqual(scan._last_position_snapshot, {"motor": 2.5})
+        scan._integrate_point.assert_called_once_with()
+        scan._read_position_snapshot.assert_not_called()
+        self.assertEqual(scan._position, 2.0)
+        self.assertEqual(scan._last_position_snapshot, {"motor": 2.0})
         scan._point_pipeline.reset_data_column_provider_windows.assert_called_once_with()
         self.assertEqual(
             scan._fire_triggers.call_args_list,
@@ -406,16 +409,16 @@ class TestParaScanAcquisition(ParaScanTestCase):
         )
         scan._begin_point_frame.assert_called_once_with(
             idx=3,
-            pos=2.5,
+            pos=2.0,
             values=[10.0],
         )
-        plugin.on_scan_point.assert_called_once_with(3, 2.5)
+        plugin.on_scan_point.assert_called_once_with(3, 2.0)
         scan._point_pipeline.append_plugin_point_values.assert_called_once_with(
             ["PluginValue"],
             [20.0],
         )
         scan._commit_point_async.assert_called_once_with(
-            2.5,
+            2.0,
             [10.0],
         )
         monitor.update.assert_called_once_with(completed_row)
@@ -434,12 +437,202 @@ class TestParaScanAcquisition(ParaScanTestCase):
         scan._commit_point_async.assert_not_called()
 
 
+class TestParaScanIntegration(ParaScanTestCase):
+    def make_window_scan(self, **kwargs):
+        """Use the real integration loop and statistics, without EPICS or sleeps."""
+        scan = self.make_scan(**kwargs)
+        del scan._integrate_point
+        subscription = SubscriptionConfig(name="signal", role="stat", pv="STAT:PV")
+        scan.stats_collector = StatsCollector([subscription])
+        scan._point_pipeline.reset_data_column_provider_windows.side_effect = (
+            scan.stats_collector.reset_window
+        )
+        scan._commit_point_async.side_effect = (
+            lambda position, _values: [position] + scan.stats_collector.get_values()
+        )
+        return scan, subscription
+
+    @staticmethod
+    def send_sample(scan, subscription, value):
+        scan._on_stat_event(PvEvent("STAT:PV", value), subscription)
+
+    def test_zero_time_integrates_until_motion_and_freezes_completed_statistics(self):
+        scan, subscription = self.make_window_scan()
+        self.send_sample(scan, subscription, 1000.0)  # idle values must not enter the window
+        scan._any_actuator_moving = Mock(side_effect=[False, False, True])
+        samples = iter([2.0, 4.0])
+        monitor = Mock()
+
+        def wait(_timeout):
+            self.send_sample(scan, subscription, next(samples))
+
+        def read_detectors():
+            # A late callback during row assembly must not erase the window.
+            self.send_sample(scan, subscription, 99.0)
+            return [10.0]
+
+        scan.read_detectors.side_effect = read_detectors
+        with patch.object(scan._stop_requested, "wait", side_effect=wait) as wait_mock:
+            motion_started = scan._acquire_point(0, {"motor": 1.0}, monitor)
+
+        self.assertTrue(motion_started)
+        self.assertEqual(wait_mock.call_args_list, [call(0.05), call(0.05)])
+        row = monitor.update.call_args.args[0]
+        self.assertEqual(row[0:2], [1.0, 3.0])  # stationary position and mean
+        self.assertEqual(row[3:], [2.0, 4.0, 2])  # min, max, sample count
+        self.assertEqual(scan._last_position_snapshot, {"motor": 1.0})
+        self.assertFalse(scan._daq_is_on)
+
+    def test_interrupt_during_integration_discards_unfinished_point_and_closes_window(self):
+        scan, subscription = self.make_window_scan()
+        with patch.object(scan._stop_requested, "wait", side_effect=KeyboardInterrupt), \
+                self.assertRaises(KeyboardInterrupt):
+            scan._acquire_point(0, {"motor": 1.0})
+
+        self.assertFalse(scan._daq_is_on)
+        self.send_sample(scan, subscription, 99.0)
+        self.assertEqual(scan.stats_collector.get_values()[4], 0)
+        scan._commit_point_async.assert_not_called()
+
+    def test_positive_time_uses_monotonic_deadline_without_waiting_for_motion(self):
+        scan, subscription = self.make_window_scan()
+        scan.integration_time = 0.1
+        scan._any_actuator_moving = Mock(return_value=False)
+        scan.sync_controller.is_enabled.return_value = True
+        elapsed = [0.0]
+
+        def wait(timeout):
+            elapsed[0] += timeout
+            self.send_sample(scan, subscription, 5.0)
+
+        with patch("kiwi_scan.scan_concrete.para.time.monotonic", side_effect=lambda: elapsed[0]), \
+                patch.object(scan._stop_requested, "wait", side_effect=wait):
+            motion_started = scan._acquire_point(0, {"motor": 1.0})
+
+        self.assertFalse(motion_started)
+        self.assertAlmostEqual(elapsed[0], 0.1)
+        self.assertEqual(scan.stats_collector.get_values()[4], 2)
+        scan._wait_for_sync.assert_not_called()
+
+    def test_positive_time_ends_early_if_another_axis_moves(self):
+        dimensions = [ScanDimension("x", 0.0, 10.0, 1), ScanDimension("y", 0.0, 10.0, 1)]
+        scan, subscription = self.make_window_scan(
+            dimensions=dimensions,
+            actuators={
+                "x": SequenceActuator(moving_values=(False,)),
+                "y": SequenceActuator(moving_values=(False, True)),
+            },
+        )
+        scan.integration_time = 10.0
+
+        def wait(_timeout):
+            self.send_sample(scan, subscription, 7.0)
+
+        with patch.object(scan._stop_requested, "wait", side_effect=wait) as wait_mock:
+            motion_started = scan._acquire_point(0, {"x": 1.0, "y": 2.0})
+
+        self.assertTrue(motion_started)
+        wait_mock.assert_called_once()
+        self.assertEqual(scan.stats_collector.get_values()[4], 1)
+
+    def test_short_positive_time_does_not_wait_a_full_poll_interval(self):
+        scan, _subscription = self.make_window_scan()
+        scan.integration_time = 0.01
+        elapsed = [0.0]
+
+        def wait(timeout):
+            elapsed[0] += timeout
+
+        with patch("kiwi_scan.scan_concrete.para.time.monotonic", side_effect=lambda: elapsed[0]), \
+                patch.object(scan._stop_requested, "wait", side_effect=wait) as wait_mock:
+            self.assertFalse(scan._acquire_point(0, {"motor": 1.0}))
+
+        wait_mock.assert_called_once_with(0.01)
+
+    def test_stop_flushes_the_last_open_window(self):
+        for integration_time in (0.0, 10.0):
+            with self.subTest(integration_time=integration_time):
+                scan, subscription = self.make_window_scan(maxindex=0)
+                scan.integration_time = integration_time
+                scan._wait_cycle = Mock()
+                scan._read_position_snapshot = Mock(return_value={"motor": 2.0})
+                monitor = Mock()
+
+                def wait(_timeout, current_scan=scan, current_subscription=subscription):
+                    self.send_sample(current_scan, current_subscription, 8.0)
+                    current_scan._stop_requested.set()
+
+                with patch.object(scan._stop_requested, "wait", side_effect=wait):
+                    scan.scan(None, monitor)
+
+                self.assertEqual(monitor.update.call_args.args[0], [2.0, 8.0, 0.0, 8.0, 8.0, 1])
+                monitor.update.assert_called_once()
+                self.assertFalse(scan._daq_is_on)
+                self.assertFalse(scan.busyflag)
+
+    def test_stop_pv_flushes_the_open_window(self):
+        scan, subscription = self.make_window_scan()
+
+        def wait(_timeout):
+            self.send_sample(scan, subscription, 6.0)
+            scan.get_stop_pv.return_value = 1
+
+        with patch.object(scan._stop_requested, "wait", side_effect=wait):
+            self.assertFalse(scan._acquire_point(0, {"motor": 1.0}))
+
+        self.assertEqual(scan.stats_collector.get_values()[4], 1)
+        scan._commit_point_async.assert_called_once()
+
+    def test_consecutive_windows_do_not_mix_samples_or_wait_for_an_extra_move(self):
+        scan, subscription = self.make_window_scan(maxindex=2)
+        scan._wait_cycle = Mock()
+        scan._read_position_snapshot = Mock(side_effect=[{"motor": 1.0}, {"motor": 2.0}])
+        scan._any_actuator_moving = Mock(side_effect=[False, True, False, True])
+        scan._wait_for_external_motion = Mock()
+        samples = iter([10.0, 20.0])
+        monitor = Mock()
+
+        def wait(_timeout):
+            self.send_sample(scan, subscription, next(samples))
+
+        with patch.object(scan._stop_requested, "wait", side_effect=wait):
+            scan.scan(None, monitor)
+
+        self.assertEqual(
+            monitor.update.call_args_list,
+            [call([1.0, 10.0, 0.0, 10.0, 10.0, 1]), call([2.0, 20.0, 0.0, 20.0, 20.0, 1])],
+        )
+        scan._wait_for_external_motion.assert_not_called()
+
+    def test_callback_cannot_update_while_the_window_boundary_is_locked(self):
+        scan, subscription = self.make_window_scan()
+        started = threading.Event()
+        finished = threading.Event()
+
+        def callback():
+            started.set()
+            self.send_sample(scan, subscription, 99.0)
+            finished.set()
+
+        with scan._stat_window_lock:
+            scan._daq_is_on = True
+            worker = threading.Thread(target=callback)
+            worker.start()
+            self.assertTrue(started.wait(1.0))
+            self.assertFalse(finished.is_set())
+            scan._daq_is_on = False
+        worker.join(timeout=1.0)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(scan.stats_collector.get_values()[4], 0)
+
+
 class TestParaScanLoop(ParaScanTestCase):
     def test_scan_records_one_point_and_cleans_up(self):
         scan = self.make_scan(maxindex=1)
         scan._wait_cycle = Mock()
         scan._read_position_snapshot = Mock(return_value={"motor": 2.0})
-        scan._acquire_point = Mock()
+        scan._acquire_point = Mock(return_value=False)
         monitor = Mock()
 
         scan.scan({"ignored": [1.0]}, monitor)
@@ -478,7 +671,7 @@ class TestParaScanLoop(ParaScanTestCase):
         scan._all_actuators_ready = Mock(side_effect=[False, True, True])
         scan._position_changed = Mock(side_effect=[False, True])
         scan._termination_detected = Mock(return_value=False)
-        scan._acquire_point = Mock()
+        scan._acquire_point = Mock(return_value=False)
 
         scan.scan(None)
 
@@ -498,7 +691,7 @@ class TestParaScanLoop(ParaScanTestCase):
             side_effect=[{"motor": 1.0}, {"motor": 2.0}]
         )
         scan._any_actuator_moving = Mock(side_effect=[False, True])
-        scan._acquire_point = Mock()
+        scan._acquire_point = Mock(return_value=False)
 
         scan.scan(None)
 
@@ -516,7 +709,7 @@ class TestParaScanLoop(ParaScanTestCase):
         scan = self.make_scan()
         scan.get_stop_pv.return_value = 1
         scan._wait_cycle = Mock()
-        scan._acquire_point = Mock()
+        scan._acquire_point = Mock(return_value=False)
 
         scan.scan(None)
 
@@ -548,7 +741,7 @@ class TestParaScanLoop(ParaScanTestCase):
         scan = self.make_scan(maxindex=2)
         scan._wait_cycle = Mock()
         scan._read_position_snapshot = Mock(return_value={"motor": 1.0})
-        scan._acquire_point = Mock()
+        scan._acquire_point = Mock(return_value=False)
         scan.get_stop_pv.side_effect = [0, 1]
 
         scan.scan(None)
@@ -568,7 +761,7 @@ class TestParaScanLoop(ParaScanTestCase):
         )
         scan._any_actuator_moving = Mock(return_value=True)
         scan._termination_detected = Mock(return_value=True)
-        scan._acquire_point = Mock()
+        scan._acquire_point = Mock(return_value=False)
 
         scan.scan(None)
 

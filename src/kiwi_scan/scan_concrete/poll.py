@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: MIT
 
 import logging
-import time
 from typing import Optional
 
 from kiwi_scan.datamodels import ScanConfig
@@ -46,12 +45,15 @@ class PollScan(BaseScan):
         if self.scan_dimensions:
             self._maxindex = self.scan_dimensions[0].steps
 
-    @staticmethod
-    def _wait_for_motion_start(actuator) -> None:
-        """Wait until the externally commanded actuator begins moving."""
-        while not actuator.is_moving():
-            logger.debug("Wait for actuator to start")
-            time.sleep(0.05)
+    def _wait_for_motion_start(self, actuator) -> bool:
+        """Wait for external motion, returning False when startup is stopped."""
+        logger.debug("Waiting for actuator to start")
+        while not self._daq_stop_requested():
+            if actuator.is_moving():
+                return not self._stop_requested.is_set()
+            if self._stop_requested.wait(0.05):
+                break
+        return False
 
     def _read_daq_position(self, actuator):
         """Return the synchronized position, polling RBV as a fallback."""
@@ -138,18 +140,23 @@ class PollScan(BaseScan):
 
         del positions
 
+        # Clear only before becoming busy; a stop received during startup must
+        # remain set when motion is observed.
+        self._stop_requested.clear()
+        self.busyflag = True
         scan_failed = False
         try:
             # Include startup so failures and interrupts still close plugins.
             self._start_metadata_monitor()
             self._fire_triggers("before")
-            self._wait_for_motion_start(self.first_actuator)
+            # Stop subscriptions must be active while waiting for motion.
+            self._start_subscriptions()
+            if not self._wait_for_motion_start(self.first_actuator):
+                logger.info("Poll scan stopped before motion startup")
+                return
 
-            self.busyflag = True
-            self._stop_requested.clear()
             self._start_detector_reader()
             self._start_plugins()
-            self._start_subscriptions()
             with self.performance.time_block("daq:run"):
                 self.run_daq(monitor)
         
