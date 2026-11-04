@@ -101,7 +101,7 @@ The scan loop is:
 
 The first configured scan dimension is written as the standard `Position` column. For multi-actuator setups, all configured actuator readbacks are checked for range and readiness.
 
-`steps` defines the maximum number of points to record. The scan also terminates when it has already recorded points inside the range and then detects that an actuator has left its configured scan range.
+`steps` defines the maximum number of points to record. The scan also terminates when it has already recorded points inside the range and then detects that an actuator has left its configured scan range. `steps <= 0` means no point-count limit, `start == stop` disables the range limit for that scan dimension.
 
 Example:
 

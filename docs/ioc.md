@@ -115,11 +115,13 @@ The IOC creates the following control and status records:
 | --- | --- | --- |
 | `KIWI:SCAN:Start` | write | Write `1` to start a scan. The record is reset to `0` by the IOC. |
 | `KIWI:SCAN:Stop` | write | Write `1` to request scan stop. The record is reset to `0` by the IOC. |
+| `KIWI:SCAN:NewManifest` | write | Write `1` to create and select an automatically named manifest for subsequent scans. Accepted only while no scan is active. The record is reset to `0` after the request is handled. |
 | `KIWI:SCAN:kill` | write | Write a nonzero value to terminate the IOC process immediately. |
 | `KIWI:SCAN:Status` | read | Scan state: `idle`, `running`, `initializing`, or `error`. |
 | `KIWI:SCAN:Busy` | read | Boolean busy state of the active scan. |
 | `KIWI:SCAN:Message` | read | Short status or error message. |
 | `KIWI:SCAN:OutputFile` | read | Basename of the active output file limited to 39 characters. |
+| `KIWI:SCAN:ManifestFile` | read | Basename of the active manifest, limited to 39 characters. Empty when no active manifest is selected. |
 | `KIWI:SCAN:DataWritingEnabled` | read/write | Enable or disable data and metadata writing for future and active scans. |
 | `KIWI:SCAN:LogLevel` | read/write | Runtime logging level using the `0..5` scale. |
 | `KIWI:SCAN:Position` | read | Current scan position as reported by the active scan. |
@@ -168,6 +170,19 @@ caput KIWI:SCAN:Start 1
 caput KIWI:SCAN:Stop 1
 ```
 
+## Creating a new manifest from EPICS
+
+A manifest groups scan files across multiple runs. Create and select a new
+active manifest before starting the next scan series:
+```bash
+caput KIWI:SCAN:NewManifest 1
+```
+Get the selected filename and errors:
+
+```bash
+caget KIWI:SCAN:ManifestFile
+caget KIWI:SCAN:Message
+```
 ## Python API
 
 The public IOC API is in `kiwi_scan.ioc`.
