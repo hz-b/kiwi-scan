@@ -251,19 +251,156 @@ class TestCMScanDaq(CMScanTestCase):
         scan.get_stop_pv.assert_not_called()
         scan._commit_point_async.assert_not_called()
 
-    def test_run_daq_skips_until_range_and_stops_after_confirmed_exit(self):
+    def test_run_daq_acquires_approach_and_stops_after_confirmed_exit(self):
         scan, _actuator = self.make_scan(
             rbv_values=(-2.0, -1.0, 0.0, 11.0, 12.0)
         )
+        plugin = Mock()
+        plugin.on_scan_point.return_value = [20.0]
+        plugin.get_headers.return_value = ["PluginValue"]
+        scan.plugins = [plugin]
+        monitor = Mock()
 
-        scan.run_daq()
+        scan.run_daq(monitor)
 
         saved_positions = [
             args[0]
             for args, _kwargs in scan._commit_point_async.call_args_list
         ]
-        self.assertEqual(saved_positions, [0.0, 11.0])
-        self.assertEqual(scan.read_detectors.call_count, 2)
+        self.assertEqual(saved_positions, [-1.0, 0.0, 11.0])
+        self.assertEqual(scan.read_detectors.call_count, 3)
+        self.assertEqual(plugin.on_scan_point.call_args_list, [
+            call(0, -1.0), call(1, 0.0), call(2, 11.0),
+        ])
+        self.assertEqual(scan._begin_point_frame.call_args_list, [
+            call(idx=0, pos=-1.0, values=[10.0]),
+            call(idx=1, pos=0.0, values=[10.0]),
+            call(idx=2, pos=11.0, values=[10.0]),
+        ])
+        self.assertEqual(scan._fire_triggers.call_args_list, [
+            call("on_point"), call("after_point"),
+            call("on_point"), call("after_point"),
+            call("on_point"), call("after_point"),
+        ])
+        self.assertEqual(monitor.update.call_args_list, [
+            call(["saved-row"]), call(["saved-row"]), call(["saved-row"]),
+        ])
+
+    def test_point_limit_excludes_approach_in_both_directions(self):
+        cases = (
+            (0.0, 10.0, (-3.0, -2.0, -1.0, 0.0, 1.0, 11.0, 12.0)),
+            (10.0, 0.0, (13.0, 12.0, 11.0, 10.0, 9.0, -1.0, -2.0)),
+        )
+        for start, stop, positions in cases:
+            with self.subTest(start=start), patch.object(BaseScan, "stop") as base_stop:
+                scan, _actuator = self.make_scan(rbv_values=positions)
+                scan._start = start
+                scan._stop = stop
+                scan._maxindex = 2
+
+                scan.run_daq()
+
+                saved_positions = [
+                    args[0]
+                    for args, _kwargs in scan._commit_point_async.call_args_list
+                ]
+                # The first RBV is the initial snapshot; the next two are approach.
+                self.assertEqual(saved_positions, list(positions[1:5]))
+                self.assertEqual(
+                    [args.kwargs["idx"] for args in scan._begin_point_frame.call_args_list],
+                    [0, 1, 2, 3],
+                )
+                base_stop.assert_called_once_with()
+
+    @patch.object(BaseScan, "stop")
+    def test_one_point_limit_stops_on_first_range_point(self, base_stop):
+        scan, _actuator = self.make_scan(
+            rbv_values=(-2.0, -1.0, 0.0, 11.0, 12.0)
+        )
+        scan._maxindex = 1
+
+        scan.run_daq()
+
+        self.assertEqual(scan._commit_point_async.call_args_list, [
+            call(-1.0, [10.0]), call(0.0, [10.0]),
+        ])
+        base_stop.assert_called_once_with()
+
+    @patch.object(BaseScan, "stop")
+    def test_approach_never_exhausts_limit_without_range_entry(self, base_stop):
+        scan, _actuator = self.make_scan(
+            rbv_values=(-4.0, -3.0, -2.0, -1.0),
+            ready_values=(False, False, True),
+        )
+        scan._maxindex = 1
+
+        scan.run_daq()
+
+        self.assertEqual(scan._commit_point_async.call_args_list, [
+            call(-3.0, [10.0]), call(-2.0, [10.0]),
+        ])
+        base_stop.assert_not_called()
+
+    @patch.object(BaseScan, "stop")
+    def test_point_limit_counts_from_first_cycle_when_already_in_range(self, base_stop):
+        scan, _actuator = self.make_scan(rbv_values=(5.0, 5.0, 6.0, 11.0, 12.0))
+        scan._maxindex = 2
+
+        scan.run_daq()
+
+        self.assertEqual(scan._commit_point_async.call_args_list, [
+            call(5.0, [10.0]), call(6.0, [10.0]),
+        ])
+        base_stop.assert_called_once_with()
+
+    @patch.object(BaseScan, "stop")
+    def test_missing_positions_do_not_consume_point_limit_or_index(self, base_stop):
+        scan, _actuator = self.make_scan(
+            rbv_values=(-2.0, None, -1.0, 0.0, None, 1.0, 11.0, 12.0)
+        )
+        scan._maxindex = 2
+
+        scan.run_daq()
+
+        self.assertEqual(scan._commit_point_async.call_args_list, [
+            call(-1.0, [10.0]), call(0.0, [10.0]), call(1.0, [10.0]),
+        ])
+        self.assertEqual(
+            [args.kwargs["idx"] for args in scan._begin_point_frame.call_args_list],
+            [0, 1, 2],
+        )
+        base_stop.assert_called_once_with()
+
+    @patch.object(BaseScan, "stop")
+    def test_limit_keeps_counting_after_range_entry(self, base_stop):
+        scan, _actuator = self.make_scan(
+            rbv_values=(-2.0, -1.0, 0.0, -1.0, 1.0, 11.0, 12.0)
+        )
+        scan._maxindex = 3
+
+        scan.run_daq()
+
+        # A brief excursion back across the start does not pause/reset counting.
+        self.assertEqual(scan._commit_point_async.call_args_list, [
+            call(-1.0, [10.0]), call(0.0, [10.0]),
+            call(-1.0, [10.0]), call(1.0, [10.0]),
+        ])
+        base_stop.assert_called_once_with()
+
+    def test_non_positive_limit_leaves_range_exit_termination_unchanged(self):
+        for steps in (0, -1):
+            with self.subTest(steps=steps), patch.object(BaseScan, "stop") as base_stop:
+                scan, _actuator = self.make_scan(
+                    rbv_values=(-2.0, -1.0, 0.0, 11.0, 12.0)
+                )
+                scan._maxindex = steps
+
+                scan.run_daq()
+
+                self.assertEqual(scan._commit_point_async.call_args_list, [
+                    call(-1.0, [10.0]), call(0.0, [10.0]), call(11.0, [10.0]),
+                ])
+                base_stop.assert_not_called()
 
     @patch.object(BaseScan, "stop")
     def test_run_daq_stops_when_stop_pv_is_set(self, base_stop):

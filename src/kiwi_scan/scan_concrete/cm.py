@@ -81,10 +81,15 @@ class CMScan(BaseScan):
         return position
 
     def run_daq(self, monitor: Optional[BaseMonitor] = None):
-        """ DAQ loop driven by sync-controller """
+        """
+        Acquire synchronized points after motion startup, including approach.
+        DAQ starts before range entry but the positive ``steps`` limit counts
+        only from the first acquired point at range entry.
+        """
         with self.performance.time_block("write:header"):
             self.write_header_to_output_file()
         index = 0
+        range_points = 0
 
         # initial snapshot; may quickly be overwritten by sync subscription indicated by flag
         self._position_sync_subscription_set = False
@@ -113,16 +118,17 @@ class CMScan(BaseScan):
             if scan_finished:
                 logger.info("Scan termination detected at position=%s", position)
                 break
-            if not range_exit.entered:
-                continue
             if position is None:
                 continue
 
             self._acquire_daq_point_continuous(index, position, monitor)
             index += 1
-            if self._maxindex > 0 and index >= self._maxindex:
-                super().stop()
-                break
+            # Keep plugin/output indices continuous; approach does not use steps.
+            if range_exit.entered:
+                range_points += 1
+                if self._maxindex > 0 and range_points >= self._maxindex:
+                    super().stop()
+                    break
 
     def _move_to_start_positions(self) -> None:
         """Move all scan actuators to their backlash-adjusted start positions.
@@ -226,7 +232,7 @@ class CMScan(BaseScan):
         1) Move to start position
         2) Store current velocities
         3) Apply configured velocities and start moves
-        4) Run DAQ while 1st actuator is within range
+        4) Run DAQ after motion startup, including approach, until termination
         5) Restore original velocities
         """
         del positions

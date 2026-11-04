@@ -169,7 +169,14 @@ It moves the configured actuator or actuators to the start position, stores thei
 
 The DAQ loop can be driven by heartbeat subscriptions, with the sample time used as a timeout fallback. The scan position can come from a sync subscription or fall back to the actuator readback.
 
-For `cm`, a positive `steps` value is the maximum number of acquired points.
+Acquisition starts after motion startup, including the approach to the scan
+range. These approach points reach detectors, plugins, triggers, monitors and
+file writing, allowing controller plugins to operate before range entry.
+
+For `cm`, a positive `steps` value limits points acquired from range entry onward;
+approach points do not consume this limit. Point indices remain consecutive
+across approach and range data. Derived scan types such as `monocm` inherit
+this behavior.
 When `steps <= 0`, the motion, range detector, or a stop request determines the
 end of acquisition. Original actuator velocities are restored during cleanup.
 

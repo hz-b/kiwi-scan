@@ -28,6 +28,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 - Releasing EPICS PV resources when a scan closes or construction fails.
 - `cm` scans now start all axes before waiting for startup.
+- `cm` and derived `monocm` scans acquire and process approach points before range entry, so controller plugins receive detector samples. Positive `steps` limits still start counting at range entry.
 - `para` scans now handle `sync` subscriptions and no longer stop when no maximum index is set.
 - `scan_runner` manifest file argument handling.
 - `manifestfiles` stops cleanly on Ctrl+C.
