@@ -224,11 +224,11 @@ Registered converters can be selected by name.
 This is an example for embedding `kiwi-scan` in another Python process.
 
 ```python
-import threading
-import time
-import kiwi_scan
 import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
 
+import kiwi_scan
 from kiwi_scan.datamodels import ActuatorConfig, ScanConfig, ScanDimension
 from kiwi_scan.scan.tools import create_scan_with_config
 
@@ -272,18 +272,32 @@ scan = create_scan_with_config("linear", cfg)
 if scan is None:
     raise RuntimeError("Failed to create scan")
 
-worker = threading.Thread(target=scan.execute, name="kiwi-scan-worker")
-worker.start()
+with scan, ThreadPoolExecutor(
+    max_workers=1,
+    thread_name_prefix="kiwi-scan-worker",
+) as executor:
+    future = executor.submit(scan.execute)
 
-try:
-    while worker.is_alive():
-        print("busy:", scan.busy)
-        print("position:", scan.position)
-        print("last detector value:", scan.get_value("IOC:DET:COUNTS"))
-        print("last scan timestamp:", scan.get_value("TS"))
-        time.sleep(0.5)
-finally:
-    worker.join()
+    try:
+        while not future.done():
+            print("busy:", scan.busy)
+            print("position:", scan.position)
+            print(
+                "last detector value:",
+                scan.get_value("IOC:DET:COUNTS"),
+            )
+            print("last scan timestamp:", scan.get_value("TS"))
+            time.sleep(0.5)
+
+        # Re-raise any exception from scan.execute().
+        future.result()
+    except BaseException:
+        # Also handle Ctrl+C or an error in the monitoring code.
+        scan.stop()
+        raise
+
+    # The executor has waited for execution to finish.
+# Leaving the scan context calls scan.close().
 
 print("scan finished")
 ```
