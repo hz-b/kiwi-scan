@@ -11,6 +11,7 @@ It observes externally moved actuators and records one scan point per status cyc
 from __future__ import annotations
 
 import logging
+import threading
 import time
 from typing import Any, Dict, Optional
 
@@ -30,7 +31,9 @@ class ParaScan(BaseScan):
 
     This scan never commands actuator motion. Instead, it waits for an
     external process or operator to move one or more configured actuators,
-    then waits until all actuators report ready before acquiring a scan point.
+    then waits until all actuators report ready before opening an integration window.
+    With integration_time=0, the window ends at the next external move or stop.
+    A positive integration_time limits the window to that value.
 
     The scan runs the same per-point acquisition pipeline used by LinearScan: 
     triggers, detector reads, plugin processing, monitor updates, statistics, and file writing.
@@ -39,12 +42,15 @@ class ParaScan(BaseScan):
       1. wait for external motion
       2. wait until all configured actuators are ready
       3. wait for subscriptions (data sync)
-      4. execute the normal DAQ point pipeline
-      5. return to the wait state for the next externally initiated step
+      4. integrate until the next move, stop, or positive integration-time limit
+      5. save the completed window at its stationary position
     """
 
     def __init__(self, config: ScanConfig, data_dir: Optional[str] = None):
         super().__init__(config, data_dir)
+        # Serialize window boundaries with stat callbacks so late events cannot
+        # change a completed window while its row is being assembled.
+        self._stat_window_lock = threading.Lock()
 
         if not self.scan_dimensions:
             raise ValueError("ParaScan requires at least one ScanDimension")
@@ -69,10 +75,10 @@ class ParaScan(BaseScan):
         self._last_position_snapshot: Dict[str, Any] = {}
 
     def _on_stat_event(self, ev: PvEvent, subscription: SubscriptionConfig) -> None:
-        """Record stat events and feed the per-subscription StatsCollector."""
-
-        self.stats_collector.update(ev, subscription, collect=self._daq_is_on)
-        logger.debug("[stat] %s=%r daq=%s sub=%s", ev.pvname, ev.value, self._daq_is_on, subscription.name)
+        """Collect only inside a stationary window; preserve it until committed."""
+        with self._stat_window_lock:
+            if self._daq_is_on:
+                self.stats_collector.update(ev, subscription)
 
 
     @staticmethod
@@ -269,36 +275,52 @@ class ParaScan(BaseScan):
             scan_failed=scan_failed,
         )
 
+    def _integrate_point(self) -> bool:
+        """Wait for the window to end; return True if motion was detected.
+
+        Poll motion independently of synchronization subscriptions: a stalled
+        sync PV must not hide a move or extend a fixed integration window.
+        The stop event makes both finite and open-ended windows interruptible.
+        """
+        deadline = time.monotonic() + self.integration_time if self.integration_time > 0.0 else None
+        while True:
+            if self._scan_stop_requested():
+                return False
+            if self._any_actuator_moving():
+                return True
+            wait_time = self.sampletime
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                wait_time = min(wait_time, remaining)
+            self._stop_requested.wait(wait_time)
+
     def _acquire_point(
         self,
         index: int,
         snapshot: Dict[str, Any],
         monitor: Optional[BaseMonitor] = None,
-    ) -> None:
-        """Run the per-point DAQ pipeline without commanding any actuator."""
+    ) -> bool:
+        """Integrate and save one stationary point; report an observed next move."""
         primary_name = self.scan_dimensions[0].actuator
         current_position = snapshot.get(primary_name)
         self._position = current_position
         self._last_position_snapshot = dict(snapshot)
 
-        self._point_pipeline.reset_data_column_provider_windows()
-        self._daq_is_on = True
+        with self._stat_window_lock:
+            self._point_pipeline.reset_data_column_provider_windows()
+            self._daq_is_on = True
         try:
             with self.performance.time_block("triggers:on_point", idx=index):
                 self._fire_triggers("on_point")
 
-            if self.integration_time > 0.0:
-                logger.info("DAQ for integration_time = %s", self.integration_time)
-                time.sleep(self.integration_time)
-            else:
-                logger.info("integration_time = %s", self.integration_time)
+            motion_started = self._integrate_point()
+            with self._stat_window_lock:
+                self._daq_is_on = False
 
-            # Take the actuator snapshot after the integration window.  This is
-            # the position that is written to the file and passed to plugins.
-            snapshot = self._read_position_snapshot()
-            current_position = snapshot.get(primary_name)
-            self._position = current_position
-            self._last_position_snapshot = dict(snapshot)
+            # Keep the stationary position from the start of the window. At
+            # this point the actuator may already be moving to the next step.
 
             with self.performance.time_block("read_detectors", idx=index):
                 vals = self.read_detectors()
@@ -321,8 +343,10 @@ class ParaScan(BaseScan):
                     monitor.update(monitor_values)
 
             logger.info("ParaScan point %d recorded at %s=%r", index, primary_name, current_position)
+            return motion_started
         finally:
-            self._daq_is_on = False
+            with self._stat_window_lock:
+                self._daq_is_on = False
 
     def scan(self, positions, monitor: Optional[BaseMonitor] = None):
         """
@@ -373,12 +397,14 @@ class ParaScan(BaseScan):
                 if not self._snapshot_is_acquirable(snapshot, tolerances):
                     continue
 
-                self._acquire_point(index, snapshot, monitor)
+                motion_started = self._acquire_point(index, snapshot, monitor)
                 index += 1
                 if 0 < self._maxindex <= index:
                     break
 
-                if not self._wait_for_external_motion():
+                # Open-ended integration has already observed the next move.
+                # Waiting for another one would skip the following position.
+                if not motion_started and not self._wait_for_external_motion():
                     break
 
         except BaseException:
