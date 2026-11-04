@@ -90,7 +90,7 @@ def _print_row_multiline(headers, values):
 
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="stats_collector_cli",
+        prog="pollstats_cli",
         description=(
             "Monitor configured kiwi-scan subscriptions and print live "
             "StatsCollector columns."

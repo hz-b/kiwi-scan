@@ -120,20 +120,20 @@ A failed trigger write is not raised as an exception by the trigger manager. Che
 
 ## CLI tool
 
-`scan_trigger_cli` executes one configured trigger phase without running a scan.
+`scantrigger_cli` executes one configured trigger phase without running a scan.
 
 This is useful for testing trigger YAML, manually arming/resetting hardware, or debugging replacement values.
 
 Examples:
 
 ```bash
-scan_trigger_cli \
+scantrigger_cli \
   --config-file ./mono.yaml \
   --phase before
 ```
 
 ```bash
-scan_trigger_cli \
+scantrigger_cli \
   --config mono \
   --replace IOC_MONO=ue521sgm1:mono \
   --phase on_point

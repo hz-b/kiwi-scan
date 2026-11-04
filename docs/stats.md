@@ -112,7 +112,7 @@ Built-in step scans reset provider windows before each acquisition.
 
 Statistics are driven by `subscriptions`.
 
-### One actuator readback as sync source
+### One actuator readback as stat source
 
 ```yaml
 subscriptions:
@@ -128,7 +128,7 @@ This usually produces:
 energyMean    energyStd    energyMin    energyMax    energyNSamples
 ```
 
-### One direct PV as sync source
+### One direct PV as stat source
 
 ```yaml
 subscriptions:
@@ -143,7 +143,7 @@ This produces:
 betaMean    betaStd    betaMin    betaMax    betaNSamples
 ```
 
-### Several sync subscriptions
+### Several stat subscriptions
 
 ```yaml
 subscriptions:
@@ -171,7 +171,7 @@ betaMean    betaStd    betaMin    betaMax    betaNSamples    thetaMean    thetaS
 
 `pollstats_cli` is a small diagnostic command line tool for live statistics. It does not run a scan and does not write a scan data file. Instead, it loads a normal kiwi-scan YAML configuration, starts the configured subscriptions for one role, feeds all received events into a `StatsCollector`, and prints the current statistics periodically.
 
-The default role is `sync`, so the tool normally watches the same subscription sources that are used for scan-point statistics.
+The default role is `stat`, so the tool normally watches the same subscription sources that are used for scan-point statistics.
 
 ### Basic usage
 
