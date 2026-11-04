@@ -218,26 +218,40 @@ class TestLoggingPluginAlarmTrace(LoggingPluginTestCase):
 
 
 class TestLoggingPluginPointTiming(LoggingPluginTestCase):
-    @patch(
-        "kiwi_scan.plugin_concrete.logging.time.time",
-        side_effect=[100.0, 100.75],
-    )
-    def test_first_point_has_no_delta_and_second_has_elapsed_time(self, _time):
-        plugin = self.make_plugin(enable_point_timing=True)
+    # Replace only the plugin's module binding. Patching time.time itself also
+    # changes Python logging's clock, so log records consume the test samples.
+    @patch("kiwi_scan.plugin_concrete.logging.time")
+    def test_first_point_has_no_delta_and_second_has_elapsed_time(self, clock):
+        clock.time.side_effect = [100.0, 100.75]
 
-        self.assertEqual(plugin._collect_point_timing(), [None])
-        self.assertEqual(plugin._collect_point_timing(), [0.75])
+        with self.assertLogs("ScanPlugin.test-logging", level="DEBUG"):
+            plugin = self.make_plugin(enable_point_timing=True)
+            self.assertEqual(plugin._collect_point_timing(), [None])
+            plugin.logger.debug("Diagnostic output between timing samples")
+            self.assertEqual(plugin._collect_point_timing(), [0.75])
 
-    @patch(
-        "kiwi_scan.plugin_concrete.logging.time.time",
-        side_effect=[100.0, 99.0],
-    )
-    def test_negative_point_delta_is_clamped_to_zero(self, _time):
+    @patch("kiwi_scan.plugin_concrete.logging.time")
+    def test_negative_point_delta_is_clamped_to_zero(self, clock):
+        clock.time.side_effect = [100.0, 99.0]
         plugin = self.make_plugin(enable_point_timing=True)
 
         plugin._collect_point_timing()
 
         self.assertEqual(plugin._collect_point_timing(), [0.0])
+
+    @patch("kiwi_scan.plugin_concrete.logging.time")
+    def test_point_timing_is_preserved_through_public_scan_point_hook(self, clock):
+        clock.time.side_effect = [100.0, 100.75]
+        plugin = self.make_plugin(enable_point_timing=True)
+
+        first = plugin.on_scan_point(0, {})
+        second = plugin.on_scan_point(1, {})
+
+        self.assertEqual(plugin.get_headers(False), ["PointDtS"])
+        self.assertEqual([item["value"] for item in first], [None])
+        self.assertEqual([item["value"] for item in second], [0.75])
+        self.assertIsInstance(first[0]["timestamp"], float)
+        self.assertIsInstance(second[0]["timestamp"], float)
 
 
 class TestLoggingPluginActuatorHelpers(LoggingPluginTestCase):

@@ -8,7 +8,7 @@ import unittest
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 from kiwi_scan import test_support
 
@@ -543,6 +543,7 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
             side_effect=RuntimeError("plugin stop failed")
         )
         scan._close_plugins = MagicMock()
+        scan._fire_triggers = MagicMock()
         scan._stop_metadata_monitor = MagicMock(
             side_effect=RuntimeError("metadata stop failed")
         )
@@ -563,6 +564,7 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
 
         scan._end_plugins.assert_called_once_with()
         scan._close_plugins.assert_called_once_with()
+        scan._fire_triggers.assert_called_once_with("after")
         scan._stop_metadata_monitor.assert_called_once_with()
         scan._stop_subscriptions.assert_called_once_with()
         monitor.close.assert_called_once_with()
@@ -977,6 +979,168 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan._stop_requested.set()
         self.assertFalse(scan._wait_for_tick_or_timeout(1.0))
 
+
+
+class TestBaseScanFinalTriggers(unittest.TestCase):
+    def setUp(self):
+        ca_context = patch("kiwi_scan.scan.common.ensure_ca_context")
+        ca_context.start()
+        self.addCleanup(ca_context.stop)
+
+    @staticmethod
+    def make_scan():
+        """Exercise the real point pipeline with controlled services and motion."""
+        scan = DummyScan(include_timestamps=False)
+        scan._stop_requested = threading.Event()
+        scan.integration_time = 0.0
+        scan.actuators = {"motor": MagicMock()}
+        scan._start_scan_services = MagicMock()
+        scan._prepare_positions = MagicMock(return_value=({"motor": [1.0]}, False))
+        scan._parallel_wait = MagicMock()
+        scan.get_stop_pv = MagicMock(return_value=0)
+        scan.read_detectors = MagicMock(return_value=[])
+        scan._fire_triggers = MagicMock()
+        scan._drain_parallel_writer_for_cleanup = MagicMock(return_value=None)
+        scan._stop_detector_reader = MagicMock()
+        scan._end_plugins = MagicMock()
+        scan._close_plugins = MagicMock()
+        scan._stop_metadata_monitor = MagicMock()
+        scan._stop_subscriptions = MagicMock()
+        scan.performance.report = MagicMock()
+        return scan, MagicMock()
+
+    def assert_cleanup_completed(self, scan, monitor):
+        scan._drain_parallel_writer_for_cleanup.assert_called_once_with()
+        scan._stop_detector_reader.assert_called_once_with()
+        scan._end_plugins.assert_called_once_with()
+        scan._close_plugins.assert_called_once_with()
+        scan._stop_metadata_monitor.assert_called_once_with()
+        scan._stop_subscriptions.assert_called_once_with()
+        monitor.close.assert_called_once_with()
+        scan.performance.report.assert_called_once_with()
+        self.assertFalse(scan.busyflag)
+
+    def test_after_runs_once_before_services_are_stopped(self):
+        scan, monitor = self.make_scan()
+
+        def fire(phase):
+            if phase == "after":
+                scan._drain_parallel_writer_for_cleanup.assert_not_called()
+                scan._stop_detector_reader.assert_not_called()
+                monitor.close.assert_not_called()
+
+        scan._fire_triggers.side_effect = fire
+
+        scan.scan({"motor": [1.0]}, monitor)
+
+        self.assertEqual(
+            scan._fire_triggers.call_args_list,
+            [call("before"), call("on_point"), call("after")],
+        )
+        self.assert_cleanup_completed(scan, monitor)
+
+    def test_after_runs_when_detector_plugin_or_monitor_fails(self):
+        for stage in ("detector", "plugin", "monitor"):
+            with self.subTest(stage=stage):
+                scan, monitor = self.make_scan()
+                error = RuntimeError(f"{stage} failed")
+                if stage == "detector":
+                    scan.read_detectors.side_effect = error
+                elif stage == "plugin":
+                    plugin = MagicMock()
+                    plugin.on_scan_point.side_effect = error
+                    scan.plugins = [plugin]
+                else:
+                    monitor.update.side_effect = error
+
+                with self.assertRaises(RuntimeError) as raised:
+                    scan.scan({"motor": [1.0]}, monitor)
+
+                self.assertIs(raised.exception, error)
+                self.assertEqual(
+                    scan._fire_triggers.call_args_list,
+                    [call("before"), call("on_point"), call("after")],
+                )
+                self.assert_cleanup_completed(scan, monitor)
+
+    def test_after_failure_preserves_original_acquisition_error(self):
+        scan, monitor = self.make_scan()
+        acquisition_error = RuntimeError("detector failed")
+        scan.read_detectors.side_effect = acquisition_error
+
+        def fire(phase):
+            if phase == "after":
+                raise ValueError("after trigger failed")
+
+        scan._fire_triggers.side_effect = fire
+        scan._drain_parallel_writer_for_cleanup.return_value = OSError("disk full")
+        monitor.close.side_effect = RuntimeError("monitor close failed")
+
+        with self.assertLogs("kiwi_scan.scan.common", level="ERROR") as logs, \
+                self.assertRaises(RuntimeError) as raised:
+            scan.scan({"motor": [1.0]}, monitor)
+
+        self.assertIs(raised.exception, acquisition_error)
+        self.assertIn("after trigger failed", "\n".join(logs.output))
+        self.assert_cleanup_completed(scan, monitor)
+
+    def test_after_failure_is_reported_after_cleanup(self):
+        scan, monitor = self.make_scan()
+        trigger_error = ValueError("after trigger failed")
+
+        def fire(phase):
+            if phase == "after":
+                raise trigger_error
+
+        scan._fire_triggers.side_effect = fire
+        scan._drain_parallel_writer_for_cleanup.return_value = OSError("disk full")
+
+        with self.assertLogs("kiwi_scan.scan.common", level="ERROR"), \
+                self.assertRaises(ValueError) as raised:
+            scan.scan({"motor": [1.0]}, monitor)
+
+        self.assertIs(raised.exception, trigger_error)
+        self.assert_cleanup_completed(scan, monitor)
+
+    def test_after_runs_when_writer_drain_fails(self):
+        scan, monitor = self.make_scan()
+        writer_error = OSError("disk full")
+        scan._drain_parallel_writer_for_cleanup.return_value = writer_error
+
+        with self.assertRaises(OSError) as raised:
+            scan.scan({"motor": [1.0]}, monitor)
+
+        self.assertIs(raised.exception, writer_error)
+        self.assertEqual(
+            scan._fire_triggers.call_args_list,
+            [call("before"), call("on_point"), call("after")],
+        )
+        self.assert_cleanup_completed(scan, monitor)
+
+    def test_after_runs_when_scan_is_stopped(self):
+        scan, monitor = self.make_scan()
+        scan._parallel_wait.side_effect = lambda *_args: scan._stop_requested.set()
+
+        scan.scan({"motor": [1.0]}, monitor)
+
+        scan.read_detectors.assert_not_called()
+        self.assertEqual(
+            scan._fire_triggers.call_args_list,
+            [call("before"), call("after")],
+        )
+        self.assert_cleanup_completed(scan, monitor)
+
+    def test_after_runs_when_startup_fails(self):
+        scan, monitor = self.make_scan()
+        error = RuntimeError("startup failed")
+        scan._start_scan_services.side_effect = error
+
+        with self.assertRaises(RuntimeError) as raised:
+            scan.scan({"motor": [1.0]}, monitor)
+
+        self.assertIs(raised.exception, error)
+        scan._fire_triggers.assert_called_once_with("after")
+        self.assert_cleanup_completed(scan, monitor)
 
 
 class TestBaseScanClose(unittest.TestCase):

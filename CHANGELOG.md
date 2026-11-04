@@ -26,6 +26,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- Step scans run final `after` triggers during cleanup even on failure.
 - `poll` scans report busy and activate subscriptions before waiting for external motion; API stops, stop subscriptions, and the stop PV now cancel startup without losing the stop request.
 - Releasing EPICS PV resources when a scan closes or construction fails.
 - `cm` scans now start all axes before waiting for startup.

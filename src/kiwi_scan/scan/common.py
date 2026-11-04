@@ -850,6 +850,40 @@ class BaseScan(ScanABC):
         logger.debug("Actuators: %s, positions: %s", list(self.actuators), positions)
         self._start_metadata_monitor()
 
+    def _cleanup_step_scan(
+        self,
+        monitor: Optional[BaseMonitor],
+        *,
+        scan_failed: bool,
+    ) -> None:
+        """Run final step-scan triggers and release services, preserving failures."""
+        self._daq_is_on = False
+        try:
+            # Keep final actions before service shutdown, including on failure.
+            with self.performance.time_block("triggers:after"):
+                self._fire_triggers("after")
+        except BaseException:
+            if not scan_failed:
+                # Preserve this failure through writer/resource cleanup too.
+                scan_failed = True
+                raise
+            logger.exception("Final 'after' triggers failed; preserving original scan error")
+        finally:
+            writer_error = self._drain_parallel_writer_for_cleanup()
+            self._run_cleanup_step("detectors:stop", self._stop_detector_reader)
+            self._run_cleanup_step("plugins:stop", self._end_plugins)
+            self._run_cleanup_step("plugins:close", self._close_plugins)
+            self._run_cleanup_step("metadata:stop", self._stop_metadata_monitor)
+            self._run_cleanup_step("subscriptions:stop", self._stop_subscriptions)
+            if monitor is not None:
+                self._run_cleanup_step("monitor:close", monitor.close)
+            self.busyflag = False
+            self._run_cleanup_step("performance:report", self.performance.report)
+            self._propagate_parallel_writer_error(
+                writer_error,
+                scan_failed=scan_failed,
+            )
+
     def scan(self, positions, monitor: Optional[BaseMonitor] = None):
         """
         Parallel multi-actuator scan:
@@ -907,31 +941,13 @@ class BaseScan(ScanABC):
                     logger.info("Stop PV triggered—aborting scan.")
                     break
 
-            self._fire_triggers("after")
-            logger.info("Scan complete for all actuators.")
-
         except BaseException:
             scan_failed = True
             raise
         finally:
-            self._daq_is_on = False
-            writer_error = self._drain_parallel_writer_for_cleanup()
-            self._run_cleanup_step(
-                "detectors:stop",
-                self._stop_detector_reader,
-            )
-            self._run_cleanup_step("plugins:stop", self._end_plugins)
-            self._run_cleanup_step("plugins:close", self._close_plugins)
-            self._run_cleanup_step("metadata:stop", self._stop_metadata_monitor)
-            self._run_cleanup_step("subscriptions:stop", self._stop_subscriptions)
-            if monitor is not None:
-                self._run_cleanup_step("monitor:close", monitor.close)
-            self.busyflag = False
-            self._run_cleanup_step("performance:report", self.performance.report)
-            self._propagate_parallel_writer_error(
-                writer_error,
-                scan_failed=scan_failed,
-            )
+            self._cleanup_step_scan(monitor, scan_failed=scan_failed)
+
+        logger.info("Scan complete for all actuators.")
 
     def _execute_standard(self, positions):
         if self.get_data_writing_enabled():

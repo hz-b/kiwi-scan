@@ -107,6 +107,8 @@ At runtime, `fire(phase)` does the following:
 
 In normal step scans, `before`, `on_point`, and `after` are the most important phases. Continuous scans may also use `after_point`.
 
+Step scans run `after` once during cleanup, before shutting down scan services,
+including when startup or acquisition fails or a stop request ends the scan.
 ## Error handling
 
 The trigger manager is designed to avoid unnecessary scan crashes:
