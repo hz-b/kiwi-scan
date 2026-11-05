@@ -129,7 +129,7 @@ enable = [
 ]
 
 [tool.pyright]
-include = ["src/kiwi_scan"]
+include = ["src/kiwi_scan", "examples"]
 extraPaths = ["src"]
 pythonVersion = "3.8"
 pythonPlatform = "Linux"

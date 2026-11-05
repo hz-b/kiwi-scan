@@ -77,21 +77,21 @@ lint: ## Run pylint, ruff, and pyright (uses mkvenv.sh when needed)
 	@echo '  PYLINT'
 	@echo '========================================================================'
 	@$(WITH_VENV); \
-	PYTHONPATH=src pylint src/kiwi_scan
+	PYTHONPATH=src pylint src/kiwi_scan examples/
 	@echo '========================================================================'
 	@echo
 	@echo '========================================================================'
 	@echo '  RUFF'
 	@echo '========================================================================'
 	@$(WITH_VENV); \
-	ruff check src/kiwi_scan tests/
+	ruff check src/kiwi_scan tests/ examples/
 	@echo '========================================================================'
 	@echo
 	@echo '========================================================================'
 	@echo '  PYRIGHT'
 	@echo '========================================================================'
 	@$(WITH_VENV); \
-	pyright src/kiwi_scan
+	pyright src/kiwi_scan examples/
 	@echo '========================================================================'
 	@echo
 	@echo 'Lint complete.'

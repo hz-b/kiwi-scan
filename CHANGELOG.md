@@ -15,9 +15,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 - Added `set_queueing_delay()` to actuators;
 - Added `scan.close()` and context-manager use (`with scan: ...`) to release scan resources.
 - Queue plotter: `max_points`, `max_draw_points`, `refresh_interval`, `marker` and `keep_open` options.
+- Added the example async plugin `MotionRatePlugin` (`examples/plugins/motion_rate.py`): sliding-window fit of a signal against its detector timestamp, with `MotionRateStatus`, `MotionRateIndex`, `MotionRateSlope` and `MotionRateOffset` columns. See `examples/plugins/motion_rate.md`.
 
 ### Changed
 
+- `make lint` also checks `examples/` with pylint, ruff and pyright.
 - Queue plotter: fixed-size NumPy ring buffer; optimized for higher data rates.
 - Actuator `jog()` now returns `Optional[bool]`; `False` reports a rejected command.
 - Subscription events for a role without a registered handler now log a warning.

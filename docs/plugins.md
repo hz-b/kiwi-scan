@@ -319,6 +319,15 @@ plugin_configs:
     name: timestamp_performance
 ```
 
+## Example plugins
+
+Example plugins in [`examples/plugins/`](../examples/plugins/) are not loaded by
+default. Add the directory to `KIWI_SCAN_PLUGIN_PATH` to use them.
+
+| Plugin | Kind | Description |
+|---|---|---|
+| [`MotionRatePlugin`](../examples/plugins/motion_rate.md) | async | Slope (units/s) of one signal against its detector timestamp, fitted over a sliding window. |
+
 ## Minimal custom plugin example
 
 Create `plugins/drift_watch.py`:
