@@ -40,6 +40,17 @@ This document is a work in progress. Interface contracts and contributor guideli
   Scan engines must consistently handle plugin startup, completion, and cleanup.
 - Verify the change. Add focused tests. 
 
+## Notes on Extension contracts
+
+- Plugins: `get_headers()` is called on every point, not only once. Build the header list in `__init__` and return the same list.
+- Plugins: `on_monitor()` runs on one worker thread shared by all plugins of a scan, and every plugin receives every `role: plugin` event.
+  Filter on `ev.pvname` first and keep the method short. Hand data to `get_values()` with one assignment of an immutable value.
+- Async plugins: `AsyncScanPlugin.__init__` calls `get_async_default_values()`. Set the attributes it needs before `super().__init__()`.
+  `process_data_snapshot()` runs in a worker thread and uses only the snapshot, never `self.scan`.
+- Scan engines: a custom `scan()` runs all cleanup in `finally`, including `monitor.close()`. Without it, `execute()` blocks forever in `monitor.loop()`.
+- Actuators: `move()` returns at once. `wait_until_done(position, stop_event=None)` returns promptly when `stop_event` is set.
+  `stop()` is fast and safe to call from any thread.
+
 ## Checks, Finish
 
 - Run the full test suite before submitting (`make lint && make test`).
