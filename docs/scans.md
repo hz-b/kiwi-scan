@@ -184,6 +184,19 @@ Without external `sync` subscriptions, both `cm` and `poll` use fixed absolute
 timer slots derived from `sample_rate_hz`. See [sync-controller.md](sync-controller.md).
 
 
+## Scan-type and subscription-role support
+
+The following table shows if the built-in scan engine registers a handler for that role.
+
+| Scan type | `sync` | `heartbeat` | `status` | `stop` | `plugin` | `trigger` | `stat` |
+|---|---|---|---|---|---|---|---|
+| `linear` | No | Yes | Yes | Yes | Yes | Yes | Yes |
+| `approach` | No | No | No | No | No | No | No |
+| `cm` | Yes | Yes | Yes | Yes | No | No | No |
+| `poll` | Yes | Yes | Yes | Yes | No | No | No |
+| `para` | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
+
+
 ## External scan-types
 
 External scan types are registered with `register_scan(...)` and discovered from files or directories listed in `KIWI_SCAN_SCAN_PATH`.

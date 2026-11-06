@@ -188,6 +188,8 @@ Each scan appends references to its main data file and metadata sidecar. Dependi
 
 If no filename is given, a timestamped manifest is created, normally in `KIWI_SCAN_DATA_DIR`. Use `manifestfiles --data-dir DIR` to choose another directory.
 
+`manifestfiles --last-scan` simply outputs the filename of the last scan.
+
 External scan types can append entries through:
 
 ```python
