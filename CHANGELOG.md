@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added
+
+- Trigger actions accept an optional `put_timeout`: the trigger manager writes the PV with a CA put callback and waits until the IOC has finished processing (asynchronous device support) before the action's `delay` and the next action. A timeout logs a warning and the phase continues; a scan stop request ends the wait, except in the `after` phase.
+- `EpicsPV.put()` accepts `wait=True` and `timeout` for a blocking put; a completion timeout raises `TimeoutError`.
+- `PutCompletion.unarmed` reports a completion request that CA did not accept.
+
+### Fixed
+
+- Stop requests during trigger completion waits discard interrupted scan points, including zero-integration step scans, continuous scans and passive scans.
+- Closing a finished scan releases monitor-trigger completion waits before joining workers and closing trigger PVs.
+
+### Documentation
+
+- Clarified that PyEpics reconnection uses a separate connection timeout and cannot be interrupted by a completion deadline or scan stop request during submission.
+
 ## [0.6.1] - 2026-11-09
 
 ### Added

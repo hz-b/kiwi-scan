@@ -174,6 +174,7 @@ One PV write action used by a trigger.
 | `pv` | string | Target PV to write. |
 | `value` | any | Value written to the PV. |
 | `delay` | float | Optional sleep after the write. |
+| `put_timeout` | float | Seconds to wait for the IOC to finish processing the write (CA put callback). `0` (default) writes without waiting. |
 
 ### SubscriptionConfig
 One event subscription bound to a role.

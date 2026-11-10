@@ -275,7 +275,12 @@ class ScanDimension:
 class TriggerAction:
     pv: str
     value: Any
-    delay: float = 0.0 
+    delay: float = 0.0
+    put_timeout: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Validate optional completion waiting independently for each write."""
+        self.put_timeout = _finite_non_negative("put_timeout", self.put_timeout)
 
 @dataclass
 class ScanTriggers:
@@ -317,7 +322,7 @@ class ScanTriggers:
 
                 try:
                     actions.append(TriggerAction(**action))
-                except TypeError as exc:
+                except (TypeError, ValueError) as exc:
                     logger.debug("Invalid trigger action at %s: %s", action_path, exc)
                     raise ConfigError(f"Invalid {action_path}: {exc}") from exc
             return actions

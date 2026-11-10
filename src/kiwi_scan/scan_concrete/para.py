@@ -314,8 +314,12 @@ class ParaScan(BaseScan):
         try:
             with self.performance.time_block("triggers:on_point", idx=index):
                 self._fire_triggers("on_point")
+            if self._stop_requested.is_set():
+                return False
 
             motion_started = self._integrate_point()
+            # Preserve the final accumulated window when integration is stopped.
+            stop_after_integration = self._stop_requested.is_set()
             with self._stat_window_lock:
                 self._daq_is_on = False
 
@@ -330,6 +334,9 @@ class ParaScan(BaseScan):
 
             with self.performance.time_block("triggers:after_point", idx=index):
                 self._fire_triggers("after_point")
+            if not stop_after_integration and self._stop_requested.is_set():
+                self._point_pipeline.abort_active_point_frame()
+                return False
 
             with self.performance.time_block("plugins", idx=index):
                 self._collect_plugin_point_data( index, current_position)

@@ -302,8 +302,14 @@ class BaseScan(ScanABC):
         self._stop_subscriptions()
 
     def _fire_triggers(self, phase: str) -> None:
-        """Compatibility wrapper delegating trigger execution to TriggerManager."""
-        self.trigger_manager.fire(phase)
+        """
+        Compatibility wrapper delegating trigger execution to TriggerManager.
+
+        A stop request ends put completion waits, except in the ``after``
+        cleanup phase, whose completion waits ignore scan stop requests.
+        """
+        stop_event = None if phase == "after" else self._stop_requested
+        self.trigger_manager.fire(phase, stop_event=stop_event)
 
     def _primary_actuator_name(self):
         if not self.scan_dimensions:
@@ -681,12 +687,18 @@ class BaseScan(ScanABC):
         with self.performance.time_block("daq:point", idx=index):
             with self.performance.time_block("triggers:on_point", idx=index):
                 self._fire_triggers("on_point")
+            # A cancelled completion wait must not acquire an unfinished point.
+            if self._stop_requested.is_set():
+                return
             with self.performance.time_block("read_detectors", idx=index):
                 values = self.read_detectors()
             with self.performance.time_block("update_row_cache", idx=index):
                 self._begin_point_frame(idx=index, pos=position, values=values)
             with self.performance.time_block("triggers:after_point", idx=index):
                 self._fire_triggers("after_point")
+            if self._stop_requested.is_set():
+                self._point_pipeline.abort_active_point_frame()
+                return
             with self.performance.time_block("plugins", idx=index):
                 self._collect_plugin_point_data(index, position)
             with self.performance.time_block("write:data", idx=index):
@@ -813,12 +825,15 @@ class BaseScan(ScanABC):
     def _acquire_daq_point_step(self, index: int, position: Any, monitor: Optional[BaseMonitor]) -> bool:
         """
         Acquire, process, save, and publish one step scan point.
-        Return ``False`` if acquisition was interrupted during integration.
+        Return ``False`` if trigger waiting or integration was interrupted.
         """
         self._point_pipeline.reset_data_column_provider_windows()
         self._daq_is_on = True
         with self.performance.time_block("triggers:on_point", idx=index):
             self._fire_triggers("on_point")
+        # Also honour cancellation when integration_time is zero.
+        if self._stop_requested.is_set():
+            return False
         if self.integration_time > 0.0:
             logger.info("DAQ for integration_time = %s", self.integration_time)
             if self._stop_requested.wait(self.integration_time):
@@ -1134,6 +1149,11 @@ class BaseScan(ScanABC):
         """
         if getattr(self, "busyflag", False):
             raise RuntimeError("Cannot close a running scan; call stop() and wait until busy is False")
+        # Release monitor-trigger completion waits before joining workers and
+        # closing their PVs. Constructor failure may precede event creation.
+        stop_event = getattr(self, "_stop_requested", None)
+        if stop_event is not None:
+            stop_event.set()
         try:
             self._resources.close()
         except Exception:

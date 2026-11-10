@@ -63,6 +63,7 @@ Each trigger action has these fields:
 | `pv` | yes | EPICS PV to write. |
 | `value` | yes | Value written to the PV. Scalars and simple list-like values are supported. |
 | `delay` | no | Delay in seconds after the write. Defaults to `0.0`. |
+| `put_timeout` | no | Wait up to this many seconds until the IOC has finished processing the write. Defaults to `0.0` (no wait). |
 
 Trigger PV objects are created without an implicit EPICS `queueing_delay`.
 Add a post-trigger `delay` only when hardware requires settling time. 
@@ -79,6 +80,39 @@ triggers:
       value: scan
       delay: 0.1
 ```
+
+### Waiting for put completion
+
+Set `put_timeout` for a trigger PV whose record processes asynchronously,
+for example a record with asynchronous device support that starts an acquisition
+and finishes when the acquisition is done.
+The write then uses a Channel Access put callback, and the trigger manager waits
+until the IOC reports that processing has finished, including asynchronous device support
+and forward-linked records, before it applies `delay` and writes the next action.
+
+```yaml
+triggers:
+  on_point:
+    - pv: TEST:DET:ACQUIRE
+      value: 1
+      put_timeout: 5.0
+```
+
+- `put_timeout: 0` (the default) writes without waiting, as before.
+- A completion timeout logs a warning and the phase continues with the next action.
+  The IOC may still be processing the write.
+- If the PV does not accept a put callback (for example while disconnected), a warning is logged and the trigger manager does not wait.
+- A scan stop request ends the completion wait promptly. The remaining actions of the phase are still written.
+  A point whose trigger wait is interrupted is discarded before plugins or output. If cancellation happens
+  in `on_point`, detector acquisition is skipped as well.
+  The `after` cleanup phase keeps its completion waits after a stop request.
+- A passive scan still flushes its final accumulated statistics window when a
+  stop occurs during integration rather than during a trigger wait.
+- Closing a finished scan releases pending monitor-trigger completion waits before
+  joining the worker and closing its PVs.
+- The wait applies to each action separately. Actions in one phase are written and completed in order.
+
+A `put_timeout` on an `on_point` trigger adds the processing time to every scan point.
 
 List values can be written either as YAML lists or as simple string lists:
 
@@ -101,9 +135,10 @@ At runtime, `fire(phase)` does the following:
 
 1. Look up the PVs configured for the phase.
 2. Write each configured value to its PV.
-3. Log an error if the write fails.
-4. Sleep for `delay` seconds when `delay > 0`.
-5. Continue with the next PV.
+3. Wait for put completion when `put_timeout > 0`.
+4. Log an error if the write fails, or a warning if completion times out.
+5. Sleep for `delay` seconds when `delay > 0`.
+6. Continue with the next PV.
 
 In normal step scans, `before`, `on_point`, and `after` are the most important phases. Continuous scans may also use `after_point`.
 
@@ -117,6 +152,7 @@ The trigger manager is designed to avoid unnecessary scan crashes:
 - PV initialization failures are logged and the broken action is skipped
 - unknown trigger phases are logged as warnings and ignored
 - failed PV writes are logged as errors
+- put completion timeouts are logged as warnings
 
 A failed trigger write is not raised as an exception by the trigger manager. Check the log output when debugging trigger behavior, e.g. by using the CLI tool:
 

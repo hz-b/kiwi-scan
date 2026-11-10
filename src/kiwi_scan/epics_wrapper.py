@@ -61,6 +61,11 @@ class PutCompletion:
         return self._cancelled
 
     @property
+    def unarmed(self) -> bool:
+        """True if CA did not accept the request; no callback will arrive."""
+        return self._unarmed
+
+    @property
     def pending(self) -> bool:
         """True while a callback is still expected and the deadline has not passed."""
         if self._event.is_set():
@@ -288,26 +293,58 @@ class EpicsPV:
 
         return _do()
 
-    def put(self, value: Any) -> bool:
-        """ Put a value to the PV.
-        Supports scalar writes and waveform (array) writes.
+    def put(
+        self, value: Any, *, wait: bool = False, timeout: Optional[float] = None,
+    ) -> bool:
+        """Write a scalar or waveform, optionally waiting for IOC processing.
+
+        The default preserves the existing asynchronous write behavior. With
+        ``wait=True``, return False on submission failure and raise TimeoutError
+        if processing does not complete in time. The timeout defaults to the
+        wrapper's CA timeout. Blocking puts must run outside CA callbacks.
+        PyEpics may first reconnect using its separate connection timeout;
+        ``timeout`` does not bound that connection wait.
         """
         pv = self._require_pv()
+        put_timeout = self.timeout if timeout is None else float(timeout)
+        if wait and (not math.isfinite(put_timeout) or put_timeout < 0):
+            raise ValueError("put timeout must be finite and non-negative")
 
         # Normalization (e.g. numpy arrays)
         v = value
         tolist = getattr(v, "tolist", None)
         if callable(tolist):
             v = tolist()
+        started = 0.0
         try:
-            pv.put(v, timeout=self.timeout)
+            if wait:
+                logger.debug("Writing PV %s = %r and waiting for completion (timeout %.3fs)",
+                             self.pvname, v, put_timeout)
+                started = time.monotonic()
+                result = pv.put(v, wait=True, timeout=put_timeout)
+            else:
+                result = pv.put(v, timeout=put_timeout)
+            if wait:
+                # PyEpics returns -1 on processing timeout. It is truthy, so a
+                # simple bool(result) would incorrectly report success.
+                if result == -1:
+                    self.last_written = v  # Submitted; IOC processing may still be active.
+                    raise TimeoutError(
+                        f"Put completion for {self.pvname} not reached within {put_timeout:.3f}s"
+                    )
+                if result is None or result <= 0:
+                    logger.error("Failed to write PV %s = %r (status %r)", self.pvname, v, result)
+                    return False
+                logger.debug("PV %s put completed in %.3fs", self.pvname, time.monotonic() - started)
             if self.queueing_delay > 0:
                 time.sleep(self.queueing_delay)
             logger.debug("Set PV %s = %r", self.pvname, v)
             self.last_written = v
             return True
-        except Exception as e: # noqa BLE001
-            logger.error("Failed to set PV %s to %r: %s", self.pvname, v, e)
+        except Exception as exc:
+            if wait and isinstance(exc, TimeoutError):
+                raise
+            logger.error("Failed to set PV %s to %r: %s", self.pvname, v, exc)
             return False
 
     def put_with_completion(self, value: Any, *, timeout: float) -> PutCompletion:
@@ -316,6 +353,9 @@ class EpicsPV:
 
         Returns a PutCompletion that reports when the IOC has finished processing the write. 
         Failure reporting matches ``put()``: only an exception counts as a failed put.
+        The completion deadline includes submission time, but cannot interrupt
+        PyEpics reconnecting inside ``PV.put()`` with its separate connection
+        timeout. Stop events are observed after that call returns.
 
         TODO: a callback that never arrives (e.g. after a timeout or a cancel) 
               stays registered in pyepics (``ca._put_completes``) until the channel is cleared.

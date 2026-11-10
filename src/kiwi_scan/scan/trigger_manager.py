@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: MIT
 
 import logging
+import threading
 import time
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence
@@ -16,6 +17,7 @@ class PreparedTriggerAction:
     pv: EpicsPV
     value: Any
     delay: float = 0.0
+    put_timeout: float = 0.0
 
 
 class TriggerManager:
@@ -86,8 +88,8 @@ class TriggerManager:
                 logger.error(f"Failed to init trigger PV {pvname}, phase {phase}")
                 continue
 
-            prepared.append(PreparedTriggerAction( pv=pv, value=value, delay=delay))
-            logger.debug("Initialized trigger PV %s (phase=%s, value=%r, delay=%.3f)", pvname, phase, value, delay)
+            prepared.append(PreparedTriggerAction(pv=pv, value=value, delay=delay, put_timeout=action.put_timeout))
+            logger.debug("Initialized trigger PV %s (phase=%s, value=%r, delay=%.3f, put_timeout=%.3f)", pvname, phase, value, delay, action.put_timeout)
 
         return prepared
 
@@ -116,20 +118,62 @@ class TriggerManager:
                     return value
         return value
 
-    def fire(self, phase: str) -> None:
+    def fire(self, phase: str, stop_event: Optional[threading.Event] = None) -> None:
+        """
+        Write the phase's actions in order.
+
+        An action with ``put_timeout > 0`` is written with a CA put callback
+        and the next step (its ``delay``, then the next action) waits until the
+        IOC reports that processing finished, including asynchronous device
+        support. A completion timeout logs a warning and the phase continues.
+        A set ``stop_event`` ends the wait at once; the remaining actions are
+        still written so that a phase is never left half done.
+        """
         if phase not in self._actions_by_phase:
             logger.warning("Unknown trigger phase: %s", phase)
             return
 
         logger.debug("************ FIRE TRIGGERS (%s) ************", phase)
         for action in self._actions_by_phase.get(phase, []):
-            ok = action.pv.put(action.value)
-            if not ok:
-                logger.error( "Failed to write trigger PV %s value %r", action.pv.pvname, action.value)
+            if action.put_timeout > 0:
+                self._put_and_wait(phase, action, stop_event)
             else:
-                logger.debug( "Wrote trigger PV %s value %r", action.pv.pvname, action.value)
+                ok = action.pv.put(action.value)
+                if not ok:
+                    logger.error("Failed to write trigger PV %s value %r (phase=%s)",
+                                 action.pv.pvname, action.value, phase)
+                else:
+                    logger.debug("Wrote trigger PV %s value %r (phase=%s)",
+                                 action.pv.pvname, action.value, phase)
             if action.delay > 0:
+                logger.debug("Trigger PV %s post-write delay %.3fs (phase=%s)",
+                             action.pv.pvname, action.delay, phase)
                 time.sleep(action.delay)
+
+    @staticmethod
+    def _put_and_wait(phase: str, action: PreparedTriggerAction,
+                      stop_event: Optional[threading.Event]) -> bool:
+        """Write one action with a put callback and wait for completion."""
+        completion = action.pv.put_with_completion(action.value, timeout=action.put_timeout)
+        if completion.wait(stop_event):
+            logger.debug("Wrote trigger PV %s value %r, put completed (phase=%s)",
+                         action.pv.pvname, action.value, phase)
+            return True
+        if completion.failed:
+            # put_with_completion() already logged the error.
+            return False
+        if completion.unarmed:
+            logger.warning("Trigger PV %s did not accept a put callback (phase=%s); not waiting",
+                           action.pv.pvname, phase)
+        elif stop_event is not None and stop_event.is_set():
+            completion.cancel()
+            logger.debug("Trigger PV %s put completion wait stopped (phase=%s)",
+                         action.pv.pvname, phase)
+        else:
+            # PutCompletion.wait() already logged the timeout warning.
+            logger.debug("Continuing phase %s after put completion timeout on %s",
+                         phase, action.pv.pvname)
+        return False
 
     def close(self) -> None:
         """Close all trigger PVs and drop the prepared actions. Idempotent."""

@@ -368,18 +368,24 @@ class TestBaseScanRuntimeHelpers(unittest.TestCase):
         scan.sync_controller.wait.return_value = True
         handler = object()
         stop_event = threading.Event()
+        scan._stop_requested = threading.Event()
 
         scan.register_subscription_role("sync", handler)
         scan._start_subscriptions()
         scan._clear_subscriptions()
         scan._fire_triggers("before")
+        scan._fire_triggers("after")
         scan._arm_sync_controller()
 
         self.assertTrue(scan._wait_for_sync(stop_event))
         scan.subscription_manager.register_role.assert_called_once_with("sync", handler)
         scan.subscription_manager.start.assert_called_once_with()
         scan.subscription_manager.stop.assert_called_once_with()
-        scan.trigger_manager.fire.assert_called_once_with("before")
+        # A stop request ends put completion waits, but not in "after" cleanup.
+        scan.trigger_manager.fire.assert_has_calls([
+            call("before", stop_event=scan._stop_requested),
+            call("after", stop_event=None),
+        ])
         scan.sync_controller.arm.assert_called_once_with()
         scan.sync_controller.wait.assert_called_once_with(stop_event=stop_event)
 
