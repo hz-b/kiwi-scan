@@ -201,6 +201,8 @@ For detailed description check the plugin user and developer documentation:
 
 [Async Plugins](https://github.com/hz-b/kiwi-scan/blob/master/docs/async_plugins.md) - async plugin extension for parallel background processing.
 
+For AI-assisted plugin development, see the [notes on writing a plugin prompt](https://github.com/hz-b/kiwi-scan/blob/master/examples/plugins/prompt.md), covering scope, tests, and acceptance criteria.
+
 ## IOC
 
 For running kiwi-scan as a generic EPICS soft IOC, see [ioc.md](https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md).
