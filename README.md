@@ -285,6 +285,8 @@ User and developer documentation:
 - [Converter](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi2spec.md) - data export
 - [Performance testing](https://github.com/hz-b/kiwi-scan/blob/master/docs/performance.md) - performance reports
 - [Point pipeline](https://github.com/hz-b/kiwi-scan/blob/master/docs/point-pipeline.md) - detector acquisition, point assembly, caches, and persistence
+- [Detector Reader](https://github.com/hz-b/kiwi-scan/blob/master/docs/detector-reader.md) - detector reader options and use cases
+- [kiwi-get](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi_get.md) - direct get detector reader CLI
 - [README.md](https://github.com/hz-b/kiwi-scan/blob/master/README.md) - current readme
 
 [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/hz-b/kiwi-scan)
