@@ -183,7 +183,8 @@ manifestfiles --new-manifest [optional_filename.yaml]
 ```
 
 `scan_runner --new-manifest` also creates and activates a timestamped manifest, optionally followed by a scan in the same call. It does not take a filename.
-
+When combined with a scan, `scan_runner` validates the configuration after applying
+CLI dimensions and before changing the active manifest. 
 Each scan appends references to its main data file and metadata sidecar. Depending on `manifest_mode`, the entry may also contain the complete scan configuration.
 
 If no filename is given, a timestamped manifest is created, normally in `KIWI_SCAN_DATA_DIR`. Use `manifestfiles --data-dir DIR` to choose another directory.

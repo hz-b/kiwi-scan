@@ -14,6 +14,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed
 
+- `scan_runner` validates the resolved configuration before activating a new manifest, without constructing scan hardware for validation.
+- `scan_runner` reports malformed YAML structures, invalid model values, nonfinite dimensions, and replacement arguments missing `=` as usage errors before creating a manifest or scan.
+- `scan_runner` closes its scan after execution or failure and restores the SIGINT handler even if cleanup is interrupted.
 - Stop requests during trigger completion waits discard interrupted scan points, including zero-integration step scans, continuous scans and passive scans.
 - Closing a finished scan releases monitor-trigger completion waits before joining workers and closing trigger PVs.
 

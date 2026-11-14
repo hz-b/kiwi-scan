@@ -22,6 +22,8 @@ from kiwi_scan.yaml_loader import (
     yaml_loader,
 )
 
+logger = logging.getLogger(__name__)
+
 logging.basicConfig(
     level=logging.WARNING,
     format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
@@ -115,14 +117,22 @@ def main() -> None:
     if args.log_level is not None:
         set_valid_logging_level(args.log_level)
 
+    trigger_manager = None
     try:
         raw_config, origin = _load_raw_config(args, config_dir)
         print_required_replacements(args, config_dir, origin)
         config = ScanConfig.from_dict(raw_config)
         trigger_manager = TriggerManager.from_config(config.triggers)
         trigger_manager.fire(args.phase)
-    except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+    except (FileNotFoundError, PermissionError, KeyError, TypeError, ValueError) as exc:
         parser.error(str(exc))
+    finally:
+        if trigger_manager is not None:
+            try:
+                trigger_manager.close()
+            except Exception:
+                # Keep cleanup visible without hiding the original execution error.
+                logger.exception("Failed to close trigger manager")
 
     # logging.info("Executed trigger phase %r from %s", args.phase, origin)
 

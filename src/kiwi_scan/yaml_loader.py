@@ -30,11 +30,14 @@ def yaml_loader(path: str, replacements: Optional[Dict[str, str]] = None) -> Dic
     except yaml.YAMLError as exc:
         raise ValueError(f"Invalid YAML in {path}: {exc}") from exc
 
-def parse_replacements(replacements_list: List[str]) -> Dict[str, str]:
+def parse_replacements(
+    replacements_list: List[str], *, strict: bool = False
+) -> Dict[str, str]:
     """
     Parse the replacement list provided as a command line argument.
     Args:
         replacements_list (list): A list of replacement strings in the format KEY=VALUE.
+        strict (bool): Reject entries without '=' instead of ignoring them.
     Returns:
         dict: A dictionary of replacements.
     """
@@ -46,6 +49,8 @@ def parse_replacements(replacements_list: List[str]) -> Dict[str, str]:
         if '=' in item:
             key, value = item.split('=', 1)
             replacements[key] = value
+        elif strict:
+            raise ValueError(f"Replacement {item!r} must have the form KEY=VALUE")
     return replacements
 
 def list_required_replacements(config_dir, filenames):

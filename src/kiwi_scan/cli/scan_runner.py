@@ -4,6 +4,7 @@
 import argparse
 import difflib
 import logging
+import math
 import os
 import signal
 import sys
@@ -115,6 +116,14 @@ def _validate_dim_args(dim_args: List[str]) -> None:
 def _validate_scan_dimensions(scan_dimensions: List[ScanDimension]) -> None:
     """Validate parsed scan dimensions before executing a scan."""
     for dim in scan_dimensions:
+        for key in ("start", "stop", "velocity"):
+            value = getattr(dim, key)
+            if value is not None and not math.isfinite(value):
+                raise ValueError(
+                    f"Invalid --dim for actuator {dim.actuator!r}: "
+                    f"{key} must be finite, got {value}"
+                )
+
         if dim.steps < 0:
             raise ValueError(
                 f"Invalid --dim for actuator {dim.actuator!r}: steps must be >= 0, got {dim.steps}"
@@ -130,6 +139,11 @@ def _validate_scan_dimensions(scan_dimensions: List[ScanDimension]) -> None:
 def _load_config_from_path(config_path: str, replacements: dict) -> ScanConfig:
     """Load a single YAML scan config from an explicit path."""
     data = yaml_loader(config_path, replacements)
+    if not isinstance(data, dict):
+        raise TypeError(
+            "configuration root must be a mapping, "
+            f"got {type(data).__name__}"
+        )
     return ScanConfig.from_dict(data)
 
 
@@ -233,11 +247,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         _validate_dim_args(args.dim)
         scan_dimensions = ScanDimension.from_dim_args(args.dim)
+        _validate_scan_dimensions(scan_dimensions)
     except (KeyError, TypeError, ValueError) as exc:
         parser.error(str(exc))
 
     try:
-        replacements = parse_replacements(args.replace)
+        replacements = parse_replacements(args.replace, strict=True)
     except (TypeError, ValueError) as exc:
         parser.error(f"invalid --replace: {exc}")
     replacements.update(get_env_replacements("KIWI_SCAN"))
@@ -260,7 +275,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         try:
             config = _load_config_from_path(config_path, replacements)
-        except (FileNotFoundError, OSError, ValueError) as exc:
+        except (OSError, TypeError, ValueError) as exc:
             parser.error(f"failed to load --config-file {config_path!r}: {exc}")
         config_label = config_path
     else:
@@ -279,11 +294,6 @@ def main(argv: Optional[List[str]] = None) -> int:
             print(replacements_help)
 
         config_label = args.config
-
-    try:
-        _validate_scan_dimensions(scan_dimensions)
-    except ValueError as exc:
-        parser.error(str(exc))
 
     # Debug output
     logger.info(f"Scan Type: {args.scan_type}")
@@ -308,6 +318,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     config.scan_dimensions = scan_dimensions
 
     # Validate the scan request before changing the active manifest.
+    try:
+        config.validate()
+    except (TypeError, ValueError) as exc:
+        logger.error("Failed to initialize scan: %s", exc)
+        logger.debug("Scan configuration validation traceback", exc_info=True)
+        return 1
+
     if args.new_manifest:
         try:
             path = ManifestWriter.newmanifest(directory=data_dir)
@@ -369,7 +386,12 @@ def main(argv: Optional[List[str]] = None) -> int:
             logger.exception("Failed to stop scan after error")
         return 1
     finally:
-        signal.signal(signal.SIGINT, previous_sigint_handler)
+        try:
+            scan.close()
+        except Exception:
+            logger.exception("Failed to close scan during cleanup")
+        finally:
+            signal.signal(signal.SIGINT, previous_sigint_handler)
 
     return 0
 
