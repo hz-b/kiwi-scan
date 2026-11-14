@@ -51,6 +51,21 @@ This document is a work in progress. Interface contracts and contributor guideli
 - Actuators: `move()` returns at once. `wait_until_done(position, stop_event=None)` returns promptly when `stop_event` is set.
   `stop()` is fast and safe to call from any thread.
 
+## Test conventions
+
+- Prefer `unittest.TestCase` for new tests where practical, using `self.assert*` methods and `unittest.mock`. Existing pytest tests need not be converted solely for consistency.
+- Keep unittest-based modules runnable through both pytest and direct execution, for example: `python3 tests/test_actuator.py`. Include:
+
+```python
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+```
+
+- Use `self.subTest()` for related input cases where suitable. Pytest fixtures, parametrization, and plain assertions are welcome when they materially improve clarity, reuse, or individual case selection.
+- Restore modified global state and release test resources even when assertions fail. Use context managers, `self.addCleanup()`, or fixture teardown as appropriate.
+- CLI unit tests should mock server and hardware entry points. Exercise real shared helpers when their behavior is being tested.
+- Keep tests Python 3.8 compatible.
+
 ## Checks, Finish
 
 - Run the full test suite before submitting (`make lint && make test`).

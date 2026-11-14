@@ -12,7 +12,7 @@ dynamic = ["version"]
 description = "A modular scanning framework with YAML-configured actuators, monitors, triggers, plugins, and scan strategies."
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" }
+# license = { text = "MIT" } # TODO: license-files = ["LICENSE"] for setuptools>=77 (Python >= 3.9)
 authors = [
   { name = "Helmholtz-Zentrum Berlin" }
 ]
