@@ -19,7 +19,14 @@ logger = logging.getLogger(__name__)
 
 def is_valid_logging_level(level):
     """Check if the given integer is a valid logging level."""
-    return level in [logging.DEBUG, logging.INFO, logging.WARNING, logging.ERROR, logging.CRITICAL]
+    return level in [
+        logging.NOTSET,
+        logging.DEBUG,
+        logging.INFO,
+        logging.WARNING,
+        logging.ERROR,
+        logging.CRITICAL,
+    ]
 
 def set_valid_logging_level(level):
     """

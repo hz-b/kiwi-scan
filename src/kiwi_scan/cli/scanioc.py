@@ -133,12 +133,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         level=logging.WARNING,
         format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
     )
-    if args.log_level == 0:
-        # set_valid_logging_level currently accepts the named levels 1..5.
-        # Keep the documented mbbo value 0 available for NOTSET as well.
-        logging.getLogger().setLevel(logging.NOTSET)
-    else:
-        set_valid_logging_level(args.log_level)
+    set_valid_logging_level(args.log_level)
 
     try:
         options = options_from_args(args)
