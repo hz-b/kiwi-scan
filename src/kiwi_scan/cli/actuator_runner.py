@@ -10,9 +10,8 @@ import os
 import signal
 import sys
 import threading
-import time
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from kiwi_scan.actuator.single import AbstractActuator
 from kiwi_scan.actuator.tools import load_actuators, run_monitors
@@ -240,27 +239,72 @@ def main() -> None:
     except (FileNotFoundError, ValueError, TypeError, ConnectionError) as exc:
         p.error(f"failed to load actuators: {exc}")
 
-    _validate_cli_specs(p, args, actuators)
+    completed = False
+    try:
+        result = _run_loaded_actuators(p, args, actuators)
+        completed = True
+    finally:
+        closed = _close_actuators(actuators)
+        if completed and not closed:
+            raise SystemExit(1)
 
-    # Validate "monitors only" mode
-    have_moves = bool(args.move or args.rel_move or args.jog or args.stop or args.set_velocity)
-    have_monitors = bool(args.monitor)
-    if have_monitors and not have_moves and not (args.monitor_duration or args.monitor_count or args.keep_alive):
-        p.error(
+    if result is not None:
+        seen, dropped = result
+        if dropped:
+            logger.warning("Dropped %d monitor events (queue full).", dropped)
+        logger.debug("Config origin: %s", config_file)
+        print(f"Done. events_seen={seen} dropped={dropped}")
+
+
+def _close_actuators(actuators: Dict[str, AbstractActuator]) -> bool:
+    """Release all owned instances, retaining any earlier execution error."""
+    closed = True
+    for actuator in {id(act): act for act in actuators.values()}.values():
+        try:
+            actuator.close()
+        except Exception:
+            closed = False
+            logger.exception("Failed to close actuator")
+    return closed
+
+
+def _run_loaded_actuators(
+    parser: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    actuators: Dict[str, AbstractActuator],
+) -> Optional[Tuple[int, int]]:
+    _validate_cli_specs(parser, args, actuators)
+    have_actions = bool(args.move or args.rel_move or args.jog or args.stop or args.set_velocity)
+    if args.monitor and not have_actions and not (args.monitor_duration or args.monitor_count or args.keep_alive):
+        parser.error(
             "You started monitors but provided no exit condition. "
             "Add --monitor-duration, --monitor-count, or --keep-alive."
         )
 
-    # Setup shutdown handling.
-    # First Ctrl-C requests a graceful stop and sends stop commands.
-    # Second Ctrl-C forces process exit    
     stop_all = threading.Event()
+    futures: List[Future] = []
     sigint_count = 0
+    stopped = False
+
+    def _shutdown():
+        nonlocal stopped
+        stop_all.set()
+        # Python 3.8 has no shutdown(cancel_futures=...). Running workers
+        # waiting for an actuator lock also check stop_all after acquiring it.
+        for future in futures:
+            future.cancel()
+        if stopped:
+            return
+        stopped = True
+        for act in {id(act): act for act in actuators.values()}.values():
+            try:
+                act.stop()
+            except Exception:
+                logger.exception("Failed to stop actuator during shutdown")
 
     def _sigint(_signum, _frame):
         nonlocal sigint_count
         sigint_count += 1
-
         if sigint_count >= 2:
             print(
                 "Second Ctrl-C received: forcing actuator_runner exit.",
@@ -268,79 +312,74 @@ def main() -> None:
                 flush=True,
             )
             os._exit(130)
-
         print(
             "Ctrl-C received: stopping actuators. "
             "Press Ctrl-C again to force exit.",
             file=sys.stderr,
             flush=True,
         )
-        stop_all.set()
+        _shutdown()
 
-        for act in actuators.values():
-            try:
-                act.stop()
-            except Exception:
-                logger.exception("Failed to stop actuator during Ctrl-C handling")
+    previous_sigint_handler = signal.signal(signal.SIGINT, _sigint)
+    try:
+        _run_actions(args, actuators)
+        if not (args.monitor or args.move or args.rel_move or args.jog):
+            return None
+        return _run_motion_commands(args, actuators, stop_all, futures, _shutdown)
+    except BaseException:
+        _shutdown()
+        raise
+    finally:
+        signal.signal(signal.SIGINT, previous_sigint_handler)
 
-    signal.signal(signal.SIGINT, _sigint)
 
-    # set stop, velocity, ...
-    _run_actions(args, actuators)
+def _motion_commands(args, actuators):
+    """Keep the existing move, relative move, then jog submission order."""
+    for spec in args.move:
+        name, value = _parse_name_value(spec)
+        yield name, actuators[name].run_move, value
+    for spec in args.rel_move:
+        name, value = _parse_name_value_any(spec)
+        yield name, actuators[name].run_rel_move, value
+    for spec in args.jog:
+        name, value = _parse_name_value(spec)
+        yield name, actuators[name].jog, value
 
-    # If there are no async actions, exit now.
-    if not (args.monitor or args.move or args.rel_move or args.jog):
-        return
-    # Submit moves/jogs concurrently
-    used_motion_actuators: List[AbstractActuator] = []
-    futures: List[Future] = []
-    seen = 0
-    dropped = 0
 
-    # Serialize commands per actuator to avoid overlapping for same device.
-    per_act_lock: Dict[str, threading.Lock] = {
-        name: threading.Lock()
-        for name in actuators
-    }
+def _run_motion_commands(
+    args: argparse.Namespace,
+    actuators: Dict[str, AbstractActuator],
+    stop_all: threading.Event,
+    futures: List[Future],
+    shutdown: Callable[[], None],
+) -> Tuple[int, int]:
+    per_act_lock = {name: threading.Lock() for name in actuators}
 
-    def _with_lock(name: str, fn, *fn_args, **fn_kwargs):
+    def _with_lock(name, command, value):
         with per_act_lock[name]:
-            return fn(*fn_args, **fn_kwargs)
+            if stop_all.is_set():
+                return
+            try:
+                result = command(value, True)
+                if result is False:
+                    raise RuntimeError(f"Actuator {name!r} rejected command")
+            except BaseException as exc:
+                # Set the event before releasing the lock: the next command
+                # for this actuator must not start after a worker failure.
+                stop_all.set()
+                logger.error("Actuator %s command failed: %s", name, exc)
+                raise
 
-    max_workers = max(1, min(8, len(actuators)))
-    with ThreadPoolExecutor(max_workers=max_workers) as ex:
-        for spec in args.move:
-            name, pos = _parse_name_value(spec)
-            act = actuators[name]
-            used_motion_actuators.append(act)
-            futures.append(
-                ex.submit(_with_lock, name, act.run_move, float(pos), True)
-            )
-
-        for spec in args.rel_move:
-            name, delta = _parse_name_value_any(spec)
-            act = actuators[name]
-            used_motion_actuators.append(act)
-            futures.append(
-                ex.submit(_with_lock, name, act.run_rel_move, delta, True)
-            )
-
-        for spec in args.jog:
-            name, vel = _parse_name_value(spec)
-            act = actuators[name]
-            used_motion_actuators.append(act)
-            futures.append(
-                ex.submit(_with_lock, name, act.jog, float(vel), True)
-            )
-
+    seen, dropped = 0, 0
+    with ThreadPoolExecutor(max_workers=max(1, min(8, len(actuators)))) as executor:
         try:
+            for name, command, value in _motion_commands(args, actuators):
+                futures.append(executor.submit(_with_lock, name, command, value))
+
             if args.monitor:
                 completion_check = None
                 if futures and not args.keep_alive:
-                    completion_check = lambda: all(
-                        future.done() for future in futures
-                    )
-
+                    completion_check = lambda: all(future.done() for future in futures)
                 seen, dropped = run_monitors(
                     actuators,
                     args.monitor,
@@ -350,28 +389,26 @@ def main() -> None:
                     stop_event=stop_all,
                     completion_check=completion_check,
                 )
-            else:
-                while not stop_all.is_set():
-                    if futures and not args.keep_alive and all(
-                        future.done() for future in futures
-                    ):
-                        break
-                    time.sleep(0.05)
+            # Monitoring may end while commands still run (duration/count
+            # with --keep-alive). Keep observing errors before executor exit
+            # starts its blocking wait, so a failed worker can stop its peers.
+            while not stop_all.is_set():
+                if (args.monitor or not args.keep_alive) and all(future.done() for future in futures):
+                    break
+                stop_all.wait(0.05)
+        except BaseException:
+            # Stop hardware before the executor waits for synchronous workers.
+            shutdown()
+            raise
         finally:
             if stop_all.is_set():
-                for act in used_motion_actuators:
-                    try:
-                        act.stop()
-                    except Exception:
-                        logger.exception(
-                            "Failed to stop actuator during shutdown"
-                        )
+                shutdown()
 
-    if dropped:
-        logger.warning("Dropped %d monitor events (queue full).", dropped)
-
-    logger.debug("Config origin: %s", config_file)
-    print(f"Done. events_seen={seen} dropped={dropped}")
+    # A completed future may have failed. Inspect results after every worker
+    # has finished, and never print the normal completion message on failure.
+    if any(not future.cancelled() and future.exception() is not None for future in futures):
+        raise SystemExit(1)
+    return seen, dropped
 
 if __name__ == "__main__":
     main()

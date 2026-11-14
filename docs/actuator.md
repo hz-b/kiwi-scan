@@ -491,7 +491,8 @@ actuator_runner --config-file ./mono.yaml --monitor energy:velocity --monitor-du
 ## Ctrl+C behavior
 
 When interrupted, `actuator_runner` requests shutdown and attempts to stop actuators that were used for motion commands.  
-Monitor subscriptions are removed before the tool exits.
+Monitor subscriptions are removed before the tool exits. A second Ctrl+C forces exit with status 130.
+
 
 ## Notes
 
