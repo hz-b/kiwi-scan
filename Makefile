@@ -13,6 +13,7 @@ SCRIPTS = \
     scanplotter_cli \
     scantrigger_cli \
     kiwi-get \
+    kiwi-pva-server \
     pollstats_cli \
     manifestfiles \
     scanioc \

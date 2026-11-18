@@ -1,0 +1,29 @@
+# SPDX-FileCopyrightText: 2026 Helmholtz-Zentrum Berlin fuer Materialien und Energie GmbH
+# SPDX-License-Identifier: MIT
+
+_kiwi_pva_server()
+{
+    local cur prev words cword split
+    _init_completion -s || return
+
+    COMPREPLY=()
+    case "$prev" in
+        --data-dir)
+            _filedir -d
+            return
+            ;;
+        --log-level)
+            COMPREPLY=( $(compgen -W "0 1 2 3 4 5" -- "$cur") )
+            return
+            ;;
+        --prefix)
+            # Endpoint prefixes are arbitrary strings.
+            return
+            ;;
+    esac
+
+    [[ "$split" == true ]] && return
+    COMPREPLY=( $(compgen -W "-h --help --data-dir --prefix --log-level" -- "$cur") )
+}
+
+complete -F _kiwi_pva_server kiwi-pva-server

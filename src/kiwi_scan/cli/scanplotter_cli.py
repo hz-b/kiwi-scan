@@ -8,6 +8,7 @@ from typing import List
 
 from kiwi_scan.data.manifestwriter import ManifestResolver
 from kiwi_scan.postmortem import PostMortemConfig, SeriesSpec, plot_postmortem
+from kiwi_scan.scan.tools import set_valid_logging_level
 
 _ALLOWED_SERIES_KEYS = {"file", "column", "axis", "label", "type"}
 _REQUIRED_SERIES_KEYS = {"column"}
@@ -152,12 +153,18 @@ def main():
     parser.add_argument(
         "--log-level",
         type=int,
-        default=logging.INFO,
-        help="Python logging level (10=DEBUG,20=INFO,...)",
+        choices=range(6),
+        metavar="0-5",
+        help="MBBO record level (0..5) to set log verbosity via scanlib helper",
     )
 
     args = parser.parse_args()
-    logging.basicConfig(level=args.log_level)
+    
+    logging.basicConfig(
+        level=logging.WARNING,
+        format="%(asctime)s - %(filename)s - %(levelname)s - %(message)s",
+    )
+    set_valid_logging_level(args.log_level)
 
     try:
         series = parse_series_args(args.series)

@@ -282,6 +282,7 @@ User and developer documentation:
 - [SyncController](https://github.com/hz-b/kiwi-scan/blob/master/docs/sync-controller.md) - kiwi synced scan loops
 - [IOC](https://github.com/hz-b/kiwi-scan/blob/master/docs/ioc.md) - kiwi scan IOC
 - [PVA Server](https://github.com/hz-b/kiwi-scan/blob/master/docs/pva_server.md) - PVA server capability and command-line tool
+- [Scan plotter](docs/scanplotter_cli.md) - plot saved scan data and metadata with `scanplotter_cli`
 - [Converter](https://github.com/hz-b/kiwi-scan/blob/master/docs/kiwi2spec.md) - data export
 - [Performance testing](https://github.com/hz-b/kiwi-scan/blob/master/docs/performance.md) - performance reports
 - [Point pipeline](https://github.com/hz-b/kiwi-scan/blob/master/docs/point-pipeline.md) - detector acquisition, point assembly, caches, and persistence
