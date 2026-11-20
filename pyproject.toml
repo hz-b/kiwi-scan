@@ -89,9 +89,24 @@ testpaths = ["tests"]
 
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py38" # moves to python 3.9 by v0.7.0 
+# line-length = 105          # default is 88;
+
+## Pre commit formatting by v0.7.0
+#[tool.ruff.format]
+#quote-style = "single"     # or "double" (default)
+#indent-style = "space"     # or "tab"
+#skip-magic-trailing-comma = false  # true = collapse lists even if they have a trailing comma
+#line-ending = "auto"       # or "lf" / "crlf"
+#docstring-code-format = true       # also format code examples inside docstrings
+
+## TODO: check for v0.7.0
+# [tool.ruff.lint.isort]
+# force-single-line = true   # one import per line
+# known-first-party = ["kiwi-scan"]
 
 [tool.ruff.lint]
+# TODO: check for python 3.9
 ignore = [
     "FA100",  # Do not require future annotations for typing simplification
 ]
