@@ -140,6 +140,7 @@ It maps actuator functions to configured PVs:
 | `in_position_band` | Readback tolerance for final position check. |
 | `dwell_time` | Extra wait after motion. |
 | `ca_timeout` | EPICS Channel Access timeout. |
+| `put_timeout` | Main-PV put-completion timeout in seconds, for records with asynchronous processing; `0` disables it (default). |
 | `startup_timeout` | Timeout for observing motion start. |
 
 ### Motion behavior
@@ -151,6 +152,19 @@ Writes `position` to `pv`, optionally writes `start_command` to `start_pv` and e
 `run_rel_move(delta, sync=True)`:
 
 Writes `delta` to `rel_pv` if configured, otherwise computes `rbv + delta` and uses the absolute move PV
+
+### Optional PV put completion
+
+PVs with asynchronous record processing report the end of processing with a Channel Access put callback. 
+Set `put_timeout > 0` to use it for the main `pv`:
+
+- A configured `start_pv` is still written after the setpoint is submitted and before any completion wait.
+- While the callback is pending, `is_ready()` is `False` and `is_moving()` is `True`, also when a `status_pv` reports ready.
+- After a completed put the startup wait is skipped and the ready, in-position and dwell checks are still in use. 
+- After a timeout a warning is logged.
+
+A put callback to a record that is still processing is held by the IOC until that processing ends, 
+so a new target is applied after the current one instead of retargeting on the fly.
 
 ### Ready / moving state
 
@@ -267,6 +281,7 @@ actuators:
     dwell_time: 0.05
     ca_timeout: 1.0
     startup_timeout: 0.5
+    # for asynchronously processed records: put_timeout: 600.0
 ...
 ```
 

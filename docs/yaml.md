@@ -119,6 +119,7 @@ reported only through debug logging.
 | `ready_bitmask` | int | Bitmask for status-based ready logic. |
 | `queueing_delay` | float | Delay after EPICS writes. |
 | `ca_timeout` | float | EPICS  CA timeout. |
+| `put_timeout` | float | Main-PV put-completion timeout in seconds for EPICS actuators; `0` disables it (default). Must be a finite number >= 0; numeric strings are accepted, booleans are rejected. |
 | `auto_monitor` | bool | Use EPICS CA cache. |
 | `startup_timeout` | float | Timeout waiting for motion to start. |
 | `in_position_band` | float | Allowed tolerance. |

@@ -37,6 +37,7 @@ actuators: {}
 #       command_pv: null
 #       command_pos: null
 #       command_neg: null
+#     put_timeout: 0.0
 
 detector_pvs: []
 # Example: detector_pvs
