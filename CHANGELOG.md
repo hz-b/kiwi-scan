@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-11-23
+
 ### Added
 
 - `EpicsPV.put()` accepts `wait=True` and `timeout` for a blocking put; a completion timeout raises `TimeoutError`.
