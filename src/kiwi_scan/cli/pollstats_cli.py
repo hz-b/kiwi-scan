@@ -78,12 +78,14 @@ def _print_row(values, *, sep="\t"):
     _LAST_LINE = line
 
 
-def _print_row_multiline(headers, values):
-    ts = values[0]
+def _print_row_multiline(headers, values, *, has_timestamp=True):
     print()
-    print(ts)
+    if has_timestamp:
+        print(values[0])
+        headers = headers[1:]
+        values = values[1:]
 
-    for h, v in zip(headers[1:], values[1:]):
+    for h, v in zip(headers, values):
         print(f"  {h:20s} { _format_value(v) }")
 
     sys.stdout.flush()
@@ -209,7 +211,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             if compact_mode:
                 _print_row(values, sep=sep)
             else:
-                _print_row_multiline(headers, values)
+                _print_row_multiline(headers, values, has_timestamp=not args.no_timestamp)
             if args.reset_each_print:
                 collector.reset_window()
     except KeyboardInterrupt:
