@@ -35,8 +35,8 @@ from epics import PV
 from kiwi_scan.actuator.factory import create_actuator
 from kiwi_scan.datamodels import ActuatorConfig
 from kiwi_scan.plugin.base import ScanPlugin
+from kiwi_scan.plugin.context import ScanPluginContext
 from kiwi_scan.plugin.registry import register_plugin
-from kiwi_scan.scan.common import BaseScan
 
 
 def _gain_source(gain_spec):
@@ -60,7 +60,7 @@ class JogPIDPlugin(ScanPlugin):
         self,
         name: str,
         parameters: Optional[Dict[str, Any]] = None,
-        scan: Optional["BaseScan"] = None,
+        scan: Optional[ScanPluginContext] = None,
     ):
         super().__init__(name, parameters, scan)
         

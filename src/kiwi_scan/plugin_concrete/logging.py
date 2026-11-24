@@ -16,8 +16,8 @@ from kiwi_scan.epics_wrapper import (
     severity_rank,
 )
 from kiwi_scan.plugin.base import ScanPlugin
+from kiwi_scan.plugin.context import ScanPluginContext
 from kiwi_scan.plugin.registry import register_plugin
-from kiwi_scan.scan.common import BaseScan
 
 
 @register_plugin("LoggingPlugin")
@@ -30,7 +30,7 @@ class LoggingPlugin(ScanPlugin):
         self,
         name: str,
         parameters: Optional[Dict[str, Any]] = None,
-        scan: Optional[BaseScan] = None,
+        scan: Optional[ScanPluginContext] = None,
     ):
         # ------------------  defaults --------------------
         super().__init__(name, parameters, scan)

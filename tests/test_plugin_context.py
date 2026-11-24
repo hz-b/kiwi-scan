@@ -6,7 +6,7 @@ from __future__ import annotations
 import sys
 import unittest
 from types import SimpleNamespace
-from typing import Any, List, get_type_hints
+from typing import Any, List, Optional, get_type_hints
 
 from kiwi_scan import test_support
 
@@ -15,6 +15,8 @@ if "epics" not in sys.modules:
 
 from kiwi_scan.plugin.base import ScanPlugin
 from kiwi_scan.plugin.context import ScanPluginContext
+from kiwi_scan.plugin_concrete.jog_pid import JogPIDPlugin
+from kiwi_scan.plugin_concrete.logging import LoggingPlugin
 from kiwi_scan.scan.common import BaseScan
 from kiwi_scan.scan.output_manager import OutputManager
 from kiwi_scan.scan.performance_tracker import PerformanceTracker
@@ -75,9 +77,10 @@ class TestScanPluginContext(unittest.TestCase):
         self.assertEqual(plugin.scan.get_actuators(), scan.get_actuators())
 
     def test_scan_plugin_constructor_is_typed_against_context(self) -> None:
-        hints = get_type_hints(ScanPlugin.__init__)
-        self.assertIn("ScanPluginContext", str(hints["scan"]))
-        self.assertNotIn("BaseScan", str(hints["scan"]))
+        for plugin in (ScanPlugin, LoggingPlugin, JogPIDPlugin):
+            with self.subTest(plugin=plugin.__name__):
+                hints = get_type_hints(plugin.__init__)
+                self.assertEqual(hints["scan"], Optional[ScanPluginContext])
 
 
 if __name__ == "__main__":
