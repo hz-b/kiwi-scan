@@ -319,6 +319,12 @@ plugin_configs:
     name: timestamp_performance
 ```
 
+### `hzb.emc_getter`
+
+Reads from getter commands using the EMC protocol.
+See the [EMC getter plugin description](emc_getter.md) for configuration and a YAML example.
+
+
 ## Example plugins
 
 Example plugins in [`examples/plugins/`](../examples/plugins/) are not loaded by

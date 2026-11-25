@@ -157,8 +157,8 @@ class EmcGetterPlugin(AsyncScanPlugin):
     def __init__(
         self,
         name: str,
-        parameters: dict[str, Any] | None = None,
-        scan: ScanPluginContext | None = None,
+        parameters: Optional[Dict[str, Any]] = None,
+        scan: Optional[ScanPluginContext] = None,
     ) -> None:
         params = dict(parameters or {})
         if params.get("max_workers", 1) != 1:
