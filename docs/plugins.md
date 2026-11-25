@@ -325,6 +325,11 @@ Reads from getter commands using the EMC protocol.
 See the [EMC getter plugin description](emc_getter.md) for configuration and a YAML example.
 
 
+## Async plugins
+
+For asynchonously processed plugins that can do slow work without blocking the scan loop, see the
+[async plugin documentation](async_plugins.md).
+
 ## Example plugins
 
 Example plugins in [`examples/plugins/`](../examples/plugins/) are not loaded by

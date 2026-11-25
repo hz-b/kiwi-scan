@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+
+## [0.6.3] - 2026-11-25
+
+### Added
+
+- Added the EmcGetterPlugin to the core package.
+
+### Fixed
+
+- `pollstats_cli --no-timestamp` now labels every output row consistently.
+- Plugin implementations no longer import `BaseScan`.
+
 ## [0.6.2] - 2026-11-23
 
 ### Added
